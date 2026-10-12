@@ -5,6 +5,8 @@ use gpui_kit::base::StyledExt;
 use gpui_kit::component::slider::Slider;
 use gpui_kit::*;
 
+use siren_core::player::PlayMode;
+
 use super::super::{cover_placeholder, fmt_time, icon, Root};
 use crate::theme;
 
@@ -25,7 +27,11 @@ impl Root {
 
         let weak_play = weak.clone();
         let weak_prev = weak.clone();
+        let weak_shuffle = weak.clone();
+        let weak_repeat = weak.clone();
         let weak_next = weak;
+        let shuffle_active = state.mode == PlayMode::Shuffle;
+        let repeat_active = state.mode == PlayMode::SingleLoop;
         div()
             .w_full()
             .h(px(theme::PLAYER_BAR_H))
@@ -69,6 +75,27 @@ impl Root {
                             .flex()
                             .items_center()
                             .gap(px(16.0))
+                            .child(
+                                div()
+                                    .id("shuffle")
+                                    .cursor_pointer()
+                                    .on_click(move |_ev, _window, cx| {
+                                        weak_shuffle
+                                            .update(cx, |this, cx| {
+                                                this.playback.update(cx, |pb, cx| pb.toggle_shuffle(cx));
+                                            })
+                                            .ok();
+                                    })
+                                    .child(icon(
+                                        IconName::Shuffle,
+                                        18.0,
+                                        if shuffle_active {
+                                            theme::accent()
+                                        } else {
+                                            theme::text_gray()
+                                        },
+                                    )),
+                            )
                             .child(
                                 div()
                                     .id("prev")
@@ -117,6 +144,27 @@ impl Root {
                                             .ok();
                                     })
                                     .child(icon(IconName::SkipForward, 22.0, theme::text_primary())),
+                            )
+                            .child(
+                                div()
+                                    .id("repeat")
+                                    .cursor_pointer()
+                                    .on_click(move |_ev, _window, cx| {
+                                        weak_repeat
+                                            .update(cx, |this, cx| {
+                                                this.playback.update(cx, |pb, cx| pb.toggle_repeat(cx));
+                                            })
+                                            .ok();
+                                    })
+                                    .child(icon(
+                                        IconName::Repeat,
+                                        18.0,
+                                        if repeat_active {
+                                            theme::accent()
+                                        } else {
+                                            theme::text_gray()
+                                        },
+                                    )),
                             ),
                     )
                     .child(

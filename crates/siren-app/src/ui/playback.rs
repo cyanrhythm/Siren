@@ -187,6 +187,28 @@ impl Playback {
         }
     }
 
+    /// 切换随机播放。
+    pub(crate) fn toggle_shuffle(&mut self, cx: &mut Context<Self>) {
+        let mode = if self.player.mode() == PlayMode::Shuffle {
+            PlayMode::ListLoop
+        } else {
+            PlayMode::Shuffle
+        };
+        self.player.set_mode(mode);
+        cx.notify();
+    }
+
+    /// 切换单曲循环。
+    pub(crate) fn toggle_repeat(&mut self, cx: &mut Context<Self>) {
+        let mode = if self.player.mode() == PlayMode::SingleLoop {
+            PlayMode::ListLoop
+        } else {
+            PlayMode::SingleLoop
+        };
+        self.player.set_mode(mode);
+        cx.notify();
+    }
+
     fn resolve_and_play(&mut self, song: Song, cx: &mut Context<Self>) {
         let client = self.client.clone();
         let id = song.id;
