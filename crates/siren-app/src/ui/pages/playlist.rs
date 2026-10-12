@@ -459,6 +459,12 @@ impl PlaylistPage {
             .into_any_element()
     }
 
+    /// 重命名成功后更新页内标题。
+    pub(crate) fn rename_done(&mut self, name: String, cx: &mut Context<Self>) {
+        self.name = name;
+        cx.notify();
+    }
+
     /// 是否本人创建（可编辑）。
     fn owned(&self) -> bool {
         match (&self.detail, self.my_uid) {

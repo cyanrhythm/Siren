@@ -5,7 +5,7 @@ use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::Input;
 use gpui_kit::*;
 
-use super::super::Root;
+use super::super::{Root, Route};
 use crate::theme;
 
 impl Root {
@@ -283,6 +283,7 @@ impl Root {
             return;
         }
         let client = self.services.client.clone();
+        let new_name = name.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.services.handle.spawn(async move {
             let ok = siren_core::network::api::playlist_rename(&client, id, &name)
@@ -292,12 +293,13 @@ impl Root {
         });
         self.rename_pid = None;
         cx.notify();
-        // 待接口返回后再刷新列表
+        // 待接口返回后再刷新列表，并即时更新当前打开歌单页的标题
         cx.spawn(async move |this, cx| {
             let ok = rx.await.unwrap_or(false);
             this.update(cx, |this, cx| {
                 if ok {
                     this.library.update(cx, |page, cx| page.reload_playlists(cx));
+                    this.update_open_playlist_name(id, &new_name, cx);
                 }
                 cx.notify();
             })
@@ -327,18 +329,33 @@ impl Root {
         });
         self.delete_pid = None;
         cx.notify();
-        // 待接口返回后再刷新列表
+        // 待接口返回后再刷新列表；若删除的是当前打开的歌单则返回首页
         cx.spawn(async move |this, cx| {
             let ok = rx.await.unwrap_or(false);
             this.update(cx, |this, cx| {
                 if ok {
                     this.library.update(cx, |page, cx| page.reload_playlists(cx));
+                    if matches!(this.route(), Route::Playlist { id: cur, .. } if cur == id) {
+                        this.navigate(Route::Home, cx);
+                    }
                 }
                 cx.notify();
             })
             .ok();
         })
         .detach();
+    }
+
+    /// 若当前打开的歌单正是该 id，更新其标题（导航栈与页内）。
+    fn update_open_playlist_name(&mut self, id: i64, name: &str, cx: &mut Context<Self>) {
+        if let Some(Route::Playlist { id: cur, name: n }) = self.nav.last_mut() {
+            if *cur == id {
+                *n = name.to_string();
+            }
+        }
+        if let Some(page) = self.playlist_page.clone() {
+            page.update(cx, |p, cx| p.rename_done(name.to_string(), cx));
+        }
     }
 
     /// 重命名浮层。
