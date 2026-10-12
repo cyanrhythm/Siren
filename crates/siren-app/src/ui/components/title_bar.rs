@@ -7,7 +7,7 @@
 //! 返回第一个匹配的 area），导致最小化/最大化/关闭点击无反应。
 
 use gpui_kit::assets::IconName;
-use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::button::{Button, ButtonCustomVariant, ButtonVariants};
 use gpui_kit::component::input::Input;
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_kit::component::Icon;
@@ -17,7 +17,7 @@ use super::super::{icon, PageEvent, Root, Route};
 use crate::theme;
 
 impl Root {
-    pub(crate) fn title_bar(&self, weak: WeakEntity<Self>, vw: f32, _cx: &App) -> impl IntoElement {
+    pub(crate) fn title_bar(&self, weak: WeakEntity<Self>, vw: f32, cx: &App) -> impl IntoElement {
         let is_home = matches!(self.route(), Route::Home);
 
         let weak_back = weak.clone();
@@ -26,17 +26,36 @@ impl Root {
         let weak_search = weak;
 
         // 账号按钮：已登录显示圆形头像，未登录显示人形占位（对齐 Melodia）。
+        // 用 Custom 变体避免 ghost 的 accent(红) hover/active 底，按钮与头像同尺寸的圆形。
         let covers = self.services.covers.clone();
         let account = self.account.clone();
         let trigger = match &account {
-            Some((_, url, _)) => Button::new("account").ghost().child(
-                div()
-                    .size(px(32.0))
-                    .rounded_full()
-                    .overflow_hidden()
-                    .child(self.services.covers.image(url, 32.0)),
-            ),
-            None => Button::new("account").ghost().icon(IconName::User),
+            Some((_, url, _)) => Button::new("account")
+                .custom(ButtonCustomVariant::new(cx))
+                .w(px(32.0))
+                .h(px(32.0))
+                .p(px(0.0))
+                .rounded_full()
+                .child(
+                    div()
+                        .size(px(32.0))
+                        .rounded_full()
+                        .overflow_hidden()
+                        .child(self.services.covers.image(url, 32.0)),
+                ),
+            None => Button::new("account")
+                .custom(
+                    ButtonCustomVariant::new(cx)
+                        .color(theme::surface().into())
+                        .hover(theme::surface_light().into())
+                        .active(theme::surface_light().into())
+                        .foreground(theme::text_gray().into()),
+                )
+                .w(px(32.0))
+                .h(px(32.0))
+                .p(px(0.0))
+                .rounded_full()
+                .icon(IconName::User),
         };
         let account_button = trigger.dropdown_menu(move |menu, _window, _cx| {
             let mut menu = menu;
