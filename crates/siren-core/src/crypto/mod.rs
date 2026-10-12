@@ -25,18 +25,11 @@
 //! Melodia 有现成测试（`NeteaseCryptoTest` / `XeapiCryptoTest`），
 //! 可作为 Rust 实现的对照验收标准。
 
+pub mod aes;
 pub mod eapi;
+pub mod key;
 pub mod linuxapi;
+pub mod rsa;
 pub mod weapi;
 
-pub mod aes {
-    // TODO: AES-CBC 加解密（固定 IV）
-}
-
-pub mod rsa {
-    // TODO: RSA 加密（公钥 010001 + 模数）
-}
-
-pub mod key {
-    // TODO: 随机密钥生成、预设密钥常量
-}
+pub use weapi::WeapiParams;
