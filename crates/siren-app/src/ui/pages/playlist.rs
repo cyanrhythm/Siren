@@ -85,6 +85,29 @@ impl PlaylistPage {
             let _ = siren_core::network::api::playlist_subscribe(&client, id, subscribe).await;
         });
     }
+
+    /// 从当前歌单移除某首歌，成功后重新加载曲目。
+    fn remove_track(&mut self, song_id: i64, cx: &mut Context<Self>) {
+        let client = self.services.client.clone();
+        let pid = self.id;
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.services.handle.spawn(async move {
+            let ok = siren_core::network::api::playlist_delete_tracks(&client, pid, &[song_id])
+                .await
+                .is_ok();
+            let _ = tx.send(ok);
+        });
+        cx.spawn(async move |this, cx| {
+            let ok = rx.await.unwrap_or(false);
+            this.update(cx, |this, cx| {
+                if ok {
+                    this.load(cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
 }
 
 impl Render for PlaylistPage {
@@ -225,12 +248,18 @@ impl Render for PlaylistPage {
                                         .child(fmt_time(song.duration_ms)),
                                 )
                                 .context_menu(move |menu, _w, _cx| {
-                                    let weak_ctx = weak_ctx.clone();
+                                    let weak_add = weak_ctx.clone();
+                                    let weak_del = weak_ctx.clone();
                                     menu.item(PopupMenuItem::new("添加到歌单").on_click(move |_ev, _w, cx| {
-                                        weak_ctx
+                                        weak_add
                                             .update(cx, |_page, cx| cx.emit(PageEvent::AddToPlaylist { song_id: sid }))
                                             .ok();
                                     }))
+                                    .item(
+                                        PopupMenuItem::new("从歌单移除").on_click(move |_ev, _w, cx| {
+                                            weak_del.update(cx, |page, cx| page.remove_track(sid, cx)).ok();
+                                        }),
+                                    )
                                 })
                                 .into_any_element()
                         })

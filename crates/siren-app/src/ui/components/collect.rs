@@ -267,12 +267,27 @@ impl Root {
             return;
         }
         let client = self.services.client.clone();
+        let (tx, rx) = tokio::sync::oneshot::channel();
         self.services.handle.spawn(async move {
-            let _ = siren_core::network::api::playlist_rename(&client, id, &name).await;
+            let ok = siren_core::network::api::playlist_rename(&client, id, &name)
+                .await
+                .is_ok();
+            let _ = tx.send(ok);
         });
         self.rename_pid = None;
-        self.library.update(cx, |page, cx| page.reload_playlists(cx));
         cx.notify();
+        // 待接口返回后再刷新列表
+        cx.spawn(async move |this, cx| {
+            let ok = rx.await.unwrap_or(false);
+            this.update(cx, |this, cx| {
+                if ok {
+                    this.library.update(cx, |page, cx| page.reload_playlists(cx));
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// 打开删除确认浮层。
@@ -289,12 +304,25 @@ impl Root {
     pub(crate) fn confirm_delete(&mut self, cx: &mut Context<Self>) {
         let Some(id) = self.delete_pid else { return };
         let client = self.services.client.clone();
+        let (tx, rx) = tokio::sync::oneshot::channel();
         self.services.handle.spawn(async move {
-            let _ = siren_core::network::api::playlist_delete(&client, id).await;
+            let ok = siren_core::network::api::playlist_delete(&client, id).await.is_ok();
+            let _ = tx.send(ok);
         });
         self.delete_pid = None;
-        self.library.update(cx, |page, cx| page.reload_playlists(cx));
         cx.notify();
+        // 待接口返回后再刷新列表
+        cx.spawn(async move |this, cx| {
+            let ok = rx.await.unwrap_or(false);
+            this.update(cx, |this, cx| {
+                if ok {
+                    this.library.update(cx, |page, cx| page.reload_playlists(cx));
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// 重命名浮层。

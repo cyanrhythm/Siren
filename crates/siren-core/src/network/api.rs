@@ -212,8 +212,17 @@ pub async fn album_subscribe(client: &NeteaseClient, id: i64, subscribe: bool) -
 
 /// 歌单添加歌曲（EAPI）。
 pub async fn playlist_add_tracks(client: &NeteaseClient, pid: i64, track_ids: &[i64]) -> Result<()> {
+    manipulate_tracks(client, "add", pid, track_ids).await
+}
+
+/// 歌单移除歌曲（EAPI）。
+pub async fn playlist_delete_tracks(client: &NeteaseClient, pid: i64, track_ids: &[i64]) -> Result<()> {
+    manipulate_tracks(client, "del", pid, track_ids).await
+}
+
+async fn manipulate_tracks(client: &NeteaseClient, op: &str, pid: i64, track_ids: &[i64]) -> Result<()> {
     let ids = track_ids.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(",");
-    let body = json!({ "op": "add", "pid": pid, "trackIds": format!("[{ids}]"), "imme": "true" });
+    let body = json!({ "op": op, "pid": pid, "trackIds": format!("[{ids}]"), "imme": "true" });
     let value = client.eapi_post(path::PLAYLIST_MANIPULATE, &body).await?;
     validate(&value)?;
     Ok(())
