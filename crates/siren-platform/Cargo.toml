@@ -1,0 +1,13 @@
+[package]
+name = "siren-platform"
+description = "平台能力层：trait 定义与各平台实现"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+siren-core.workspace = true
+# 待补充：见 workspace Cargo.toml

@@ -1,0 +1,5 @@
+[toolchain]
+# 使用 stable 通道：项目尚未固定具体版本，
+# 待依赖稳定后再考虑固定（避免过早锁定导致 CI 与本地环境不一致）。
+channel = "stable"
+components = ["rustfmt", "clippy"]

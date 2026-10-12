@@ -1,0 +1,12 @@
+[package]
+name = "siren-core"
+description = "跨平台核心：网络、加密、数据模型、播放抽象、歌词解析"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+# 待补充：见 workspace Cargo.toml

@@ -1,0 +1,18 @@
+[package]
+name = "siren-app"
+description = "应用层：GPUI 界面与状态管理"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+siren-core.workspace = true
+siren-platform.workspace = true
+# 待补充：gpui-kit 等，见 workspace Cargo.toml
+
+[[bin]]
+name = "siren"
+path = "src/main.rs"

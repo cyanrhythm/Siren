@@ -1,0 +1,65 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/siren-app",
+    "crates/siren-core",
+    "crates/siren-platform",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT"
+repository = "https://github.com/cyanrhythm/Siren"
+authors = ["cyanrhythm"]
+
+[workspace.dependencies]
+# 内部 crate
+siren-app = { path = "crates/siren-app" }
+siren-core = { path = "crates/siren-core" }
+siren-platform = { path = "crates/siren-platform" }
+
+# ── 待补充：外部依赖 ─────────────────────────────────────────────
+# UI / 渲染
+# gpui-kit = "0.7"
+#
+# 平台能力
+# tray-icon = "0.26"
+# directories = "6"
+# global-hotkey = "0.8"
+# auto-launch = "0.6"
+# playwire = "2"
+# zbus = "5"
+#
+# 音频
+# (libmpv 绑定待 PoC 后确定)
+#
+# 网络 / 序列化
+# reqwest = { version = "0.12", features = ["json"] }
+# serde = { version = "1", features = ["derive"] }
+# serde_json = "1"
+#
+# 加密
+# aes = "0.8"
+# rsa = "0.9"
+# base64 = "0.22"
+#
+# 异步
+# tokio = { version = "1", features = ["full"] }
+# futures = "0.3"
+
+# ── 构建配置 ────────────────────────────────────────────────────
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[profile.dev]
+opt-level = 1
+
+# 依赖在 dev 构建中也优化，避免 UI 卡顿
+[profile.dev.package."*"]
+opt-level = 2
