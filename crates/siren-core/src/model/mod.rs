@@ -14,6 +14,8 @@ pub struct Song {
     /// 以 `/` 拼接的歌手名。
     pub artists: String,
     pub album: String,
+    /// 专辑封面地址（可能为空）。
+    pub cover_url: String,
     /// 时长（毫秒），源头可能缺失。
     pub duration_ms: i64,
 }
@@ -133,6 +135,14 @@ fn parse_song(value: &Value) -> Song {
         .unwrap_or_default()
         .to_string();
 
+    let cover_url = value
+        .get("al")
+        .or_else(|| value.get("album"))
+        .and_then(|al| al.get("picUrl"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+
     let duration_ms = value
         .get("duration")
         .or_else(|| value.get("dt"))
@@ -144,6 +154,7 @@ fn parse_song(value: &Value) -> Song {
         name,
         artists,
         album,
+        cover_url,
         duration_ms,
     }
 }
@@ -158,13 +169,14 @@ mod tests {
         let value = json!({
             "result": { "songs": [
                 { "id": 1, "name": "歌", "artists": [{"name": "甲"}, {"name": "乙"}],
-                  "album": {"name": "专"}, "duration": 123000 }
+                  "album": {"name": "专", "picUrl": "http://c/1.jpg"}, "duration": 123000 }
             ]}
         });
         let songs = parse_search_songs(&value);
         assert_eq!(songs.len(), 1);
         assert_eq!(songs[0].artists, "甲/乙");
         assert_eq!(songs[0].album, "专");
+        assert_eq!(songs[0].cover_url, "http://c/1.jpg");
         assert_eq!(songs[0].duration_ms, 123000);
     }
 

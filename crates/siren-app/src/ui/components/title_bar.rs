@@ -24,6 +24,52 @@ impl Root {
         let weak_account = weak.clone();
         let weak_search = weak;
 
+        // 账号按钮：登录后显示用户头像，未登录显示占位图标；点击弹出账号菜单。
+        let covers = self.services.covers.clone();
+        let account = self.account.clone();
+        let trigger = match &account {
+            Some((_, url)) => Button::new("account")
+                .ghost()
+                .child(self.services.covers.image(url, 28.0)),
+            None => Button::new("account").ghost().icon(IconName::CircleUser),
+        };
+        let account_for_menu = account;
+        let covers_for_menu = covers;
+        let account_button = trigger.dropdown_menu(move |menu, _window, _cx| {
+            let mut menu = menu;
+            match &account_for_menu {
+                Some((nick, url)) => {
+                    let nick_render = nick.clone();
+                    let url_render = url.clone();
+                    let covers_render = covers_for_menu.clone();
+                    menu = menu.item(PopupMenuItem::element(move |_w, _cx| {
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.0))
+                            .px(px(8.0))
+                            .py(px(4.0))
+                            .child(covers_render.image(&url_render, 36.0))
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(theme::text_primary())
+                                    .child(nick_render.clone()),
+                            )
+                    }));
+                    menu = menu.separator();
+                }
+                None => {
+                    menu = menu.label("未登录");
+                    menu = menu.separator();
+                }
+            }
+            let weak = weak_account.clone();
+            menu.item(PopupMenuItem::new("退出登录").on_click(move |_ev, _window, cx| {
+                weak.update(cx, |root, cx| root.logout(cx)).ok();
+            }))
+        });
+
         // 左：前进 / 后退
         let left = div()
             .w(px(84.0))
@@ -124,14 +170,7 @@ impl Root {
                     .rounded_full()
                     .child(icon(IconName::Download, 18.0, theme::text_gray())),
             )
-            .child(Button::new("account").ghost().icon(IconName::CircleUser).dropdown_menu(
-                move |menu, _window, _cx| {
-                    let weak = weak_account.clone();
-                    menu.item(PopupMenuItem::new("退出登录").on_click(move |_ev, _window, cx| {
-                        weak.update(cx, |root, cx| root.logout(cx)).ok();
-                    }))
-                },
-            ))
+            .child(account_button)
             .child(window_button("win-min", IconName::Minus, false, WindowControlArea::Min))
             .child(window_button(
                 "win-max",

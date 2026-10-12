@@ -83,6 +83,16 @@ pub fn account_nickname(value: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
+/// 从账号返回体取头像地址。
+pub fn account_avatar(value: &Value) -> Option<String> {
+    value
+        .get("profile")
+        .and_then(|p| p.get("avatarUrl"))
+        .and_then(|a| a.as_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
 /// 从播放地址返回体取第一条的 url。
 fn extract_url(value: &Value) -> Option<String> {
     value

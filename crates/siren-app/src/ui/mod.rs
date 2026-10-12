@@ -37,8 +37,18 @@ pub(crate) enum Route {
 
 /// 页面回传给外壳的导航事件。
 pub(crate) enum PageEvent {
-    OpenPlaylist { id: i64, name: String },
+    OpenPlaylist {
+        id: i64,
+        name: String,
+    },
     Back,
+    /// 登录成功：上报昵称与头像，供标题栏账号区展示。
+    Account {
+        nickname: String,
+        avatar_url: String,
+    },
+    /// 未登录 / 已退出登录。
+    LoggedOut,
 }
 
 /// 主窗口根组件：导航与外壳。
@@ -53,6 +63,8 @@ pub struct Root {
     search: Entity<SearchPage>,
     playlist_page: Option<Entity<PlaylistPage>>,
     now_playing_open: bool,
+    /// 登录后的账号信息（昵称、头像 URL）；未登录为 None。
+    account: Option<(SharedString, String)>,
     _subs: Vec<Subscription>,
     _search_sub: Subscription,
 }
@@ -114,6 +126,7 @@ impl Root {
                 search,
                 playlist_page: None,
                 now_playing_open: true,
+                account: None,
                 _subs: subs,
                 _search_sub,
             }
@@ -136,7 +149,20 @@ impl Root {
         match event {
             PageEvent::OpenPlaylist { id, name } => self.open_playlist(*id, name.clone(), cx),
             PageEvent::Back => self.back(cx),
+            PageEvent::Account { nickname, avatar_url } => {
+                self.set_account(Some((nickname.clone(), avatar_url.clone())), cx)
+            }
+            PageEvent::LoggedOut => self.set_account(None, cx),
         }
+    }
+
+    /// 更新标题栏账号区（登录成功 / 退出登录）。
+    fn set_account(&mut self, account: Option<(String, String)>, cx: &mut Context<Self>) {
+        if let Some((_, url)) = &account {
+            self.services.covers.prefetch([url.clone()], 36.0, cx);
+        }
+        self.account = account.map(|(nick, url)| (nick.into(), url));
+        cx.notify();
     }
 
     fn open_playlist(&mut self, id: i64, name: String, cx: &mut Context<Self>) {

@@ -21,6 +21,7 @@ pub(crate) struct LibraryPage {
     services: Services,
     logged_in: bool,
     nickname: SharedString,
+    avatar_url: String,
     login_input: Entity<InputState>,
     login_status: SharedString,
     my_playlists: Arc<Vec<Playlist>>,
@@ -42,6 +43,7 @@ impl LibraryPage {
             services,
             logged_in: false,
             nickname: "未登录".into(),
+            avatar_url: String::new(),
             login_input,
             login_status: "未登录".into(),
             my_playlists: Arc::new(Vec::new()),
@@ -73,8 +75,10 @@ impl LibraryPage {
         self.logged_in = false;
         self.uid = None;
         self.nickname = "未登录".into();
+        self.avatar_url.clear();
         self.login_status = "未登录".into();
         self.my_playlists = Arc::new(Vec::new());
+        cx.emit(PageEvent::LoggedOut);
         cx.notify();
     }
 
@@ -89,6 +93,10 @@ impl LibraryPage {
         cx.spawn(async move |this, cx| {
             let account = rx.await.ok().flatten();
             this.update(cx, |this, cx| {
+                let avatar = account
+                    .as_ref()
+                    .and_then(siren_core::network::api::account_avatar)
+                    .unwrap_or_default();
                 let profile = account.and_then(|v| {
                     siren_core::network::api::account_uid(&v)
                         .map(|uid| (uid, siren_core::network::api::account_nickname(&v)))
@@ -98,13 +106,20 @@ impl LibraryPage {
                         this.logged_in = true;
                         this.uid = Some(uid);
                         this.nickname = nick.unwrap_or_else(|| "已登录".to_string()).into();
+                        this.avatar_url = avatar.clone();
                         this.login_status = format!("已登录：{}", this.nickname).into();
                         eprintln!("[siren] 已登录：{} (uid={uid})", this.nickname);
+                        cx.emit(PageEvent::Account {
+                            nickname: this.nickname.to_string(),
+                            avatar_url: avatar,
+                        });
                         this.load_my_playlists(cx);
                     }
                     None => {
                         this.logged_in = false;
+                        this.avatar_url.clear();
                         this.login_status = "未登录（Cookie 无效或已过期）".into();
+                        cx.emit(PageEvent::LoggedOut);
                     }
                 }
                 cx.notify();

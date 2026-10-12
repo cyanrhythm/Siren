@@ -10,7 +10,7 @@ use siren_core::model::PlaylistDetail;
 
 use super::super::playback::Playback;
 use super::super::services::Services;
-use super::super::{cover_placeholder, icon, page_shell_with_header, PageEvent};
+use super::super::{fmt_time, icon, page_shell_with_header, PageEvent};
 use crate::theme;
 
 pub(crate) struct PlaylistPage {
@@ -58,6 +58,10 @@ impl PlaylistPage {
             let detail = rx.await.ok().flatten();
             this.update(cx, |this, cx| {
                 this.detail = detail.map(Arc::new);
+                if let Some(d) = &this.detail {
+                    let urls: Vec<String> = d.tracks.iter().map(|t| t.cover_url.clone()).collect();
+                    this.services.covers.prefetch(urls, 40.0, cx);
+                }
                 cx.notify();
             })
             .ok();
@@ -99,16 +103,18 @@ impl Render for PlaylistPage {
             Some(detail) => {
                 let tracks = detail.tracks.clone();
                 let count = tracks.len();
+                let covers = self.services.covers.clone();
                 let weak = cx.weak_entity();
-                uniform_list("playlist-tracks", count, move |range, _window, _cx| {
+                let rows = uniform_list("playlist-tracks", count, move |range, _window, _cx| {
                     range
                         .map(|i| {
                             let song = &tracks[i];
+                            let cover = covers.image(&song.cover_url, 40.0);
                             let weak = weak.clone();
                             div()
                                 .id(format!("playlist-track-{}", song.id))
                                 .w_full()
-                                .h(px(48.0))
+                                .h(px(52.0))
                                 .px(px(16.0))
                                 .flex()
                                 .items_center()
@@ -125,12 +131,12 @@ impl Render for PlaylistPage {
                                 })
                                 .child(
                                     div()
-                                        .w(px(24.0))
+                                        .w(px(28.0))
                                         .text_sm()
                                         .text_color(theme::text_gray())
                                         .child(format!("{}", i + 1)),
                                 )
-                                .child(cover_placeholder(36.0))
+                                .child(cover)
                                 .child(
                                     div()
                                         .v_flex()
@@ -152,14 +158,38 @@ impl Render for PlaylistPage {
                                                 .child(song.artists.clone()),
                                         ),
                                 )
+                                .child(
+                                    div()
+                                        .w(px(240.0))
+                                        .text_xs()
+                                        .text_color(theme::text_gray())
+                                        .truncate()
+                                        .child(song.album.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .w(px(56.0))
+                                        .text_xs()
+                                        .text_color(theme::text_gray())
+                                        .child(fmt_time(song.duration_ms)),
+                                )
                                 .into_any_element()
                         })
                         .collect::<Vec<_>>()
                 })
                 .flex_1()
                 .w_full()
-                .min_w(px(0.0))
-                .into_any_element()
+                .min_w(px(0.0));
+
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .w_full()
+                    .child(column_header())
+                    .child(rows)
+                    .into_any_element()
             }
             None => div()
                 .flex_1()
@@ -171,4 +201,24 @@ impl Render for PlaylistPage {
         };
         page_shell_with_header(header.into_any_element(), body)
     }
+}
+
+/// 曲目表头（与行内列宽对齐）。
+fn column_header() -> impl IntoElement {
+    div()
+        .w_full()
+        .h(px(32.0))
+        .px(px(16.0))
+        .flex()
+        .items_center()
+        .gap(px(12.0))
+        .border_b_1()
+        .border_color(theme::surface())
+        .text_xs()
+        .text_color(theme::text_gray())
+        .child(div().w(px(28.0)).child("#"))
+        .child(div().w(px(40.0)))
+        .child(div().flex_1().child("标题"))
+        .child(div().w(px(240.0)).child("专辑"))
+        .child(div().w(px(56.0)).child("时长"))
 }

@@ -7,9 +7,9 @@ use gpui_kit::*;
 
 use siren_core::model::Song;
 
+use super::super::page_shell;
 use super::super::playback::Playback;
 use super::super::services::Services;
-use super::super::{cover_placeholder, page_shell};
 use crate::theme;
 
 pub(crate) struct SearchPage {
@@ -49,8 +49,10 @@ impl SearchPage {
             let songs = rx.await.unwrap_or_default();
             this.update(cx, |this, cx| {
                 this.status = format!("搜索到 {} 首", songs.len()).into();
+                let urls: Vec<String> = songs.iter().map(|s| s.cover_url.clone()).collect();
                 this.songs = Arc::new(songs);
                 this.selected = None;
+                this.services.covers.prefetch(urls, 36.0, cx);
                 cx.notify();
             })
             .ok();
@@ -64,12 +66,14 @@ impl Render for SearchPage {
         let songs = self.songs.clone();
         let count = songs.len();
         let selected = self.selected;
+        let covers = self.services.covers.clone();
         let weak = cx.weak_entity();
         let list = uniform_list("search-results", count, move |range, _window, _cx| {
             range
                 .map(|i| {
                     let song = &songs[i];
                     let marker = if selected == Some(i) { "▶ " } else { "   " };
+                    let cover = covers.image(&song.cover_url, 36.0);
                     let weak = weak.clone();
                     div()
                         .id(format!("search-song-{}", song.id))
@@ -97,7 +101,7 @@ impl Render for SearchPage {
                                 .text_color(theme::text_gray())
                                 .child(format!("{}", i + 1)),
                         )
-                        .child(cover_placeholder(36.0))
+                        .child(cover)
                         .child(
                             div()
                                 .v_flex()
