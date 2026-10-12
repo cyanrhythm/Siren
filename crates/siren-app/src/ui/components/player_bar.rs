@@ -24,6 +24,7 @@ impl Root {
         let progress_w = (vw - 210.0 - 300.0 - 240.0 - 64.0).max(160.0);
 
         let weak_play = weak.clone();
+        let weak_prev = weak.clone();
         let weak_next = weak;
         div()
             .w_full()
@@ -68,7 +69,19 @@ impl Root {
                             .flex()
                             .items_center()
                             .gap(px(16.0))
-                            .child(icon(IconName::SkipBack, 22.0, theme::text_primary()))
+                            .child(
+                                div()
+                                    .id("prev")
+                                    .cursor_pointer()
+                                    .on_click(move |_ev, _window, cx| {
+                                        weak_prev
+                                            .update(cx, |this, cx| {
+                                                this.playback.update(cx, |pb, cx| pb.previous_track(cx));
+                                            })
+                                            .ok();
+                                    })
+                                    .child(icon(IconName::SkipBack, 22.0, theme::text_primary())),
+                            )
                             .child(
                                 div()
                                     .id("play")
