@@ -1,25 +1,102 @@
 //! 搜索：搜索框 + 结果列表。
 
+use std::sync::Arc;
+
 use gpui_kit::assets::IconName;
 use gpui_kit::base::StyledExt;
-use gpui_kit::component::input::Input;
+use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::*;
 
-use super::super::{cover_placeholder, icon, page_shell, Root};
+use siren_core::model::Song;
+
+use super::super::playback::Playback;
+use super::super::services::Services;
+use super::super::{cover_placeholder, icon, page_shell};
 use crate::theme;
 
-impl Root {
-    pub(crate) fn search_page(&self, weak: WeakEntity<Self>) -> impl IntoElement {
+pub(crate) struct SearchPage {
+    services: Services,
+    playback: Entity<Playback>,
+    input: Entity<InputState>,
+    songs: Arc<Vec<Song>>,
+    selected: Option<usize>,
+    status: SharedString,
+    _sub: Subscription,
+}
+
+impl SearchPage {
+    pub(crate) fn new(
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        services: Services,
+        playback: Entity<Playback>,
+    ) -> Self {
+        let input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("搜索歌曲、歌手…")
+                .default_value("周杰伦")
+        });
+        let _sub = cx.subscribe(&input, |this: &mut SearchPage, _i, event: &InputEvent, cx| {
+            if let InputEvent::PressEnter { .. } = event {
+                this.search(cx);
+            }
+        });
+        let mut page = Self {
+            services,
+            playback,
+            input,
+            songs: Arc::new(Vec::new()),
+            selected: None,
+            status: "回车搜索".into(),
+            _sub,
+        };
+        page.search(cx);
+        page
+    }
+
+    fn search(&mut self, cx: &mut Context<Self>) {
+        let keyword = self.input.read(cx).value().trim().to_string();
+        if keyword.is_empty() {
+            return;
+        }
+        self.status = format!("搜索中：{keyword}").into();
+        cx.notify();
+
+        let client = self.services.client.clone();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.services.handle.spawn(async move {
+            let songs = siren_core::network::api::search(&client, &keyword, 1, 50)
+                .await
+                .unwrap_or_default();
+            let _ = tx.send(songs);
+        });
+
+        cx.spawn(async move |this, cx| {
+            let songs = rx.await.unwrap_or_default();
+            this.update(cx, |this, cx| {
+                this.status = format!("搜索到 {} 首", songs.len()).into();
+                this.songs = Arc::new(songs);
+                this.selected = None;
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+}
+
+impl Render for SearchPage {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let songs = self.songs.clone();
         let count = songs.len();
         let selected = self.selected;
-        let weak_list = weak;
+        let weak = cx.weak_entity();
         let list = uniform_list("search-results", count, move |range, _window, _cx| {
             range
                 .map(|i| {
                     let song = &songs[i];
                     let marker = if selected == Some(i) { "▶ " } else { "   " };
-                    let weak = weak_list.clone();
+                    let weak = weak.clone();
                     div()
                         .id(format!("search-song-{}", song.id))
                         .w_full()
@@ -34,6 +111,7 @@ impl Root {
                         .on_click(move |_ev, _window, cx| {
                             weak.update(cx, |this, cx| {
                                 let items = this.songs.as_ref().clone();
+                                this.selected = Some(i);
                                 this.playback.update(cx, |pb, cx| pb.play_from(items, i, cx));
                             })
                             .ok();
@@ -76,7 +154,7 @@ impl Root {
         .min_w(px(0.0));
 
         page_shell(
-            format!("搜索 · {}", self.search_status),
+            format!("搜索 · {}", self.status),
             div()
                 .v_flex()
                 .flex_1()
@@ -93,7 +171,7 @@ impl Root {
                             .rounded(px(20.0))
                             .bg(theme::surface())
                             .child(icon(IconName::Search, 18.0, theme::text_gray()))
-                            .child(div().flex_1().child(Input::new(&self.search_input))),
+                            .child(div().flex_1().child(Input::new(&self.input))),
                     ),
                 )
                 .child(list)

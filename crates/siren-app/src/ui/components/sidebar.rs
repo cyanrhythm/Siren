@@ -29,7 +29,7 @@ impl Root {
                     .bg(if active { theme::surface() } else { theme::pane() })
                     .hover(|s| s.bg(theme::surface()))
                     .on_click(move |_ev, _window, cx| {
-                        weak.update(cx, |this, cx| this.go(route.clone(), cx)).ok();
+                        weak.update(cx, |this, cx| this.navigate(route.clone(), cx)).ok();
                     })
                     .child(icon(
                         icon_name,

@@ -11,7 +11,7 @@ use gpui_kit::*;
 
 use siren_core::network::client::NeteaseClient;
 
-use super::{cover_placeholder, Root};
+use super::cover_placeholder;
 
 #[derive(Clone)]
 pub(crate) struct CoverLoader {
@@ -38,22 +38,13 @@ impl CoverLoader {
         }
         let key = sized_url(url, size);
         if let Some(image) = self.cache.lock().unwrap().get(&key).cloned() {
-            return img(image)
-                .w(px(size))
-                .h(px(size))
-                .rounded(px(6.0))
-                .into_any_element();
+            return img(image).w(px(size)).h(px(size)).rounded(px(6.0)).into_any_element();
         }
         cover_placeholder(size).into_any_element()
     }
 
     /// 预取一批封面（数据加载完成后调用）；完成后通知重绘。
-    pub(crate) fn prefetch(
-        &self,
-        urls: impl IntoIterator<Item = String>,
-        size: f32,
-        cx: &mut Context<Root>,
-    ) {
+    pub(crate) fn prefetch<T: 'static>(&self, urls: impl IntoIterator<Item = String>, size: f32, cx: &mut Context<T>) {
         for url in urls {
             if url.is_empty() {
                 continue;

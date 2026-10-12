@@ -1,15 +1,74 @@
 //! 歌单详情：返回 + 曲目列表。
 
+use std::sync::Arc;
+
 use gpui_kit::assets::IconName;
 use gpui_kit::base::StyledExt;
 use gpui_kit::*;
 
-use super::super::{cover_placeholder, icon, page_shell_with_header, Root};
+use siren_core::model::PlaylistDetail;
+
+use super::super::playback::Playback;
+use super::super::services::Services;
+use super::super::{cover_placeholder, icon, page_shell_with_header, PageEvent};
 use crate::theme;
 
-impl Root {
-    pub(crate) fn playlist_page(&self, name: String, weak: WeakEntity<Self>) -> impl IntoElement {
-        let weak_back = weak.clone();
+pub(crate) struct PlaylistPage {
+    services: Services,
+    playback: Entity<Playback>,
+    id: i64,
+    name: String,
+    detail: Option<Arc<PlaylistDetail>>,
+}
+
+impl EventEmitter<PageEvent> for PlaylistPage {}
+
+impl PlaylistPage {
+    pub(crate) fn new(
+        cx: &mut Context<Self>,
+        services: Services,
+        playback: Entity<Playback>,
+        id: i64,
+        name: String,
+    ) -> Self {
+        let mut page = Self {
+            services,
+            playback,
+            id,
+            name,
+            detail: None,
+        };
+        page.load(cx);
+        page
+    }
+
+    fn load(&mut self, cx: &mut Context<Self>) {
+        let client = self.services.client.clone();
+        let id = self.id;
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.services.handle.spawn(async move {
+            let detail = siren_core::network::api::playlist_detail(&client, id)
+                .await
+                .ok()
+                .flatten();
+            let _ = tx.send(detail);
+        });
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let detail = rx.await.ok().flatten();
+            this.update(cx, |this, cx| {
+                this.detail = detail.map(Arc::new);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+}
+
+impl Render for PlaylistPage {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let weak_back = cx.weak_entity();
         let header = div()
             .flex()
             .items_center()
@@ -25,24 +84,27 @@ impl Root {
                     .cursor_pointer()
                     .hover(|s| s.bg(theme::surface()))
                     .on_click(move |_ev, _window, cx| {
-                        weak_back.update(cx, |this, cx| this.back(cx)).ok();
+                        weak_back.update(cx, |_page, cx| cx.emit(PageEvent::Back)).ok();
                     })
                     .child(icon(IconName::ChevronLeft, 18.0, theme::text_gray())),
             )
-            .child(div().text_lg().text_color(theme::text_primary()).child(name));
+            .child(
+                div()
+                    .text_lg()
+                    .text_color(theme::text_primary())
+                    .child(self.name.clone()),
+            );
 
-        let body: AnyElement = match &self.playlist {
+        let body: AnyElement = match &self.detail {
             Some(detail) => {
                 let tracks = detail.tracks.clone();
                 let count = tracks.len();
-                let selected = self.selected;
-                let weak_list = weak.clone();
+                let weak = cx.weak_entity();
                 uniform_list("playlist-tracks", count, move |range, _window, _cx| {
                     range
                         .map(|i| {
                             let song = &tracks[i];
-                            let marker = if selected == Some(i) { "▶ " } else { "   " };
-                            let weak = weak_list.clone();
+                            let weak = weak.clone();
                             div()
                                 .id(format!("playlist-track-{}", song.id))
                                 .w_full()
@@ -56,8 +118,7 @@ impl Root {
                                 .cursor_pointer()
                                 .on_click(move |_ev, _window, cx| {
                                     weak.update(cx, |this, cx| {
-                                        let items =
-                                            this.playlist.as_ref().map(|d| d.tracks.clone()).unwrap_or_default();
+                                        let items = this.detail.as_ref().map(|d| d.tracks.clone()).unwrap_or_default();
                                         this.playback.update(cx, |pb, cx| pb.play_from(items, i, cx));
                                     })
                                     .ok();
@@ -81,7 +142,7 @@ impl Root {
                                                 .text_sm()
                                                 .text_color(theme::text_primary())
                                                 .truncate()
-                                                .child(format!("{marker}{}", song.name)),
+                                                .child(song.name.clone()),
                                         )
                                         .child(
                                             div()
