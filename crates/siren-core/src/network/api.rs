@@ -267,6 +267,102 @@ pub async fn playlist_delete(client: &NeteaseClient, id: i64) -> Result<()> {
     Ok(())
 }
 
+/// 更换歌单封面：图片字节经 NOS 直传后登记，返回服务端下发的封面地址。
+///
+/// 流程对齐 Melodia `UpdatePlaylistCoverUseCase` + `NosUploadClient`：
+/// 申请 token → 取上传主机 → 传字节 → 登记（`coverImgId` = `docId`）。
+pub async fn update_playlist_cover(
+    client: &NeteaseClient,
+    playlist_id: i64,
+    bytes: Vec<u8>,
+    ext: &str,
+    filename: &str,
+) -> Result<String> {
+    // 1. 申请上传凭证（图片场景 type=other，不带 md5）
+    let token_value = client
+        .weapi_post(
+            path::NOS_TOKEN_ALLOC,
+            &json!({
+                "bucket": "",
+                "ext": ext,
+                "filename": filename,
+                "local": false,
+                "nos_product": 3,
+                "type": "other"
+            }),
+        )
+        .await?;
+    validate(&token_value)?;
+    let result = token_value.get("result").unwrap_or(&serde_json::Value::Null);
+    let bucket = result
+        .get("bucket")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let nos_token = result
+        .get("token")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let object_key = result
+        .get("objectKey")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let doc_id = result.get("docId").and_then(Value::as_i64).unwrap_or_default();
+    if bucket.is_empty() || object_key.is_empty() || doc_id <= 0 {
+        return Err(Error::Biz {
+            code: 0,
+            message: "NOS 凭证获取失败".into(),
+        });
+    }
+
+    // 2. 取上传主机（第三方主机，使用独立 client，不带 Cookie）
+    let http = reqwest::Client::new();
+    let lbs: Value = http
+        .get(format!("https://wanproxy.127.net/lbs?version=1.0&bucketname={bucket}"))
+        .send()
+        .await?
+        .json()
+        .await?;
+    let host = lbs
+        .get("upload")
+        .and_then(Value::as_array)
+        .and_then(|a| a.first())
+        .and_then(Value::as_str)
+        .ok_or_else(|| Error::Network("NOS 上传地址获取失败".into()))?
+        .to_string();
+
+    // 3. 上传字节（objectKey 含斜杠需转义为单一路径段）
+    let encoded = object_key.replace('/', "%2F");
+    let url = format!("{host}/{bucket}/{encoded}?offset=0&complete=true&version=1.0");
+    let mime = if ext.eq_ignore_ascii_case("png") {
+        "image/png"
+    } else {
+        "image/jpeg"
+    };
+    let resp = http
+        .post(url)
+        .header("x-nos-token", nos_token)
+        .header("Content-Type", mime)
+        .body(bytes)
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        return Err(Error::Network(format!("NOS 上传失败: HTTP {}", resp.status())));
+    }
+
+    // 4. 登记封面（coverImgId = docId），返回服务端下发的封面地址
+    let value = client
+        .weapi_post(
+            path::PLAYLIST_COVER_UPDATE,
+            &json!({ "id": playlist_id, "coverImgId": doc_id }),
+        )
+        .await?;
+    validate(&value)?;
+    Ok(value.get("url").and_then(Value::as_str).unwrap_or_default().to_string())
+}
+
 /// 更新歌单简介（EAPI）。
 pub async fn playlist_update_desc(client: &NeteaseClient, id: i64, desc: &str) -> Result<()> {
     let value = client

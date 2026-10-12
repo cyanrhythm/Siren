@@ -123,6 +123,50 @@ impl PlaylistPage {
         })
         .detach();
     }
+
+    /// 更换封面：选择图片 → NOS 直传 → 登记 → 重载。
+    fn change_cover(&mut self, cx: &mut Context<Self>) {
+        let options = PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("选择封面图片".into()),
+        };
+        let task = cx.prompt_for_paths(options);
+        let client = self.services.client.clone();
+        let handle = self.services.handle.clone();
+        let pid = self.id;
+        cx.spawn(async move |this, cx| {
+            let picked = match task.await {
+                Ok(Ok(paths)) => paths.and_then(|mut v| v.pop()),
+                _ => None,
+            };
+            let Some(path) = picked else { return };
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("jpg").to_string();
+            let filename = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("cover.jpg")
+                .to_string();
+            let Ok(bytes) = std::fs::read(&path) else { return };
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            handle.spawn(async move {
+                let ok = siren_core::network::api::update_playlist_cover(&client, pid, bytes, &ext, &filename)
+                    .await
+                    .is_ok();
+                let _ = tx.send(ok);
+            });
+            let ok = rx.await.unwrap_or(false);
+            this.update(cx, |this, cx| {
+                if ok {
+                    this.load(cx);
+                    cx.emit(PageEvent::PlaylistChanged);
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
 }
 
 impl Render for PlaylistPage {
@@ -194,9 +238,13 @@ impl Render for PlaylistPage {
                     .icon(IconName::Ellipsis)
                     .dropdown_menu(move |menu, _w, _cx| {
                         let weak = weak_menu.clone();
+                        let weak_cover = weak_menu.clone();
                         menu.item(PopupMenuItem::new("编辑简介").on_click(move |_ev, _w, cx| {
                             weak.update(cx, |_p, cx| cx.emit(PageEvent::EditPlaylistDesc { id: pid }))
                                 .ok();
+                        }))
+                        .item(PopupMenuItem::new("更换封面").on_click(move |_ev, _w, cx| {
+                            weak_cover.update(cx, |page, cx| page.change_cover(cx)).ok();
                         }))
                     })
             });

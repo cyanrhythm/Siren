@@ -91,4 +91,8 @@ pub mod path {
     pub const PLAYLIST_UPDATE_DESC: &str = "/eapi/playlist/desc/update";
     /// 歌曲详情（EAPI 批量，`c=[{"id":..}]`）。
     pub const SONG_DETAIL_V3: &str = "/eapi/v3/song/detail";
+    /// 申请 NOS 上传凭证（WEAPI）。
+    pub const NOS_TOKEN_ALLOC: &str = "/weapi/nos/token/alloc";
+    /// 登记歌单封面（WEAPI）。
+    pub const PLAYLIST_COVER_UPDATE: &str = "/weapi/playlist/cover/update";
 }

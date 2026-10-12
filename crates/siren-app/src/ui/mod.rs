@@ -103,6 +103,8 @@ pub(crate) enum PageEvent {
     EditPlaylistDesc {
         id: i64,
     },
+    /// 歌单信息已变更（封面等），请外壳刷新。
+    PlaylistChanged,
 }
 
 /// 正在播放栏的卡片（可配置顺序/显隐）。
@@ -410,6 +412,7 @@ impl Root {
             PageEvent::RenamePlaylist { id } => self.open_rename(*id, cx),
             PageEvent::DeletePlaylist { id } => self.open_delete(*id, cx),
             PageEvent::EditPlaylistDesc { id } => self.open_desc(*id, cx),
+            PageEvent::PlaylistChanged => self.library.update(cx, |page, cx| page.reload_playlists(cx)),
         }
     }
 
