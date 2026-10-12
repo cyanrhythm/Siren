@@ -23,4 +23,8 @@ pub mod path {
     pub const SONG_URL_EAPI: &str = "/eapi/song/enhance/player/url/v1";
     /// 账号信息。
     pub const ACCOUNT: &str = "/weapi/w/nuser/account/get";
+    /// 推荐歌单。
+    pub const PERSONALIZED_PLAYLISTS: &str = "/weapi/personalized/playlist";
+    /// 歌单详情。
+    pub const PLAYLIST_DETAIL: &str = "/weapi/v6/playlist/detail";
 }

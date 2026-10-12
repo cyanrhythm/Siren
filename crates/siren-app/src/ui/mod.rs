@@ -1,9 +1,7 @@
 //! GPUI 界面。
 //!
-//! 当前为可运行骨架：搜索 + 结果列表 + 播放条，串起 `siren-core` 的
-//! 异步网络层与 [`siren_core::player::Player`]。
-//!
-//! ## 结构
+//! 多页面骨架：侧栏导航 + 首页（推荐歌单）/ 音乐库 / 搜索 / 歌单详情 + 播放条，
+//! 串起 `siren-core` 的异步网络层与 [`siren_core::player::Player`]。
 //!
 //! - `pages/`：页面级组件（首页、搜索、歌单、设置等）
 //! - `components/`：可复用组件（播放条、曲目行、封面等）
@@ -21,7 +19,7 @@ use gpui_kit::component::slider::{Slider, SliderEvent, SliderState, SliderValue}
 use gpui_kit::component::Icon;
 use gpui_kit::*;
 
-use siren_core::model::Song;
+use siren_core::model::{Playlist, PlaylistDetail, Song};
 use siren_core::network::client::NeteaseClient;
 use siren_core::player::{Mpv, PlayMode, PlaybackController, PlaybackState, Player, SilentEngine};
 use siren_platform::{
@@ -30,21 +28,44 @@ use siren_platform::{
 
 use crate::theme;
 
+/// 当前页面。
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Route {
+    Home,
+    Library,
+    Search,
+    Playlist { id: i64, name: String },
+}
+
 /// 主窗口根组件。
 pub struct Root {
     runtime: tokio::runtime::Runtime,
     client: Arc<NeteaseClient>,
     player: Player,
+    nav: Vec<Route>,
+
+    // 首页/音乐库
+    playlists: Arc<Vec<Playlist>>,
+    playlists_status: SharedString,
+
+    // 搜索
     search_input: Entity<InputState>,
     songs: Arc<Vec<Song>>,
-    status: SharedString,
     selected: Option<usize>,
+    search_status: SharedString,
+
+    // 歌单详情
+    playlist: Option<Arc<PlaylistDetail>>,
+
+    // 播放
+    status: SharedString,
     mirrored: PlaybackState,
     seeking: bool,
     progress_slider: Entity<SliderState>,
     volume_slider: Entity<SliderState>,
     media: Option<PlatformMediaSession>,
     media_cmds: std::sync::mpsc::Receiver<MediaCommand>,
+
     _search_sub: Subscription,
     _progress_sub: Subscription,
     _volume_sub: Subscription,
@@ -125,10 +146,15 @@ impl Root {
                 runtime,
                 client,
                 player,
+                nav: vec![Route::Home],
+                playlists: Arc::new(Vec::new()),
+                playlists_status: "加载中…".into(),
                 search_input,
                 songs: Arc::new(Vec::new()),
-                status: "回车搜索".into(),
                 selected: None,
+                search_status: "回车搜索".into(),
+                playlist: None,
+                status: "就绪".into(),
                 mirrored: PlaybackState::default(),
                 seeking: false,
                 progress_slider,
@@ -143,12 +169,34 @@ impl Root {
 
         entity.update(cx, |this, cx| {
             this.start_tick_timer(window, cx);
-            this.start_search(cx);
+            this.load_playlists(cx);
         });
         entity
     }
 
-    /// 每 500ms 驱动播放器刷新并同步 UI。
+    fn route(&self) -> Route {
+        self.nav.last().cloned().unwrap_or(Route::Home)
+    }
+
+    fn go(&mut self, route: Route, cx: &mut Context<Self>) {
+        self.nav.truncate(1);
+        if let Route::Home = route {
+        } else {
+            self.nav.push(route);
+        }
+        if matches!(self.route(), Route::Home) && self.playlists.is_empty() {
+            self.load_playlists(cx);
+        }
+        cx.notify();
+    }
+
+    fn back(&mut self, cx: &mut Context<Self>) {
+        if self.nav.len() > 1 {
+            self.nav.pop();
+            cx.notify();
+        }
+    }
+
     fn start_tick_timer(&mut self, window: &Window, cx: &mut Context<Self>) {
         cx.spawn_in(window, async move |this, cx| loop {
             cx.background_executor().timer(Duration::from_millis(500)).await;
@@ -161,10 +209,8 @@ impl Root {
 
     fn tick(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(song) = self.player.tick() {
-            // 自然播完后切歌：解析地址并播放
             self.resolve_and_play(song, cx);
         }
-
         let state = self.player.state();
         if !self.seeking {
             let frac = if state.duration_ms > 0 {
@@ -179,75 +225,59 @@ impl Root {
             self.mirrored = state;
             cx.notify();
         }
-
         while let Ok(command) = self.media_cmds.try_recv() {
             self.apply_media_command(command, cx);
         }
         self.push_media_state();
     }
 
-    /// 处理系统媒体指令。
-    fn apply_media_command(&mut self, command: MediaCommand, cx: &mut Context<Self>) {
-        match command {
-            MediaCommand::Play => self.player.play(),
-            MediaCommand::Pause | MediaCommand::Stop => self.player.pause(),
-            MediaCommand::Toggle => self.player.toggle(),
-            MediaCommand::Next => {
-                self.next_track(cx);
-                return;
-            }
-            MediaCommand::Previous => {
-                if let Some(song) = self.player.previous_track() {
-                    self.resolve_and_play(song, cx);
-                }
-                return;
-            }
-            MediaCommand::SeekTo(ms) => self.player.seek_ms(ms as i64),
-            MediaCommand::SeekBy(delta) => {
-                let target = self.player.state().position_ms + delta;
-                self.player.seek_ms(target);
-            }
-            MediaCommand::SetVolume(v) => self.player.set_volume(v * 100.0),
-            MediaCommand::SetShuffle(on) => {
-                if on {
-                    self.player.set_mode(PlayMode::Shuffle);
-                }
-            }
-            MediaCommand::SetRepeat(one) => {
-                self.player
-                    .set_mode(if one { PlayMode::SingleLoop } else { PlayMode::ListLoop });
-            }
-        }
+    // ---------- 数据加载 ----------
+
+    fn load_playlists(&mut self, cx: &mut Context<Self>) {
+        let client = self.client.clone();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.runtime.handle().spawn(async move {
+            let list = siren_core::network::api::personalized_playlists(&client, 30)
+                .await
+                .unwrap_or_default();
+            let _ = tx.send(list);
+        });
+        self.playlists_status = "加载推荐歌单…".into();
         cx.notify();
+        cx.spawn(async move |this, cx| {
+            let list = rx.await.unwrap_or_default();
+            this.update(cx, |this, cx| {
+                this.playlists_status = format!("推荐歌单 {} 个", list.len()).into();
+                this.playlists = Arc::new(list);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
-    /// 把当前播放状态推送到系统媒体控制。
-    fn push_media_state(&self) {
-        let Some(media) = &self.media else {
-            return;
-        };
-        let state = self.player.state();
-        let metadata = match &state.song {
-            Some(song) => MediaMetadata {
-                id: song.id.to_string(),
-                title: song.name.clone(),
-                artists: vec![song.artists.clone()],
-                album: song.album.clone(),
-                artwork_url: None,
-                url: None,
-                duration_ms: (state.duration_ms > 0).then_some(state.duration_ms as u64),
-            },
-            None => MediaMetadata::default(),
-        };
-        let status = if state.playing {
-            PlaybackStatus::Playing
-        } else {
-            PlaybackStatus::Paused
-        };
-        media.set_metadata(&metadata);
-        media.set_playback_status(status);
-        media.set_timeline(state.position_ms.max(0) as u64, state.duration_ms.max(0) as u64);
-        media.set_mode(state.mode);
+    fn open_playlist(&mut self, id: i64, name: String, cx: &mut Context<Self>) {
+        self.nav.push(Route::Playlist { id, name });
+        self.playlist = None;
+        let client = self.client.clone();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.runtime.handle().spawn(async move {
+            let detail = siren_core::network::api::playlist_detail(&client, id)
+                .await
+                .ok()
+                .flatten();
+            let _ = tx.send(detail);
+        });
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let detail = rx.await.ok().flatten();
+            this.update(cx, |this, cx| {
+                this.playlist = detail.map(Arc::new);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn start_search(&mut self, cx: &mut Context<Self>) {
@@ -255,7 +285,7 @@ impl Root {
         if keyword.is_empty() {
             return;
         }
-        self.status = format!("搜索中：{keyword}").into();
+        self.search_status = format!("搜索中：{keyword}").into();
         cx.notify();
 
         let client = self.client.clone();
@@ -270,13 +300,9 @@ impl Root {
         cx.spawn(async move |this, cx| {
             let songs = rx.await.unwrap_or_default();
             this.update(cx, |this, cx| {
-                let items = songs.clone();
+                this.search_status = format!("搜索到 {} 首", songs.len()).into();
                 this.songs = Arc::new(songs);
                 this.selected = None;
-                this.status = format!("搜索到 {} 首", this.songs.len()).into();
-                if let Some(first) = this.player.set_queue(items) {
-                    this.resolve_and_play(first, cx);
-                }
                 cx.notify();
             })
             .ok();
@@ -284,20 +310,21 @@ impl Root {
         .detach();
     }
 
-    /// 点击结果行：选中并解析播放。
-    fn select_song(&mut self, index: usize, cx: &mut Context<Self>) {
-        let Some(song) = self.songs.get(index).cloned() else {
-            return;
-        };
+    /// 用给定的歌曲列表建立队列并播放指定下标。
+    fn play_from(&mut self, items: Vec<Song>, index: usize, cx: &mut Context<Self>) {
         self.selected = Some(index);
-        if let Some(target) = self.player.play_at(index) {
+        if let Some(song) = self.player.set_queue(items) {
+            let target = if index == 0 {
+                song
+            } else if let Some(s) = self.player.play_at(index) {
+                s
+            } else {
+                song
+            };
             self.resolve_and_play(target, cx);
-        } else {
-            self.resolve_and_play(song, cx);
         }
     }
 
-    /// 异步解析播放地址后交给播放器加载。
     fn resolve_and_play(&mut self, song: Song, cx: &mut Context<Self>) {
         let client = self.client.clone();
         let id = song.id;
@@ -348,33 +375,258 @@ impl Root {
             self.resolve_and_play(song, cx);
         }
     }
-}
 
-impl Render for Root {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let vw = f32::from(window.viewport_size().width);
+    fn apply_media_command(&mut self, command: MediaCommand, cx: &mut Context<Self>) {
+        match command {
+            MediaCommand::Play => self.player.play(),
+            MediaCommand::Pause | MediaCommand::Stop => self.player.pause(),
+            MediaCommand::Toggle => self.player.toggle(),
+            MediaCommand::Next => {
+                self.next_track(cx);
+                return;
+            }
+            MediaCommand::Previous => {
+                if let Some(song) = self.player.previous_track() {
+                    self.resolve_and_play(song, cx);
+                }
+                return;
+            }
+            MediaCommand::SeekTo(ms) => self.player.seek_ms(ms as i64),
+            MediaCommand::SeekBy(delta) => {
+                let target = self.player.state().position_ms + delta;
+                self.player.seek_ms(target);
+            }
+            MediaCommand::SetVolume(v) => self.player.set_volume(v * 100.0),
+            MediaCommand::SetShuffle(on) => {
+                if on {
+                    self.player.set_mode(PlayMode::Shuffle);
+                }
+            }
+            MediaCommand::SetRepeat(one) => {
+                self.player
+                    .set_mode(if one { PlayMode::SingleLoop } else { PlayMode::ListLoop });
+            }
+        }
+        cx.notify();
+    }
+
+    fn push_media_state(&self) {
+        let Some(media) = &self.media else {
+            return;
+        };
         let state = self.player.state();
-        let weak = cx.weak_entity();
+        let metadata = match &state.song {
+            Some(song) => MediaMetadata {
+                id: song.id.to_string(),
+                title: song.name.clone(),
+                artists: vec![song.artists.clone()],
+                album: song.album.clone(),
+                artwork_url: None,
+                url: None,
+                duration_ms: (state.duration_ms > 0).then_some(state.duration_ms as u64),
+            },
+            None => MediaMetadata::default(),
+        };
+        let status = if state.playing {
+            PlaybackStatus::Playing
+        } else {
+            PlaybackStatus::Paused
+        };
+        media.set_metadata(&metadata);
+        media.set_playback_status(status);
+        media.set_timeline(state.position_ms.max(0) as u64, state.duration_ms.max(0) as u64);
+        media.set_mode(state.mode);
+    }
 
-        let header = div().h(px(64.0)).w_full().flex().items_center().justify_center().child(
+    // ---------- 渲染 ----------
+
+    fn sidebar(&self, weak: WeakEntity<Self>) -> impl IntoElement {
+        let current = self.route();
+        let nav_item =
+            |id: &'static str, icon_name: IconName, label: &'static str, route: Route, weak: WeakEntity<Self>| {
+                let active = matches!(
+                    (&current, &route),
+                    (Route::Home, Route::Home) | (Route::Library, Route::Library) | (Route::Search, Route::Search)
+                );
+                div()
+                    .id(id)
+                    .w_full()
+                    .h(px(40.0))
+                    .px(px(12.0))
+                    .flex()
+                    .items_center()
+                    .gap(px(10.0))
+                    .rounded(px(6.0))
+                    .cursor_pointer()
+                    .bg(if active { theme::surface() } else { theme::pane() })
+                    .hover(|s| s.bg(theme::surface()))
+                    .on_click(move |_ev, _window, cx| {
+                        weak.update(cx, |this, cx| this.go(route.clone(), cx)).ok();
+                    })
+                    .child(icon(
+                        icon_name,
+                        18.0,
+                        if active {
+                            theme::text_primary()
+                        } else {
+                            theme::text_gray()
+                        },
+                    ))
+                    .child(div().text_sm().text_color(theme::text_primary()).child(label))
+            };
+
+        let weak_home = weak.clone();
+        let weak_library = weak.clone();
+        let weak_search = weak.clone();
+        div()
+            .v_flex()
+            .w(px(210.0))
+            .min_w(px(210.0))
+            .h_full()
+            .flex_none()
+            .flex_shrink_0()
+            .bg(theme::pane())
+            .p(px(12.0))
+            .gap(px(4.0))
+            .child(
+                div()
+                    .px(px(8.0))
+                    .py(px(10.0))
+                    .text_xl()
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(theme::accent())
+                    .child("Siren"),
+            )
+            .child(nav_item("nav-home", IconName::House, "首页", Route::Home, weak_home))
+            .child(nav_item(
+                "nav-library",
+                IconName::Heart,
+                "音乐库",
+                Route::Library,
+                weak_library,
+            ))
+            .child(nav_item(
+                "nav-search",
+                IconName::Search,
+                "搜索",
+                Route::Search,
+                weak_search,
+            ))
+            .child(div().flex_1())
+            .child(
+                div()
+                    .px(px(8.0))
+                    .text_xs()
+                    .text_color(theme::text_gray())
+                    .child(self.status.clone()),
+            )
+    }
+
+    fn page(&self, weak: WeakEntity<Self>) -> impl IntoElement {
+        match self.route() {
+            Route::Home => self.home_page(weak).into_any_element(),
+            Route::Library => self.library_page().into_any_element(),
+            Route::Search => self.search_page(weak).into_any_element(),
+            Route::Playlist { name, .. } => self.playlist_page(name, weak).into_any_element(),
+        }
+    }
+
+    fn home_page(&self, weak: WeakEntity<Self>) -> impl IntoElement {
+        let playlists = self.playlists.clone();
+        let count = playlists.len();
+        let weak_list = weak;
+        let list = uniform_list("home-playlists", count, move |range, _window, _cx| {
+            range
+                .map(|i| {
+                    let pl = &playlists[i];
+                    let weak = weak_list.clone();
+                    let id = pl.id;
+                    let name = pl.name.clone();
+                    div()
+                        .id(i)
+                        .w_full()
+                        .h(px(64.0))
+                        .px(px(16.0))
+                        .flex()
+                        .items_center()
+                        .gap(px(14.0))
+                        .rounded(px(8.0))
+                        .hover(|s| s.bg(theme::card_surface()))
+                        .cursor_pointer()
+                        .on_click(move |_ev, _window, cx| {
+                            weak.update(cx, |this, cx| {
+                                this.open_playlist(id, name.clone(), cx);
+                            })
+                            .ok();
+                        })
+                        .child(cover_placeholder(48.0))
+                        .child(
+                            div()
+                                .v_flex()
+                                .flex_1()
+                                .min_w(px(0.0))
+                                .overflow_hidden()
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(theme::text_primary())
+                                        .truncate()
+                                        .child(pl.name.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(theme::text_gray())
+                                        .child(format!("{} 首", pl.track_count)),
+                                ),
+                        )
+                        .into_any_element()
+                })
+                .collect::<Vec<_>>()
+        })
+        .flex_1()
+        .w_full()
+        .min_w(px(0.0));
+
+        page_shell(format!("首页 · {}", self.playlists_status), list.into_any_element())
+    }
+
+    fn library_page(&self) -> impl IntoElement {
+        page_shell(
+            "音乐库".to_string(),
             div()
-                .w(px(520.0))
-                .h(px(44.0))
+                .flex_1()
                 .flex()
                 .items_center()
-                .gap(px(10.0))
-                .px(px(14.0))
-                .rounded(px(22.0))
-                .bg(theme::surface())
-                .child(icon(IconName::Search, 18.0, theme::text_gray()))
-                .child(div().flex_1().child(Input::new(&self.search_input))),
-        );
+                .justify_center()
+                .child(
+                    div()
+                        .v_flex()
+                        .items_center()
+                        .gap(px(8.0))
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(theme::text_primary())
+                                .child("登录后查看你的歌单、收藏与最近播放"),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(theme::text_gray())
+                                .child("（Cookie 登录待接入界面）"),
+                        ),
+                )
+                .into_any_element(),
+        )
+    }
 
+    fn search_page(&self, weak: WeakEntity<Self>) -> impl IntoElement {
         let songs = self.songs.clone();
         let count = songs.len();
         let selected = self.selected;
-        let weak_list = weak.clone();
-        let list = uniform_list("results", count, move |range, _window, _cx| {
+        let weak_list = weak;
+        let list = uniform_list("search-results", count, move |range, _window, _cx| {
             range
                 .map(|i| {
                     let song = &songs[i];
@@ -389,10 +641,14 @@ impl Render for Root {
                         .items_center()
                         .gap(px(12.0))
                         .rounded(px(6.0))
-                        .bg(theme::window_bg())
                         .hover(|s| s.bg(theme::card_surface()))
+                        .cursor_pointer()
                         .on_click(move |_ev, _window, cx| {
-                            weak.update(cx, |this, cx| this.select_song(i, cx)).ok();
+                            weak.update(cx, |this, cx| {
+                                let items = this.songs.as_ref().clone();
+                                this.play_from(items, i, cx);
+                            })
+                            .ok();
                         })
                         .child(
                             div()
@@ -431,6 +687,137 @@ impl Render for Root {
         .w_full()
         .min_w(px(0.0));
 
+        page_shell(
+            format!("搜索 · {}", self.search_status),
+            div()
+                .v_flex()
+                .flex_1()
+                .min_w(px(0.0))
+                .child(
+                    div().p(px(12.0)).child(
+                        div()
+                            .w(px(420.0))
+                            .h(px(40.0))
+                            .flex()
+                            .items_center()
+                            .gap(px(10.0))
+                            .px(px(14.0))
+                            .rounded(px(20.0))
+                            .bg(theme::surface())
+                            .child(icon(IconName::Search, 18.0, theme::text_gray()))
+                            .child(div().flex_1().child(Input::new(&self.search_input))),
+                    ),
+                )
+                .child(list)
+                .into_any_element(),
+        )
+    }
+
+    fn playlist_page(&self, name: String, weak: WeakEntity<Self>) -> impl IntoElement {
+        let weak_back = weak.clone();
+        let header = div()
+            .flex()
+            .items_center()
+            .gap(px(10.0))
+            .child(
+                div()
+                    .id("nav-back")
+                    .size(px(30.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_full()
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme::surface()))
+                    .on_click(move |_ev, _window, cx| {
+                        weak_back.update(cx, |this, cx| this.back(cx)).ok();
+                    })
+                    .child(icon(IconName::ChevronLeft, 18.0, theme::text_gray())),
+            )
+            .child(div().text_lg().text_color(theme::text_primary()).child(name));
+
+        let body: AnyElement = match &self.playlist {
+            Some(detail) => {
+                let tracks = detail.tracks.clone();
+                let count = tracks.len();
+                let selected = self.selected;
+                let weak_list = weak.clone();
+                uniform_list("playlist-tracks", count, move |range, _window, _cx| {
+                    range
+                        .map(|i| {
+                            let song = &tracks[i];
+                            let marker = if selected == Some(i) { "▶ " } else { "   " };
+                            let weak = weak_list.clone();
+                            div()
+                                .id(i)
+                                .w_full()
+                                .h(px(48.0))
+                                .px(px(16.0))
+                                .flex()
+                                .items_center()
+                                .gap(px(12.0))
+                                .rounded(px(6.0))
+                                .hover(|s| s.bg(theme::card_surface()))
+                                .cursor_pointer()
+                                .on_click(move |_ev, _window, cx| {
+                                    weak.update(cx, |this, cx| {
+                                        let items =
+                                            this.playlist.as_ref().map(|d| d.tracks.clone()).unwrap_or_default();
+                                        this.play_from(items, i, cx);
+                                    })
+                                    .ok();
+                                })
+                                .child(
+                                    div()
+                                        .w(px(24.0))
+                                        .text_sm()
+                                        .text_color(theme::text_gray())
+                                        .child(format!("{}", i + 1)),
+                                )
+                                .child(cover_placeholder(36.0))
+                                .child(
+                                    div()
+                                        .v_flex()
+                                        .flex_1()
+                                        .min_w(px(0.0))
+                                        .overflow_hidden()
+                                        .child(
+                                            div()
+                                                .text_sm()
+                                                .text_color(theme::text_primary())
+                                                .truncate()
+                                                .child(format!("{marker}{}", song.name)),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(theme::text_gray())
+                                                .truncate()
+                                                .child(song.artists.clone()),
+                                        ),
+                                )
+                                .into_any_element()
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .flex_1()
+                .w_full()
+                .min_w(px(0.0))
+                .into_any_element()
+            }
+            None => div()
+                .flex_1()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(div().text_sm().text_color(theme::text_gray()).child("加载歌单中…"))
+                .into_any_element(),
+        };
+        page_shell_with_header(header.into_any_element(), body)
+    }
+
+    fn player_bar(&self, weak: WeakEntity<Self>, vw: f32) -> impl IntoElement {
+        let state = self.player.state();
         let playing = state.playing;
         let title = state
             .song
@@ -440,12 +827,11 @@ impl Render for Root {
         let artist = state.song.as_ref().map(|s| s.artists.clone()).unwrap_or_default();
         let pos_label = fmt_time(state.position_ms);
         let dur_label = fmt_time(state.duration_ms);
-        let vol_icon = IconName::Volume2;
-        let progress_w = (vw - 300.0 - 260.0 - 64.0).max(160.0);
+        let progress_w = (vw - 210.0 - 300.0 - 240.0 - 64.0).max(160.0);
 
         let weak_play = weak.clone();
         let weak_next = weak;
-        let player_bar = div()
+        div()
             .w_full()
             .h(px(theme::PLAYER_BAR_H))
             .flex()
@@ -488,7 +874,7 @@ impl Render for Root {
                             .flex()
                             .items_center()
                             .gap(px(16.0))
-                            .child(icon_button("prev", IconName::SkipBack, 32.0, true))
+                            .child(icon(IconName::SkipBack, 22.0, theme::text_primary()))
                             .child(
                                 div()
                                     .id("play")
@@ -554,34 +940,53 @@ impl Render for Root {
                     .items_center()
                     .justify_end()
                     .gap(px(8.0))
-                    .child(icon(vol_icon, 18.0, theme::text_gray()))
+                    .child(icon(IconName::Volume2, 18.0, theme::text_gray()))
                     .child(div().w(px(120.0)).child(Slider::new(&self.volume_slider))),
-            );
+            )
+    }
+}
 
+impl Render for Root {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let vw = f32::from(window.viewport_size().width);
+        let weak = cx.weak_entity();
         div()
             .v_flex()
             .size_full()
             .bg(theme::window_bg())
-            .child(header)
             .child(
                 div()
-                    .v_flex()
                     .flex_1()
                     .w_full()
-                    .min_w(px(0.0))
+                    .flex()
                     .overflow_hidden()
-                    .child(list),
+                    .child(self.sidebar(weak.clone()))
+                    .child(self.page(weak.clone())),
             )
-            .child(
-                div().w_full().flex().items_center().justify_center().child(
-                    div()
-                        .text_xs()
-                        .text_color(theme::text_gray())
-                        .child(self.status.clone()),
-                ),
-            )
-            .child(player_bar)
+            .child(self.player_bar(weak, vw))
     }
+}
+
+fn page_shell(title: String, body: AnyElement) -> impl IntoElement {
+    page_shell_with_header(
+        div()
+            .text_lg()
+            .text_color(theme::text_primary())
+            .child(title)
+            .into_any_element(),
+        body,
+    )
+}
+
+fn page_shell_with_header(header: AnyElement, body: AnyElement) -> impl IntoElement {
+    div()
+        .v_flex()
+        .flex_1()
+        .min_w(px(0.0))
+        .h_full()
+        .bg(theme::pane())
+        .child(div().w_full().p(px(12.0)).child(header))
+        .child(body)
 }
 
 fn fmt_time(ms: i64) -> String {
@@ -591,19 +996,6 @@ fn fmt_time(ms: i64) -> String {
 
 fn icon(name: IconName, size: f32, color: Rgba) -> Icon {
     Icon::new(name).size(px(size)).text_color(color)
-}
-
-fn icon_button(id: &'static str, name: IconName, size: f32, _enabled: bool) -> impl IntoElement {
-    div()
-        .id(id)
-        .size(px(size))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded_full()
-        .cursor_pointer()
-        .hover(|s| s.bg(theme::surface()))
-        .child(icon(name, 18.0, theme::text_gray()))
 }
 
 fn cover_placeholder(size: f32) -> impl IntoElement {

@@ -3,7 +3,7 @@
 use serde_json::{json, Value};
 
 use crate::error::Result;
-use crate::model::{parse_search_songs, Song};
+use crate::model::{parse_search_songs, Playlist, PlaylistDetail, Song};
 use crate::network::client::NeteaseClient;
 use crate::network::endpoints::path;
 
@@ -43,6 +43,20 @@ pub async fn song_url_eapi(client: &NeteaseClient, id: i64, level: &str) -> Resu
 /// 账号信息（含登录态）。
 pub async fn account(client: &NeteaseClient) -> Result<Value> {
     client.weapi_post(path::ACCOUNT, &json!({})).await
+}
+
+/// 推荐歌单。
+pub async fn personalized_playlists(client: &NeteaseClient, limit: u32) -> Result<Vec<Playlist>> {
+    let body = json!({ "limit": limit, "offset": 0, "total": true });
+    let value = client.weapi_post(path::PERSONALIZED_PLAYLISTS, &body).await?;
+    Ok(crate::model::parse_personalized_playlists(&value))
+}
+
+/// 歌单详情（含曲目）。
+pub async fn playlist_detail(client: &NeteaseClient, id: i64) -> Result<Option<PlaylistDetail>> {
+    let body = json!({ "id": id, "n": 1000, "s": 8 });
+    let value = client.weapi_post(path::PLAYLIST_DETAIL, &body).await?;
+    Ok(crate::model::parse_playlist_detail(&value))
 }
 
 /// 从播放地址返回体取第一条的 url。
