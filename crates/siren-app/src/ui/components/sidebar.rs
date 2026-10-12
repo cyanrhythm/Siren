@@ -53,6 +53,7 @@ impl Root {
             .h_full()
             .flex_none()
             .flex_shrink_0()
+            .rounded(px(8.0))
             .bg(theme::pane())
             .p(px(12.0))
             .gap(px(4.0))

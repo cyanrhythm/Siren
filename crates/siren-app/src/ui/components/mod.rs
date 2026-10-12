@@ -2,5 +2,7 @@
 //!
 //! 视图方法以 `impl Root` 分文件承载（同一 crate 内允许）。
 
+mod now_playing;
 mod player_bar;
 mod sidebar;
+mod title_bar;

@@ -159,18 +159,31 @@ impl Render for Root {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let vw = f32::from(window.viewport_size().width);
         let weak = cx.weak_entity();
+        // 中间列显式分配宽度，规避 gpui `flex_1` 的横向过度伸展
+        let page_w = (vw - 210.0 - 340.0 - 32.0).max(240.0);
         div()
             .v_flex()
             .size_full()
             .bg(theme::window_bg())
+            .child(self.title_bar(weak.clone(), vw, cx))
             .child(
                 div()
                     .flex_1()
                     .w_full()
                     .flex()
+                    .gap(px(8.0))
+                    .px(px(8.0))
                     .overflow_hidden()
                     .child(self.sidebar(weak.clone(), cx))
-                    .child(self.page()),
+                    .child(
+                        div()
+                            .w(px(page_w))
+                            .flex_none()
+                            .h_full()
+                            .overflow_hidden()
+                            .child(self.page()),
+                    )
+                    .child(self.now_playing(cx)),
             )
             .child(self.player_bar(weak, vw, cx))
     }
