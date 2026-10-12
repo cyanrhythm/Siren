@@ -7,7 +7,7 @@ pub mod quality;
 pub mod wiki;
 
 pub use quality::AudioQuality;
-pub use wiki::{parse_song_wiki, CreatorRole, SongWiki};
+pub use wiki::{parse_song_wiki, CreatorRole, MusicMemory, SongWiki};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

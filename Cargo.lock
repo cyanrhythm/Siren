@@ -5941,6 +5941,7 @@ name = "siren-app"
 version = "0.1.0"
 dependencies = [
  "gpui-kit",
+ "image",
  "siren-core",
  "siren-platform",
  "tokio",

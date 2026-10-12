@@ -69,4 +69,8 @@ pub mod path {
     pub const ARTIST_FOLLOW_COUNT: &str = "/weapi/artist/follow/count/get";
     /// 收藏/取消收藏歌手（WEAPI，后接 `sub` / `unsub`）。
     pub const ARTIST_SUB: &str = "/weapi/artist/";
+    /// 相似歌曲（EAPI）。
+    pub const SIMI_SONG: &str = "/eapi/v1/discovery/simiSong";
+    /// 心动模式推荐（EAPI）。
+    pub const INTELLIGENCE: &str = "/eapi/playmode/intelligence/list";
 }

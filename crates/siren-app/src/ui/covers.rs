@@ -29,6 +29,7 @@ fn bucket(size: f32) -> u32 {
 #[derive(Clone)]
 pub(crate) struct CoverLoader {
     cache: Arc<Mutex<HashMap<String, Arc<Image>>>>,
+    colors: Arc<Mutex<HashMap<String, Rgba>>>,
     inflight: Arc<Mutex<HashSet<String>>>,
     client: Arc<NeteaseClient>,
     handle: tokio::runtime::Handle,
@@ -38,6 +39,7 @@ impl CoverLoader {
     pub(crate) fn new(client: Arc<NeteaseClient>, handle: tokio::runtime::Handle) -> Self {
         Self {
             cache: Arc::new(Mutex::new(HashMap::new())),
+            colors: Arc::new(Mutex::new(HashMap::new())),
             inflight: Arc::new(Mutex::new(HashSet::new())),
             client,
             handle,
@@ -54,6 +56,12 @@ impl CoverLoader {
             return img(image).w(px(size)).h(px(size)).rounded(px(6.0)).into_any_element();
         }
         cover_placeholder(size).into_any_element()
+    }
+
+    /// 封面主色（未取到返回 None）。
+    pub(crate) fn color(&self, url: &str) -> Option<Rgba> {
+        let base = url.split('?').next().unwrap_or(url).to_string();
+        self.colors.lock().unwrap().get(&base).copied()
     }
 
     /// 只读：圆形裁剪（头像）。
@@ -84,21 +92,31 @@ impl CoverLoader {
             }
 
             let client = self.client.clone();
-            let (tx, rx) = tokio::sync::oneshot::channel::<Option<Arc<Image>>>();
+            let (tx, rx) = tokio::sync::oneshot::channel::<(Option<Arc<Image>>, Option<Rgba>)>();
             let fetch_key = key.clone();
+            let base = url.split('?').next().unwrap_or(&url).to_string();
             self.handle.spawn(async move {
-                let image = match client.get_bytes(&fetch_key).await {
-                    Ok(bytes) => guess_format(&bytes).map(|fmt| Arc::new(Image::from_bytes(fmt, bytes))),
-                    Err(_) => None,
-                };
-                let _ = tx.send(image);
+                match client.get_bytes(&fetch_key).await {
+                    Ok(bytes) => {
+                        let color = dominant_color(&bytes);
+                        let image = guess_format(&bytes).map(|fmt| Arc::new(Image::from_bytes(fmt, bytes)));
+                        let _ = tx.send((image, color));
+                    }
+                    Err(_) => {
+                        let _ = tx.send((None, None));
+                    }
+                }
             });
 
             let cache = self.cache.clone();
+            let colors = self.colors.clone();
             let inflight = self.inflight.clone();
             cx.spawn(async move |this, cx| {
-                let image = rx.await.ok().flatten();
+                let (image, color) = rx.await.unwrap_or((None, None));
                 inflight.lock().unwrap().remove(&key);
+                if let Some(color) = color {
+                    colors.lock().unwrap().insert(base, color);
+                }
                 if let Some(image) = image {
                     cache.lock().unwrap().insert(key, image);
                     this.update(cx, |_this, cx| cx.notify()).ok();
@@ -116,6 +134,33 @@ fn sized_url(url: &str, size: u32) -> String {
     } else {
         url.to_string()
     }
+}
+
+/// 提取封面主色：缩小后取饱和度加权的平均色。
+fn dominant_color(bytes: &[u8]) -> Option<Rgba> {
+    let img = image::load_from_memory(bytes).ok()?;
+    let small = img.resize_exact(8, 8, image::imageops::FilterType::Triangle).to_rgb8();
+    let mut rs = 0f32;
+    let mut gs = 0f32;
+    let mut bs = 0f32;
+    let mut ws = 0f32;
+    for px in small.pixels() {
+        let [r, g, b] = px.0;
+        let (rf, gf, bf) = (r as f32, g as f32, b as f32);
+        let max = rf.max(gf).max(bf);
+        let min = rf.min(gf).min(bf);
+        let sat = if max <= 0.0 { 0.0 } else { (max - min) / max };
+        let w = 0.2 + sat;
+        rs += rf * w;
+        gs += gf * w;
+        bs += bf * w;
+        ws += w;
+    }
+    if ws <= 0.0 {
+        return None;
+    }
+    let (r, g, b) = ((rs / ws) as u8, (gs / ws) as u8, (bs / ws) as u8);
+    Some(rgb((r as u32) << 16 | (g as u32) << 8 | b as u32))
 }
 
 /// 通过魔数猜测图片格式。

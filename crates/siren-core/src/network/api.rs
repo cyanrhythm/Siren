@@ -287,6 +287,46 @@ pub async fn artist_follow_count(client: &NeteaseClient, id: i64) -> Result<(i64
     Ok((fans, followed))
 }
 
+/// 相似歌曲（EAPI）。
+pub async fn simi_songs(client: &NeteaseClient, id: i64) -> Result<Vec<Song>> {
+    let value = client.eapi_post(path::SIMI_SONG, &json!({ "songid": id })).await?;
+    validate(&value)?;
+    Ok(value
+        .get("songs")
+        .and_then(Value::as_array)
+        .map(|arr| arr.iter().map(crate::model::parse_song).collect())
+        .unwrap_or_default())
+}
+
+/// 心动模式推荐（EAPI）：按 `song_id` / `playlist_id` 拉取推荐队列。
+pub async fn intelligence_songs(
+    client: &NeteaseClient,
+    song_id: i64,
+    playlist_id: i64,
+    kind: &str,
+) -> Result<Vec<Song>> {
+    let body = json!({
+        "songId": song_id,
+        "playlistId": playlist_id,
+        "type": kind,
+        "startMusicId": song_id,
+        "count": 20
+    });
+    let value = client.eapi_post(path::INTELLIGENCE, &body).await?;
+    validate(&value)?;
+    Ok(value
+        .get("data")
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|item| item.get("songInfo"))
+                .filter(|s| s.get("id").is_some())
+                .map(crate::model::parse_song)
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
 /// 收藏 / 取消收藏歌手（WEAPI）。
 pub async fn artist_follow(client: &NeteaseClient, id: i64, follow: bool) -> Result<()> {
     let op = if follow { "sub" } else { "unsub" };

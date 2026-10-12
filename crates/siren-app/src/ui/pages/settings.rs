@@ -9,7 +9,7 @@ use gpui_kit::*;
 
 use siren_core::model::AudioQuality;
 
-use super::super::{icon, page_shell, Root};
+use super::super::{icon, page_shell, NpCard, Root};
 use crate::theme;
 
 impl Root {
@@ -54,13 +54,128 @@ impl Root {
             .child(section(
                 "音质",
                 "在线播放的音质档位（更高档位需登录 / 会员）",
-                quality_row(current, weak),
+                quality_row(current, weak.clone()),
             ))
             .child(section("系统", "系统媒体控制（媒体键与系统播放卡片）", media_control))
+            .child(section(
+                "正在播放卡片",
+                "右侧面板卡片的顺序与显隐",
+                self.cards_control(weak),
+            ))
             .into_any_element();
 
         page_shell("设置".to_string(), body).into_any_element()
     }
+
+    /// 正在播放卡片：显隐 + 上/下移。
+    fn cards_control(&self, weak: WeakEntity<Self>) -> AnyElement {
+        let mut col = div().v_flex().w_full().gap(px(6.0));
+        for card in NpCard::ALL {
+            let visible = self.np_cards.contains(&card);
+            let weak_toggle = weak.clone();
+            let weak_up = weak.clone();
+            let weak_down = weak.clone();
+            let row = div()
+                .w_full()
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(div().text_sm().text_color(theme::text_primary()).child(card.label()))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(8.0))
+                        .child(card_btn(
+                            "↑",
+                            move |root: &mut Root, cx| root.move_card(card, -1, cx),
+                            weak_up,
+                        ))
+                        .child(card_btn(
+                            "↓",
+                            move |root: &mut Root, cx| root.move_card(card, 1, cx),
+                            weak_down,
+                        ))
+                        .child(
+                            div()
+                                .id(("card-toggle", card as usize))
+                                .w(px(48.0))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .px(px(8.0))
+                                .py(px(4.0))
+                                .rounded_full()
+                                .cursor_pointer()
+                                .bg(if visible { theme::accent() } else { theme::surface() })
+                                .child(div().text_xs().text_color(theme::text_primary()).child(if visible {
+                                    "显示"
+                                } else {
+                                    "隐藏"
+                                }))
+                                .on_click(move |_ev, _window, cx| {
+                                    weak_toggle.update(cx, |root, cx| root.toggle_card(card, cx)).ok();
+                                }),
+                        ),
+                );
+            col = col.child(row);
+        }
+        col.into_any_element()
+    }
+
+    /// 切换卡片显隐。
+    pub(crate) fn toggle_card(&mut self, card: NpCard, cx: &mut Context<Self>) {
+        if let Some(i) = self.np_cards.iter().position(|c| *c == card) {
+            self.np_cards.remove(i);
+        } else {
+            self.np_cards.push(card);
+        }
+        self.persist_cards(cx);
+    }
+
+    /// 上/下移卡片。
+    pub(crate) fn move_card(&mut self, card: NpCard, dir: i32, cx: &mut Context<Self>) {
+        if let Some(i) = self.np_cards.iter().position(|c| *c == card) {
+            let j = i as i32 + dir;
+            if j >= 0 && (j as usize) < self.np_cards.len() {
+                self.np_cards.swap(i, j as usize);
+            }
+        }
+        self.persist_cards(cx);
+    }
+
+    fn persist_cards(&mut self, cx: &mut Context<Self>) {
+        let codes: Vec<String> = self.np_cards.iter().map(|c| c.code().to_string()).collect();
+        siren_core::settings::save_card_layout(&codes);
+        cx.notify();
+    }
+}
+
+fn card_btn(
+    label: &str,
+    action: impl Fn(&mut Root, &mut Context<Root>) + 'static,
+    weak: WeakEntity<Root>,
+) -> AnyElement {
+    div()
+        .id(format!("card-btn-{label}"))
+        .w(px(22.0))
+        .h(px(22.0))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_full()
+        .cursor_pointer()
+        .bg(theme::surface())
+        .child(
+            div()
+                .text_xs()
+                .text_color(theme::text_primary())
+                .child(label.to_string()),
+        )
+        .on_click(move |_ev, _window, cx| {
+            weak.update(cx, |root, cx| action(root, cx)).ok();
+        })
+        .into_any_element()
 }
 
 /// 一个设置分节：标题 + 说明 + 控件。

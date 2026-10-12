@@ -19,6 +19,36 @@ struct Settings {
     quality: Option<String>,
     /// 是否启用系统媒体控制（SMTC / MPRIS），默认开启。
     media_keys: Option<bool>,
+    /// 正在播放卡片顺序（代码列表，见 [`DEFAULT_CARDS`]）。
+    cards: Option<Vec<String>>,
+}
+
+/// 正在播放面板卡片的默认顺序。
+pub const DEFAULT_CARDS: [&str; 7] = [
+    "lyrics",
+    "comments",
+    "song_detail",
+    "music_memory",
+    "about_artist",
+    "artist_albums",
+    "similar_artists",
+];
+
+/// 读音质档位（缺省默认）。
+pub fn load_card_layout() -> Vec<String> {
+    let cards = read().cards.unwrap_or_default();
+    if cards.is_empty() {
+        DEFAULT_CARDS.iter().map(|s| s.to_string()).collect()
+    } else {
+        cards
+    }
+}
+
+/// 保存正在播放卡片顺序。
+pub fn save_card_layout(cards: &[String]) {
+    let mut settings = read();
+    settings.cards = Some(cards.to_vec());
+    write(&settings);
 }
 
 fn read() -> Settings {

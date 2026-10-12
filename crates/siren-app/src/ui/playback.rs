@@ -9,8 +9,9 @@ use std::time::{Duration, Instant};
 use gpui_kit::component::slider::{SliderEvent, SliderState, SliderValue};
 use gpui_kit::*;
 
+use super::covers::CoverLoader;
 use siren_core::lyrics::LyricLine;
-use siren_core::model::{AudioQuality, Song, SongWiki};
+use siren_core::model::{Artist, ArtistAlbum, ArtistDetail, AudioQuality, CommentPage, Song, SongWiki};
 use siren_core::network::client::NeteaseClient;
 use siren_core::player::{Mpv, PlayMode, PlaybackController, PlaybackState, Player, SilentEngine};
 use siren_platform::{
@@ -21,6 +22,7 @@ use siren_platform::{
 pub(crate) struct Playback {
     client: Arc<NeteaseClient>,
     handle: tokio::runtime::Handle,
+    covers: CoverLoader,
     player: Player,
     status: SharedString,
     mirrored: PlaybackState,
@@ -35,6 +37,14 @@ pub(crate) struct Playback {
     lyrics: Vec<LyricLine>,
     /// 当前歌曲百科/制作人。
     wiki: Option<SongWiki>,
+    /// 当前歌曲评论（首页预览）。
+    comments: CommentPage,
+    /// 当前歌曲首位歌手的详情 / 专辑 / 相似 / 关注态。
+    artist: Option<ArtistDetail>,
+    artist_albums: Vec<ArtistAlbum>,
+    similar_artists: Vec<Artist>,
+    artist_followed: bool,
+    artist_fans: i64,
     /// 是否启用系统媒体控制（SMTC / MPRIS）。
     media_keys_enabled: bool,
     /// 正在播放的歌曲与起始时刻（用于打卡上报时长）。
@@ -54,6 +64,7 @@ impl Playback {
         cx: &mut App,
         client: Arc<NeteaseClient>,
         handle: tokio::runtime::Handle,
+        covers: CoverLoader,
     ) -> Entity<Self> {
         let engine: Arc<dyn PlaybackController> = match Mpv::load(&siren_platform::mpv_library_candidates()) {
             Ok(mpv) => Arc::new(mpv),
@@ -113,6 +124,7 @@ impl Playback {
             Self {
                 client,
                 handle,
+                covers,
                 player,
                 status: "就绪".into(),
                 mirrored: PlaybackState::default(),
@@ -122,6 +134,12 @@ impl Playback {
                 detail: None,
                 lyrics: Vec::new(),
                 wiki: None,
+                comments: CommentPage::default(),
+                artist: None,
+                artist_albums: Vec::new(),
+                similar_artists: Vec::new(),
+                artist_followed: false,
+                artist_fans: 0,
                 media_keys_enabled: siren_core::settings::load_media_keys(),
                 playing_id: None,
                 playing_at: None,
@@ -166,6 +184,104 @@ impl Playback {
     /// 当前歌曲百科/制作人。
     pub(crate) fn current_wiki(&self) -> Option<&SongWiki> {
         self.wiki.as_ref()
+    }
+
+    /// 评论预览。
+    pub(crate) fn comments(&self) -> &CommentPage {
+        &self.comments
+    }
+
+    /// 当前歌手详情 / 专辑 / 相似 / 关注。
+    pub(crate) fn artist(&self) -> Option<&ArtistDetail> {
+        self.artist.as_ref()
+    }
+    pub(crate) fn artist_albums(&self) -> &[ArtistAlbum] {
+        &self.artist_albums
+    }
+    pub(crate) fn similar_artists(&self) -> &[Artist] {
+        &self.similar_artists
+    }
+    pub(crate) fn artist_followed(&self) -> bool {
+        self.artist_followed
+    }
+    pub(crate) fn artist_fans(&self) -> i64 {
+        self.artist_fans
+    }
+
+    /// 切换对当前歌手的关注。
+    pub(crate) fn toggle_artist_follow(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.artist.as_ref().map(|a| a.id) else {
+            return;
+        };
+        let follow = !self.artist_followed;
+        self.artist_followed = follow;
+        cx.notify();
+        let client = self.client.clone();
+        self.handle.spawn(async move {
+            let _ = siren_core::network::api::artist_follow(&client, id, follow).await;
+        });
+    }
+
+    /// 相似歌曲漫游：以当前歌曲的相似歌曲建队列并播放。
+    pub(crate) fn play_similar_roaming(&mut self, cx: &mut Context<Self>) {
+        let Some(song) = self.player.state().song else { return };
+        let id = song.id;
+        let client = self.client.clone();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.handle.spawn(async move {
+            let songs = siren_core::network::api::simi_songs(&client, id)
+                .await
+                .unwrap_or_default();
+            let _ = tx.send(songs);
+        });
+        self.status = "加载相似歌曲…".into();
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let songs = rx.await.unwrap_or_default();
+            this.update(cx, |this, cx| {
+                if songs.is_empty() {
+                    this.status = "无相似歌曲".into();
+                    cx.notify();
+                    return;
+                }
+                if let Some(first) = this.player.set_queue(songs) {
+                    this.resolve_and_play(first, cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// 心动模式：拉取智能推荐队列并播放。
+    pub(crate) fn start_intelligence(&mut self, cx: &mut Context<Self>) {
+        let Some(song) = self.player.state().song else { return };
+        let id = song.id;
+        let client = self.client.clone();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.handle.spawn(async move {
+            let songs = siren_core::network::api::intelligence_songs(&client, id, id, "fromPlayOne")
+                .await
+                .unwrap_or_default();
+            let _ = tx.send(songs);
+        });
+        self.status = "加载心动模式…".into();
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let songs = rx.await.unwrap_or_default();
+            this.update(cx, |this, cx| {
+                if songs.is_empty() {
+                    this.status = "无推荐歌曲".into();
+                    cx.notify();
+                    return;
+                }
+                if let Some(first) = this.player.set_queue(songs) {
+                    this.resolve_and_play(first, cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// 是否启用系统媒体控制。
@@ -437,6 +553,64 @@ impl Playback {
             let wiki = rx.await.ok().flatten();
             this.update(cx, |this, cx| {
                 this.wiki = wiki;
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+
+        // 拉取评论 + 首位歌手信息。
+        let client_extra = self.client.clone();
+        let handle_extra = self.handle.clone();
+        let artist_id = song.artist_ids.first().copied();
+        self.comments = CommentPage::default();
+        self.artist = None;
+        self.artist_albums = Vec::new();
+        self.similar_artists = Vec::new();
+        self.artist_followed = false;
+        self.artist_fans = 0;
+        cx.spawn(async move |this, cx| {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            handle_extra.spawn(async move {
+                use siren_core::network::api;
+                let tid = api::comment_thread_id(song_id);
+                let comments = api::comments(&client_extra, &tid, "0", 20).await.unwrap_or_default();
+                let artist = match artist_id {
+                    Some(aid) => {
+                        let detail = api::artist_detail(&client_extra, aid).await.ok().flatten();
+                        let albums = api::artist_albums(&client_extra, aid, 10).await.unwrap_or_default();
+                        let simi = api::similar_artists(&client_extra, aid).await.unwrap_or_default();
+                        let (fans, followed) = api::artist_follow_count(&client_extra, aid).await.unwrap_or((0, false));
+                        Some((detail, albums, simi, fans, followed))
+                    }
+                    None => None,
+                };
+                let _ = tx.send((comments, artist));
+            });
+            let (comments, artist) = rx.await.unwrap_or_default();
+            this.update(cx, |this, cx| {
+                this.comments = comments;
+                let avatars: Vec<String> = this
+                    .comments
+                    .comments
+                    .iter()
+                    .map(|c| c.user.avatar_url.clone())
+                    .collect();
+                this.covers.prefetch(avatars, 32.0, cx);
+                if let Some((detail, albums, simi, fans, followed)) = artist {
+                    let album_covers: Vec<String> = albums.iter().map(|a| a.cover_url.clone()).collect();
+                    let simi_covers: Vec<String> = simi.iter().map(|a| a.cover_url.clone()).collect();
+                    let artist_cover: Vec<String> =
+                        detail.as_ref().map(|d| vec![d.cover_url.clone()]).unwrap_or_default();
+                    this.covers.prefetch(album_covers, 48.0, cx);
+                    this.covers.prefetch(simi_covers, 48.0, cx);
+                    this.covers.prefetch(artist_cover, 96.0, cx);
+                    this.artist = detail;
+                    this.artist_albums = albums;
+                    this.similar_artists = simi;
+                    this.artist_fans = fans;
+                    this.artist_followed = followed;
+                }
                 cx.notify();
             })
             .ok();

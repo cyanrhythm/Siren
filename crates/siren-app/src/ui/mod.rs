@@ -75,6 +75,58 @@ pub(crate) enum PageEvent {
     OpenSettings,
 }
 
+/// 正在播放栏的卡片（可配置顺序/显隐）。
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NpCard {
+    Lyrics,
+    Comments,
+    SongDetail,
+    MusicMemory,
+    AboutArtist,
+    ArtistAlbums,
+    SimilarArtists,
+}
+
+impl NpCard {
+    pub(crate) const ALL: [NpCard; 7] = [
+        NpCard::Lyrics,
+        NpCard::Comments,
+        NpCard::SongDetail,
+        NpCard::MusicMemory,
+        NpCard::AboutArtist,
+        NpCard::ArtistAlbums,
+        NpCard::SimilarArtists,
+    ];
+
+    pub(crate) fn code(self) -> &'static str {
+        match self {
+            NpCard::Lyrics => "lyrics",
+            NpCard::Comments => "comments",
+            NpCard::SongDetail => "song_detail",
+            NpCard::MusicMemory => "music_memory",
+            NpCard::AboutArtist => "about_artist",
+            NpCard::ArtistAlbums => "artist_albums",
+            NpCard::SimilarArtists => "similar_artists",
+        }
+    }
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            NpCard::Lyrics => "歌词预览",
+            NpCard::Comments => "评论",
+            NpCard::SongDetail => "歌曲详情",
+            NpCard::MusicMemory => "回忆坐标",
+            NpCard::AboutArtist => "关于歌手",
+            NpCard::ArtistAlbums => "歌手专辑",
+            NpCard::SimilarArtists => "相似歌手",
+        }
+    }
+
+    pub(crate) fn from_code(code: &str) -> Option<NpCard> {
+        NpCard::ALL.into_iter().find(|c| c.code() == code)
+    }
+}
+
 /// 主窗口根组件：导航与外壳。
 pub struct Root {
     _runtime: tokio::runtime::Runtime,
@@ -88,6 +140,8 @@ pub struct Root {
     recent: Entity<RecentPage>,
     playlist_page: Option<Entity<PlaylistPage>>,
     now_playing_open: bool,
+    /// 正在播放卡片顺序。
+    np_cards: Vec<NpCard>,
     /// 登录后的账号信息（昵称、头像 URL、uid）；未登录为 None。
     account: Option<(SharedString, String, i64)>,
     /// 已为哪首歌预取过播放封面（避免重复预取）。
@@ -100,6 +154,14 @@ pub struct Root {
     qr_image: Option<Arc<Image>>,
     login_status: SharedString,
     login_input: Entity<InputState>,
+    // ── 评论面板状态 ───────────────────────────────────────────
+    comments_open: bool,
+    comments_items: Vec<siren_core::model::CommentItem>,
+    comments_total: i64,
+    comments_has_more: bool,
+    comments_cursor: String,
+    comment_floor_open: Option<i64>,
+    comment_floor_items: Vec<siren_core::model::CommentItem>,
     _subs: Vec<Subscription>,
     _search_sub: Subscription,
 }
@@ -119,7 +181,13 @@ impl Root {
             handle: runtime.handle().clone(),
             covers,
         };
-        let playback = Playback::new(window, cx, services.client.clone(), services.handle.clone());
+        let playback = Playback::new(
+            window,
+            cx,
+            services.client.clone(),
+            services.handle.clone(),
+            services.covers.clone(),
+        );
 
         let home = cx.new(|cx| HomePage::new(cx, services.clone()));
         let library = cx.new(|cx| LibraryPage::new(window, cx, services.clone()));
@@ -184,6 +252,10 @@ impl Root {
                 recent,
                 playlist_page: None,
                 now_playing_open: true,
+                np_cards: siren_core::settings::load_card_layout()
+                    .iter()
+                    .filter_map(|c| NpCard::from_code(c))
+                    .collect(),
                 account: None,
                 cover_song: None,
                 login_open: false,
@@ -192,6 +264,13 @@ impl Root {
                 qr_image: None,
                 login_status: SharedString::default(),
                 login_input,
+                comments_open: false,
+                comments_items: Vec::new(),
+                comments_total: 0,
+                comments_has_more: false,
+                comments_cursor: "0".to_string(),
+                comment_floor_open: None,
+                comment_floor_items: Vec::new(),
                 _subs: subs,
                 _search_sub,
             }
@@ -325,7 +404,9 @@ impl Render for Root {
         let weak = cx.weak_entity();
         let weak_page = cx.weak_entity();
         let weak_login = cx.weak_entity();
+        let weak_comments = cx.weak_entity();
         let login_overlay = self.login_open.then(|| self.login_overlay(weak_login));
+        let comments_overlay = self.comments_open.then(|| self.comments_overlay(weak_comments));
         // 中间列显式分配宽度，规避 gpui `flex_1` 的横向过度伸展
         let np_w = if self.now_playing_open { 340.0 } else { 44.0 };
         let page_w = (vw - 300.0 - np_w - 32.0).max(240.0);
@@ -364,6 +445,7 @@ impl Render for Root {
             )
             .child(self.player_bar(weak, vw, cx))
             .when_some(login_overlay, |this, overlay| this.child(overlay))
+            .when_some(comments_overlay, |this, overlay| this.child(overlay))
     }
 }
 

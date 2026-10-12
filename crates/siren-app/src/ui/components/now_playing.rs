@@ -5,11 +5,14 @@
 
 use gpui_kit::assets::IconName;
 use gpui_kit::base::StyledExt;
+use gpui_kit::component::button::{Button, ButtonCustomVariant, ButtonVariants};
+use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
+use gpui_kit::component::Icon;
 use gpui_kit::*;
 
 use siren_core::model::{Song, SongWiki};
 
-use super::super::{cover_placeholder, fmt_date, icon, Root};
+use super::super::{cover_placeholder, fmt_date, icon, NpCard, Root};
 use crate::theme;
 
 impl Root {
@@ -44,6 +47,9 @@ impl Root {
         let detail = self.playback.read(cx).current_detail().cloned();
         let lyrics = self.playback.read(cx).current_lyrics().to_vec();
         let wiki = self.playback.read(cx).current_wiki().cloned();
+        // 封面主色作为面板背景（对齐 Melodia CoverBackdrop）。
+        let base_color = song.as_ref().and_then(|s| self.services.covers.color(&s.cover_url));
+        let panel_bg = base_color.map(|c| darken(c, 0.28)).unwrap_or_else(theme::pane);
 
         // 卡片流（竖向滚动）。
         let mut body = div()
@@ -69,12 +75,48 @@ impl Root {
                     .child(div().text_sm().text_color(theme::text_gray()).truncate().child(artist)),
             );
 
-        if !lyrics.is_empty() {
-            body = body.child(lyrics_card(&lyrics, state.position_ms));
-        }
-        body = body.child(comments_card());
-        if let Some(card) = song_detail_card(wiki.as_ref(), song.as_ref(), detail.as_ref()) {
-            body = body.child(card);
+        let comments = self.playback.read(cx).comments().clone();
+        let artist = self.playback.read(cx).artist().cloned();
+        let followed = self.playback.read(cx).artist_followed();
+        let fans = self.playback.read(cx).artist_fans();
+        let albums = self.playback.read(cx).artist_albums().to_vec();
+        let simi = self.playback.read(cx).similar_artists().to_vec();
+        for card in &self.np_cards {
+            let el: Option<AnyElement> = match card {
+                NpCard::Lyrics => {
+                    if lyrics.is_empty() {
+                        None
+                    } else {
+                        Some(lyrics_card(&lyrics, state.position_ms))
+                    }
+                }
+                NpCard::Comments => Some(comments_preview_card(&comments, weak.clone())),
+                NpCard::SongDetail => song_detail_card(wiki.as_ref(), song.as_ref(), detail.as_ref()),
+                NpCard::MusicMemory => wiki
+                    .as_ref()
+                    .and_then(|w| w.music_memory.clone())
+                    .map(|m| music_memory_card(&m)),
+                NpCard::AboutArtist => artist
+                    .as_ref()
+                    .map(|a| about_artist_card(a, followed, fans, &self.services.covers, weak.clone())),
+                NpCard::ArtistAlbums => {
+                    if albums.is_empty() {
+                        None
+                    } else {
+                        Some(artist_albums_card(&albums, &self.services.covers))
+                    }
+                }
+                NpCard::SimilarArtists => {
+                    if simi.is_empty() {
+                        None
+                    } else {
+                        Some(similar_artists_card(&simi, &self.services.covers))
+                    }
+                }
+            };
+            if let Some(el) = el {
+                body = body.child(el);
+            }
         }
 
         div()
@@ -85,17 +127,56 @@ impl Root {
             .flex_none()
             .flex_shrink_0()
             .rounded(px(8.0))
-            .bg(theme::pane())
+            .bg(panel_bg)
             .p(px(12.0))
             .gap(px(8.0))
-            .child(div().w_full().flex().items_center().justify_end().child(toggle_button(
-                "np-collapse",
-                IconName::ChevronRight,
-                weak,
-            )))
+            .child(
+                div()
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(now_playing_menu(weak.clone(), cx))
+                    .child(toggle_button("np-collapse", IconName::ChevronRight, weak)),
+            )
             .child(body)
             .into_any_element()
     }
+}
+
+/// 头部「…」菜单：心动模式 / 相似歌曲漫游。
+fn now_playing_menu(weak: WeakEntity<Root>, cx: &App) -> impl IntoElement {
+    let weak_i = weak.clone();
+    let weak_s = weak.clone();
+    Button::new("np-more")
+        .custom(ButtonCustomVariant::new(cx))
+        .icon(IconName::Ellipsis)
+        .dropdown_menu(move |menu, _window, _cx| {
+            let weak_i = weak_i.clone();
+            let weak_s = weak_s.clone();
+            menu.item(
+                PopupMenuItem::new("心动模式")
+                    .icon(Icon::new(IconName::Sparkles))
+                    .on_click(move |_ev, _window, cx| {
+                        weak_i
+                            .update(cx, |root, cx| {
+                                root.playback.update(cx, |pb, cx| pb.start_intelligence(cx))
+                            })
+                            .ok();
+                    }),
+            )
+            .item(
+                PopupMenuItem::new("相似歌曲漫游")
+                    .icon(Icon::new(IconName::Compass))
+                    .on_click(move |_ev, _window, cx| {
+                        weak_s
+                            .update(cx, |root, cx| {
+                                root.playback.update(cx, |pb, cx| pb.play_similar_roaming(cx))
+                            })
+                            .ok();
+                    }),
+            )
+        })
 }
 
 /// 信息卡外壳：圆角底 + 标题 + 内容（对齐 `InfoCard`）。
@@ -151,16 +232,220 @@ fn lyrics_card(lines: &[siren_core::lyrics::LyricLine], position_ms: i64) -> Any
     info_card("歌词预览", col.into_any_element())
 }
 
-/// 评论预览卡（评论 API 待接入，先给入口）。
-fn comments_card() -> AnyElement {
+/// 评论预览卡（前两条 + 查看全部）。
+fn comments_preview_card(page: &siren_core::model::CommentPage, weak: WeakEntity<Root>) -> AnyElement {
+    let mut col = div().v_flex().w_full().gap(px(10.0));
+    for item in page.comments.iter().take(2) {
+        col = col.child(
+            div()
+                .w_full()
+                .v_flex()
+                .gap(px(4.0))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(theme::text_primary())
+                                .child(item.user.nickname.clone()),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(theme::text_gray())
+                                .child(item.liked_count.to_string()),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme::text_gray())
+                        .child(item.content.clone()),
+                ),
+        );
+    }
+    let weak_open = weak;
+    col = col.child(
+        div()
+            .id("comments-open")
+            .cursor_pointer()
+            .text_sm()
+            .text_color(theme::accent())
+            .child(format!("查看全部 {} 条评论", page.total))
+            .on_click(move |_ev, _window, cx| {
+                weak_open.update(cx, |root, cx| root.open_comments(cx)).ok();
+            }),
+    );
+    info_card("评论", col.into_any_element())
+}
+
+/// 回忆坐标卡。
+fn music_memory_card(mem: &siren_core::model::MusicMemory) -> AnyElement {
+    let mut text = String::new();
+    if !mem.first_listen_date.is_empty() {
+        text.push_str(&format!("首次收听 {}", mem.first_listen_date));
+        if !mem.season.is_empty() {
+            text.push_str(&format!("（{}", mem.season));
+            if !mem.period.is_empty() {
+                text.push_str(&format!("·{}", mem.period));
+            }
+            text.push('）');
+        }
+    }
+    if mem.play_count > 0 {
+        if !text.is_empty() {
+            text.push('；');
+        }
+        text.push_str(&format!("累计播放 {} 次", mem.play_count));
+        if !mem.play_count_text.is_empty() {
+            text.push_str(&format!("，{}", mem.play_count_text));
+        }
+    }
     info_card(
-        "评论",
+        "回忆坐标",
         div()
             .w_full()
-            .py(px(8.0))
-            .child(div().text_sm().text_color(theme::text_gray()).child("评论待接入"))
+            .child(div().text_sm().text_color(theme::text_gray()).child(text))
             .into_any_element(),
     )
+}
+
+/// 关于歌手卡（头像 + 简介 + 关注）。
+fn about_artist_card(
+    artist: &siren_core::model::ArtistDetail,
+    followed: bool,
+    fans: i64,
+    covers: &super::super::covers::CoverLoader,
+    weak: WeakEntity<Root>,
+) -> AnyElement {
+    let weak_follow = weak;
+    let id = artist.id;
+    let mut col = div()
+        .flex()
+        .items_start()
+        .gap(px(10.0))
+        .child(
+            div()
+                .w(px(48.0))
+                .h(px(48.0))
+                .flex_none()
+                .child(covers.image_round(&artist.cover_url, 48.0)),
+        )
+        .child(
+            div()
+                .v_flex()
+                .flex_1()
+                .min_w(px(0.0))
+                .gap(px(4.0))
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme::text_primary())
+                        .child(artist.name.clone()),
+                )
+                .child(div().text_xs().text_color(theme::text_gray()).child(format!(
+                    "{} 专辑 · {} 首 · {} 粉丝",
+                    artist.album_size, artist.music_size, fans
+                )))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme::text_gray())
+                        .child(short(&artist.brief_desc, 60)),
+                ),
+        );
+    col = col.child(
+        div()
+            .id("artist-follow")
+            .flex_none()
+            .px(px(10.0))
+            .py(px(4.0))
+            .rounded_full()
+            .cursor_pointer()
+            .bg(if followed { theme::surface() } else { theme::accent() })
+            .child(div().text_xs().text_color(theme::text_primary()).child(if followed {
+                "已关注"
+            } else {
+                "关注"
+            }))
+            .on_click(move |_ev, _window, cx| {
+                let _ = id;
+                weak_follow
+                    .update(cx, |root, cx| {
+                        root.playback.update(cx, |pb, cx| pb.toggle_artist_follow(cx))
+                    })
+                    .ok();
+            }),
+    );
+    info_card("关于歌手", col.into_any_element())
+}
+
+/// 歌手专辑卡（横向列表）。
+fn artist_albums_card(
+    albums: &[siren_core::model::ArtistAlbum],
+    covers: &super::super::covers::CoverLoader,
+) -> AnyElement {
+    let mut row = div().flex().gap(px(10.0)).w_full();
+    for album in albums.iter().take(6) {
+        row = row.child(
+            div()
+                .v_flex()
+                .w(px(84.0))
+                .gap(px(4.0))
+                .child(covers.image(&album.cover_url, 84.0))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme::text_primary())
+                        .truncate()
+                        .child(album.name.clone()),
+                ),
+        );
+    }
+    info_card("歌手专辑", row.into_any_element())
+}
+
+/// 相似歌手卡（横向头像列表）。
+fn similar_artists_card(
+    artists: &[siren_core::model::Artist],
+    covers: &super::super::covers::CoverLoader,
+) -> AnyElement {
+    let mut row = div().flex().gap(px(10.0)).w_full();
+    for artist in artists.iter().take(6) {
+        row = row.child(
+            div()
+                .v_flex()
+                .w(px(64.0))
+                .items_center()
+                .gap(px(4.0))
+                .child(covers.image_round(&artist.cover_url, 56.0))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme::text_gray())
+                        .truncate()
+                        .child(artist.name.clone()),
+                ),
+        );
+    }
+    info_card("相似歌手", row.into_any_element())
+}
+
+fn short(text: &str, max: usize) -> String {
+    text.chars().take(max).collect()
+}
+
+/// 降低亮度（用于封面取色背景）。
+fn darken(color: Rgba, factor: f32) -> Rgba {
+    Rgba {
+        r: color.r * factor,
+        g: color.g * factor,
+        b: color.b * factor,
+        a: 1.0,
+    }
 }
 
 /// 歌曲详情卡：曲风/专辑/语种/发行时间/BPM/影综/获奖/制作人员（缺失项不显示）。
