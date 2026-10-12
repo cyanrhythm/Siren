@@ -22,3 +22,5 @@
 //! pub mod media;      // MPNowPlayingInfoCenter
 //! pub mod accent;     // NSColor
 //! pub mod lyric;      // NSWindow
+
+pub mod native;

@@ -22,6 +22,7 @@ pub mod accent;
 pub mod app_paths;
 pub mod lyric_window;
 pub mod media_session;
+pub mod native_library;
 pub mod ui_scale;
 pub mod window;
 // pub mod tray;          // TODO: 若 tray-icon 不够用再自建
@@ -40,17 +41,27 @@ pub mod macos;
 
 // ── 平台类型统一导出 ─────────────────────────────────────────────
 //
-// 上层通过这里的别名取用当前平台的实现，
-// 无需关心具体平台。新增平台时在此补充分支。
+// 上层通过这里的别名取用当前平台的实现，无需关心具体平台。
 
-// TODO: 待各 trait 与实现就绪后，补齐如下别名
-//
-// #[cfg(target_os = "windows")]
-// pub use windows::media::WindowsMediaSession as PlatformMediaSession;
-// #[cfg(target_os = "linux")]
-// pub use linux::media::LinuxMediaSession as PlatformMediaSession;
-// #[cfg(target_os = "macos")]
-// pub use macos::media::MacMediaSession as PlatformMediaSession;
+#[cfg(target_os = "linux")]
+pub use linux::native::LinuxNativeLibraryLocator as PlatformNativeLibrary;
+#[cfg(target_os = "macos")]
+pub use macos::native::MacosNativeLibraryLocator as PlatformNativeLibrary;
+/// 当前平台的原生库定位实现。
+#[cfg(target_os = "windows")]
+pub use windows::native::WindowsNativeLibraryLocator as PlatformNativeLibrary;
+
+/// 当前平台的 libmpv 库名/路径候选（便捷入口）。
+pub fn mpv_library_candidates() -> Vec<String> {
+    use native_library::NativeLibraryLocator as _;
+    PlatformNativeLibrary.mpv_candidates()
+}
+
+/// 加载 libmpv 前的一次性准备（便捷入口，如纠正数值区域）。
+pub fn prepare_native_environment() {
+    use native_library::NativeLibraryLocator as _;
+    PlatformNativeLibrary.prepare();
+}
 
 /// 编译期平台断言。
 ///

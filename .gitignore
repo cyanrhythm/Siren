@@ -28,3 +28,9 @@ Thumbs.db
 *.AppImage
 *.msi
 *.dmg
+
+# 原生库（libmpv 等，体积大，不入库）
+resources/native/**/*.dll
+resources/native/**/*.so
+resources/native/**/*.so.*
+resources/native/**/*.dylib

@@ -29,6 +29,7 @@
 //! pub mod session;    // XDG_SESSION_TYPE 探测
 
 pub mod mpris;
+pub mod native;
 pub mod sni;
 pub mod wayland;
 pub mod x11;

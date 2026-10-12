@@ -23,3 +23,6 @@ num-traits.workspace = true
 
 # 序列化
 serde.workspace = true
+
+# 音频（运行时动态加载 libmpv）
+libloading.workspace = true
