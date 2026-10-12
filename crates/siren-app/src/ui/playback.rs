@@ -2,6 +2,7 @@
 //!
 //! 界面（`Root` 及各页面）通过 `Entity<Playback>` 订阅/驱动它，而不直接触碰播放细节。
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -25,6 +26,8 @@ pub(crate) struct Playback {
     seeking: bool,
     /// 当前音质档位（持久化于 `siren-core::settings`）。
     quality: AudioQuality,
+    /// 已喜欢的歌曲 ID 集合。
+    liked: HashSet<i64>,
     progress_slider: Entity<SliderState>,
     volume_slider: Entity<SliderState>,
     media: Option<PlatformMediaSession>,
@@ -103,6 +106,7 @@ impl Playback {
                 mirrored: PlaybackState::default(),
                 seeking: false,
                 quality: siren_core::settings::load_quality(),
+                liked: HashSet::new(),
                 progress_slider,
                 volume_slider,
                 media,
@@ -129,6 +133,86 @@ impl Playback {
         self.quality = quality;
         siren_core::settings::save_quality(quality);
         cx.notify();
+    }
+
+    /// 当前歌曲是否已喜欢。
+    pub(crate) fn current_liked(&self) -> bool {
+        self.player
+            .state()
+            .song
+            .map(|s| self.liked.contains(&s.id))
+            .unwrap_or(false)
+    }
+
+    /// 载入已喜欢歌曲 ID（登录后）。
+    pub(crate) fn load_likes(&mut self, uid: i64, cx: &mut Context<Self>) {
+        let client = self.client.clone();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.handle.spawn(async move {
+            let ids = siren_core::network::api::liked_song_ids(&client, uid)
+                .await
+                .unwrap_or_default();
+            let _ = tx.send(ids);
+        });
+        cx.spawn(async move |this, cx| {
+            let ids = rx.await.unwrap_or_default();
+            this.update(cx, |this, cx| {
+                this.liked = ids.into_iter().collect();
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// 清空喜欢状态（退出登录）。
+    pub(crate) fn clear_likes(&mut self, cx: &mut Context<Self>) {
+        self.liked.clear();
+        cx.notify();
+    }
+
+    /// 喜欢 / 取消喜欢当前歌曲（乐观更新 + 失败回滚）。
+    pub(crate) fn toggle_like_current(&mut self, cx: &mut Context<Self>) {
+        let Some(song) = self.player.state().song else {
+            return;
+        };
+        let id = song.id;
+        let like = !self.liked.contains(&id);
+        if like {
+            self.liked.insert(id);
+        } else {
+            self.liked.remove(&id);
+        }
+        self.status = if like {
+            format!("已喜欢：{}", song.name).into()
+        } else {
+            format!("已取消喜欢：{}", song.name).into()
+        };
+        cx.notify();
+
+        let client = self.client.clone();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.handle.spawn(async move {
+            let ok = siren_core::network::api::like_song(&client, id, like).await.is_ok();
+            let _ = tx.send(ok);
+        });
+        cx.spawn(async move |this, cx| {
+            let ok = rx.await.unwrap_or(false);
+            if !ok {
+                this.update(cx, |this, cx| {
+                    // 回滚
+                    if like {
+                        this.liked.remove(&id);
+                    } else {
+                        this.liked.insert(id);
+                    }
+                    this.status = "喜欢操作失败".into();
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
     }
 
     pub(crate) fn progress_slider(&self) -> &Entity<SliderState> {

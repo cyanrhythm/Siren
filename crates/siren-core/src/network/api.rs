@@ -115,6 +115,31 @@ pub fn account_avatar(value: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
+/// 喜欢 / 取消喜欢单曲（EAPI，需登录）。
+pub async fn like_song(client: &NeteaseClient, id: i64, like: bool) -> Result<()> {
+    let body = json!({ "trackId": id, "like": like });
+    let value = client.eapi_post(path::SONG_LIKE, &body).await?;
+    validate(&value)?;
+    Ok(())
+}
+
+/// 当前用户已红心的歌曲 ID 列表（EAPI，需登录）。
+pub async fn liked_song_ids(client: &NeteaseClient, uid: i64) -> Result<Vec<i64>> {
+    let body = json!({ "uid": uid });
+    let value = client.eapi_post(path::SONG_LIKE_GET, &body).await?;
+    validate(&value)?;
+    Ok(parse_liked_ids(&value))
+}
+
+/// 从红心列表返回体取 ID 数组。
+pub fn parse_liked_ids(value: &Value) -> Vec<i64> {
+    value
+        .get("ids")
+        .and_then(Value::as_array)
+        .map(|ids| ids.iter().filter_map(Value::as_i64).collect())
+        .unwrap_or_default()
+}
+
 /// 二维码登录：申请 unikey。
 pub async fn login_qr_key(client: &NeteaseClient) -> Result<String> {
     let value = client.weapi_post(path::QR_UNIKEY, &json!({ "type": 1 })).await?;
@@ -157,4 +182,27 @@ fn extract_url(value: &Value) -> Option<String> {
         .and_then(Value::as_str)
         .filter(|s| !s.is_empty())
         .map(str::to_string)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn parses_liked_ids() {
+        assert_eq!(parse_liked_ids(&json!({ "ids": [1, 2, 3] })), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn missing_ids_is_empty() {
+        assert!(parse_liked_ids(&json!({})).is_empty());
+    }
+
+    #[test]
+    fn validate_flags_301() {
+        assert!(validate(&json!({ "code": 301 })).unwrap_err().is_unauthorized());
+        assert!(validate(&json!({ "code": 200 })).is_ok());
+        assert!(validate(&json!({})).is_ok());
+    }
 }

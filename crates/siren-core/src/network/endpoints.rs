@@ -33,4 +33,8 @@ pub mod path {
     pub const QR_UNIKEY: &str = "/weapi/login/qrcode/unikey";
     /// 二维码登录：轮询扫码状态。
     pub const QR_CHECK: &str = "/weapi/login/qrcode/client/login";
+    /// 喜欢 / 取消喜欢单曲（EAPI）。
+    pub const SONG_LIKE: &str = "/eapi/song/like";
+    /// 已红心歌曲 ID 列表（EAPI）。
+    pub const SONG_LIKE_GET: &str = "/eapi/song/like/get";
 }

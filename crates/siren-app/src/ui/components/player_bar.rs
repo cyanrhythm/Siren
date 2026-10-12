@@ -28,11 +28,13 @@ impl Root {
             Some(song) => self.services.covers.image(&song.cover_url, 56.0),
             None => cover_placeholder(56.0).into_any_element(),
         };
+        let liked = pb.current_liked();
 
         let weak_play = weak.clone();
         let weak_prev = weak.clone();
         let weak_shuffle = weak.clone();
         let weak_repeat = weak.clone();
+        let weak_like = weak.clone();
         let weak_next = weak;
         let shuffle_active = state.mode == PlayMode::Shuffle;
         let repeat_active = state.mode == PlayMode::SingleLoop;
@@ -202,6 +204,23 @@ impl Root {
                     .items_center()
                     .justify_end()
                     .gap(px(8.0))
+                    .child(
+                        div()
+                            .id("like")
+                            .cursor_pointer()
+                            .on_click(move |_ev, _window, cx| {
+                                weak_like
+                                    .update(cx, |this, cx| {
+                                        this.playback.update(cx, |pb, cx| pb.toggle_like_current(cx));
+                                    })
+                                    .ok();
+                            })
+                            .child(icon(
+                                IconName::Heart,
+                                18.0,
+                                if liked { theme::accent() } else { theme::text_gray() },
+                            )),
+                    )
                     .child(icon(IconName::Volume2, 18.0, theme::text_gray()))
                     .child(div().w(px(120.0)).child(Slider::new(pb.volume_slider()))),
             )
