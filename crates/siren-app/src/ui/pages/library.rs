@@ -9,6 +9,7 @@ use gpui_kit::assets::IconName;
 use gpui_kit::base::StyledExt;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{InputEvent, InputState};
+use gpui_kit::component::menu::{ContextMenuExt, PopupMenuItem};
 use gpui_kit::*;
 
 use siren_core::model::Playlist;
@@ -262,6 +263,7 @@ impl Render for LibraryPage {
                             let pl = &playlists[i];
                             let cover = covers.image(&pl.cover_url, 48.0);
                             let weak = weak.clone();
+                            let weak_ctx = weak.clone();
                             let id = pl.id;
                             let name = pl.name.clone();
                             div()
@@ -302,6 +304,20 @@ impl Render for LibraryPage {
                                                 .child(format!("{} 首", pl.track_count)),
                                         ),
                                 )
+                                .context_menu(move |menu, _w, _cx| {
+                                    let weak_r = weak_ctx.clone();
+                                    let weak_d = weak_ctx.clone();
+                                    menu.item(PopupMenuItem::new("重命名").on_click(move |_ev, _w, cx| {
+                                        weak_r
+                                            .update(cx, |_page, cx| cx.emit(PageEvent::RenamePlaylist { id }))
+                                            .ok();
+                                    }))
+                                    .item(PopupMenuItem::new("删除").on_click(move |_ev, _w, cx| {
+                                        weak_d
+                                            .update(cx, |_page, cx| cx.emit(PageEvent::DeletePlaylist { id }))
+                                            .ok();
+                                    }))
+                                })
                                 .into_any_element()
                         })
                         .collect::<Vec<_>>()

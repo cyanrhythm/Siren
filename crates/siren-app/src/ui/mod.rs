@@ -91,6 +91,14 @@ pub(crate) enum PageEvent {
     AddToPlaylist {
         song_id: i64,
     },
+    /// 请求重命名歌单。
+    RenamePlaylist {
+        id: i64,
+    },
+    /// 请求删除歌单。
+    DeletePlaylist {
+        id: i64,
+    },
 }
 
 /// 正在播放栏的卡片（可配置顺序/显隐）。
@@ -193,6 +201,9 @@ pub struct Root {
     /// 待加入歌单的歌曲 id（Some 时显示歌单选择浮层）。
     picker_song: Option<i64>,
     picker_playlists: Vec<Playlist>,
+    rename_pid: Option<i64>,
+    rename_input: Entity<InputState>,
+    delete_pid: Option<i64>,
     _subs: Vec<Subscription>,
     _search_sub: Subscription,
 }
@@ -236,6 +247,7 @@ impl Root {
         let login_input = cx.new(|cx| InputState::new(window, cx).placeholder("粘贴 MUSIC_U 或完整 Cookie"));
         // 新建歌单名称输入
         let create_input = cx.new(|cx| InputState::new(window, cx).placeholder("歌单名称"));
+        let rename_input = cx.new(|cx| InputState::new(window, cx).placeholder("新名称"));
 
         let np_width = siren_core::settings::load_np_width();
         let np_width_slider = cx.new(|_| {
@@ -281,6 +293,11 @@ impl Root {
             subs.push(cx.subscribe(&create_input, |root: &mut Root, _i, ev: &InputEvent, cx| {
                 if let InputEvent::PressEnter { .. } = ev {
                     root.submit_create(cx);
+                }
+            }));
+            subs.push(cx.subscribe(&rename_input, |root: &mut Root, _i, ev: &InputEvent, cx| {
+                if let InputEvent::PressEnter { .. } = ev {
+                    root.submit_rename(cx);
                 }
             }));
             subs.push(
@@ -334,6 +351,9 @@ impl Root {
                 create_input,
                 picker_song: None,
                 picker_playlists: Vec::new(),
+                rename_pid: None,
+                rename_input,
+                delete_pid: None,
                 _subs: subs,
                 _search_sub,
             }
@@ -373,6 +393,8 @@ impl Root {
             PageEvent::OpenSettings => self.navigate(Route::Settings, cx),
             PageEvent::OpenCreate => self.open_create(cx),
             PageEvent::AddToPlaylist { song_id } => self.open_picker(*song_id, cx),
+            PageEvent::RenamePlaylist { id } => self.open_rename(*id, cx),
+            PageEvent::DeletePlaylist { id } => self.open_delete(*id, cx),
         }
     }
 
@@ -516,6 +538,10 @@ impl Render for Root {
         let weak_picker = cx.weak_entity();
         let create_overlay = self.create_open.then(|| self.create_overlay(weak_create));
         let picker_overlay = self.picker_song.map(|_| self.picker_overlay(weak_picker));
+        let weak_rename = cx.weak_entity();
+        let weak_delete = cx.weak_entity();
+        let rename_overlay = self.rename_pid.map(|_| self.rename_overlay(weak_rename));
+        let delete_overlay = self.delete_pid.map(|_| self.delete_overlay(weak_delete));
         // 中间列显式分配宽度，规避 gpui `flex_1` 的横向过度伸展。
         // 右侧栏严格取设置的宽度；空间不足时中间列收缩（不产生横向溢出）。
         let np_w = if self.now_playing_open { self.np_width } else { 44.0 };
@@ -558,6 +584,8 @@ impl Render for Root {
             .when_some(comments_overlay, |this, overlay| this.child(overlay))
             .when_some(create_overlay, |this, overlay| this.child(overlay))
             .when_some(picker_overlay, |this, overlay| this.child(overlay))
+            .when_some(rename_overlay, |this, overlay| this.child(overlay))
+            .when_some(delete_overlay, |this, overlay| this.child(overlay))
     }
 }
 

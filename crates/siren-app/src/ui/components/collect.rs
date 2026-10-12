@@ -247,4 +247,166 @@ impl Root {
             )
             .into_any_element()
     }
+
+    /// 打开重命名歌单浮层。
+    pub(crate) fn open_rename(&mut self, id: i64, cx: &mut Context<Self>) {
+        self.rename_pid = Some(id);
+        cx.notify();
+    }
+
+    pub(crate) fn close_rename(&mut self, cx: &mut Context<Self>) {
+        self.rename_pid = None;
+        cx.notify();
+    }
+
+    /// 提交重命名。
+    pub(crate) fn submit_rename(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.rename_pid else { return };
+        let name = self.rename_input.read(cx).value().trim().to_string();
+        if name.is_empty() {
+            return;
+        }
+        let client = self.services.client.clone();
+        self.services.handle.spawn(async move {
+            let _ = siren_core::network::api::playlist_rename(&client, id, &name).await;
+        });
+        self.rename_pid = None;
+        self.library.update(cx, |page, cx| page.reload_playlists(cx));
+        cx.notify();
+    }
+
+    /// 打开删除确认浮层。
+    pub(crate) fn open_delete(&mut self, id: i64, cx: &mut Context<Self>) {
+        self.delete_pid = Some(id);
+        cx.notify();
+    }
+
+    pub(crate) fn close_delete(&mut self, cx: &mut Context<Self>) {
+        self.delete_pid = None;
+        cx.notify();
+    }
+
+    pub(crate) fn confirm_delete(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.delete_pid else { return };
+        let client = self.services.client.clone();
+        self.services.handle.spawn(async move {
+            let _ = siren_core::network::api::playlist_delete(&client, id).await;
+        });
+        self.delete_pid = None;
+        self.library.update(cx, |page, cx| page.reload_playlists(cx));
+        cx.notify();
+    }
+
+    /// 重命名浮层。
+    pub(crate) fn rename_overlay(&self, weak: WeakEntity<Self>) -> AnyElement {
+        let weak_cancel = weak.clone();
+        let weak_ok = weak;
+        div()
+            .id("rename-overlay")
+            .occlude()
+            .absolute()
+            .top_0()
+            .left_0()
+            .w_full()
+            .h_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(rgba(0x00000088))
+            .child(
+                div()
+                    .v_flex()
+                    .w(px(360.0))
+                    .gap(px(14.0))
+                    .rounded(px(12.0))
+                    .bg(theme::surface())
+                    .p(px(20.0))
+                    .child(
+                        div()
+                            .text_lg()
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(theme::text_primary())
+                            .child("重命名歌单"),
+                    )
+                    .child(Input::new(&self.rename_input))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_end()
+                            .gap(px(8.0))
+                            .child(Button::new("rename-cancel").label("取消").on_click(move |_ev, _w, cx| {
+                                weak_cancel.update(cx, |root, cx| root.close_rename(cx)).ok();
+                            }))
+                            .child(
+                                Button::new("rename-ok")
+                                    .primary()
+                                    .label("确定")
+                                    .on_click(move |_ev, _w, cx| {
+                                        weak_ok.update(cx, |root, cx| root.submit_rename(cx)).ok();
+                                    }),
+                            ),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    /// 删除确认浮层。
+    pub(crate) fn delete_overlay(&self, weak: WeakEntity<Self>) -> AnyElement {
+        let weak_cancel = weak.clone();
+        let weak_ok = weak;
+        div()
+            .id("delete-overlay")
+            .occlude()
+            .absolute()
+            .top_0()
+            .left_0()
+            .w_full()
+            .h_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(rgba(0x00000088))
+            .child(
+                div()
+                    .v_flex()
+                    .w(px(340.0))
+                    .gap(px(14.0))
+                    .rounded(px(12.0))
+                    .bg(theme::surface())
+                    .p(px(20.0))
+                    .child(
+                        div()
+                            .text_lg()
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(theme::text_primary())
+                            .child("删除歌单"),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(theme::text_gray())
+                            .child("确定删除该歌单？此操作不可撤销。"),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_end()
+                            .gap(px(8.0))
+                            .child(Button::new("delete-cancel").label("取消").on_click(move |_ev, _w, cx| {
+                                weak_cancel.update(cx, |root, cx| root.close_delete(cx)).ok();
+                            }))
+                            .child(
+                                Button::new("delete-ok")
+                                    .danger()
+                                    .label("删除")
+                                    .on_click(move |_ev, _w, cx| {
+                                        weak_ok.update(cx, |root, cx| root.confirm_delete(cx)).ok();
+                                    }),
+                            ),
+                    ),
+            )
+            .into_any_element()
+    }
 }
