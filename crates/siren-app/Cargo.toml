@@ -11,7 +11,8 @@ authors.workspace = true
 [dependencies]
 siren-core.workspace = true
 siren-platform.workspace = true
-# 待补充：gpui-kit 等，见 workspace Cargo.toml
+gpui-kit.workspace = true
+tokio.workspace = true
 
 [[bin]]
 name = "siren"

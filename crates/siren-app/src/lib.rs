@@ -2,30 +2,51 @@
 //!
 //! 应用层：GPUI 界面与状态管理。
 //!
-//! ## 职责
-//!
-//! - 窗口与布局
-//! - 页面与组件
-//! - 状态管理（播放状态、认证状态、界面状态）
-//! - 平台能力的初始化与生命周期管理
-//!
 //! ## 约束
 //!
-//! **本 crate 不得出现 `#[cfg(target_os)]`** —— 平台差异必须收敛在 `siren-platform`。
-//! 通过 `siren_platform` 暴露的 trait 与统一别名调用平台能力。
+//! **本 crate 不得出现 `#[cfg(target_os)]`** —— 平台差异收敛在 `siren-platform`。
 //!
 //! 详见 `docs/01-架构设计.md`。
 
-pub mod state;
+pub mod theme;
 pub mod ui;
 
-/// 应用入口：初始化与主循环。
-///
-/// TODO: 实现
-/// - 初始化日志
-/// - 初始化平台能力（目录、媒体控制、托盘）
-/// - 恢复窗口位置与尺寸
-/// - 打开主窗口
+use gpui_kit::*;
+
+use ui::Root;
+
+/// 应用入口：初始化 tokio 运行时与 GPUI 主循环。
 pub fn run() {
-    todo!("应用入口待实现");
+    let runtime = tokio::runtime::Runtime::new().expect("创建 tokio 运行时失败");
+    let ox = env_f32("SIREN_X", 80.0);
+    let oy = env_f32("SIREN_Y", 80.0);
+    let w = env_f32("SIREN_W", 1100.0);
+    let h = env_f32("SIREN_H", 760.0);
+
+    gpui_kit::application()
+        .with_assets(gpui_kit::assets::Assets)
+        .run(move |cx| {
+            gpui_kit::init(cx);
+            gpui_kit::component::Theme::change(gpui_kit::component::ThemeMode::Dark, None, cx);
+            gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds {
+                        origin: point(px(ox), px(oy)),
+                        size: size(px(w), px(h)),
+                    })),
+                    titlebar: Some(TitlebarOptions {
+                        title: Some("Siren".into()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                cx,
+                move |window, cx| Root::new(window, cx, runtime),
+            )
+            .expect("打开窗口失败");
+        });
+}
+
+fn env_f32(key: &str, default: f32) -> f32 {
+    std::env::var(key).ok().and_then(|s| s.parse().ok()).unwrap_or(default)
 }
