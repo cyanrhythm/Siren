@@ -2,10 +2,23 @@
 
 use serde_json::{json, Value};
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::model::{parse_search_songs, Playlist, PlaylistDetail, Song};
 use crate::network::client::NeteaseClient;
 use crate::network::endpoints::path;
+
+/// 校验响应业务码：`301` → 未登录，其余非 `200`（且含 `code`）→ 业务错误。
+///
+/// 对齐 Melodia `ApiFlow`：成功码 `200`；部分接口省略 `code` 视为成功。
+fn validate(value: &Value) -> Result<()> {
+    match value.get("code").and_then(Value::as_i64) {
+        None | Some(200) => Ok(()),
+        Some(code) => {
+            let message = value.get("message").and_then(Value::as_str).unwrap_or_default();
+            Err(Error::from_code(code, message))
+        }
+    }
+}
 
 /// 综合搜索（单曲），`kind`：1=单曲 10=专辑 100=歌手 1000=歌单。
 pub async fn search(client: &NeteaseClient, keyword: &str, kind: u32, limit: u32) -> Result<Vec<Song>> {
@@ -16,13 +29,16 @@ pub async fn search(client: &NeteaseClient, keyword: &str, kind: u32, limit: u32
 /// 原始搜索返回体。
 pub async fn search_raw(client: &NeteaseClient, keyword: &str, kind: u32, limit: u32) -> Result<Value> {
     let body = json!({ "s": keyword, "type": kind, "limit": limit, "offset": 0 });
-    client.weapi_post(path::SEARCH, &body).await
+    let value = client.weapi_post(path::SEARCH, &body).await?;
+    validate(&value)?;
+    Ok(value)
 }
 
 /// 单曲播放地址（WEAPI，标准音质，匿名可用）。
 pub async fn song_url(client: &NeteaseClient, id: i64) -> Result<Option<String>> {
     let body = json!({ "ids": format!("[{id}]"), "level": "standard", "encodeType": "aac" });
     let value = client.weapi_post(path::SONG_URL, &body).await?;
+    validate(&value)?;
     Ok(extract_url(&value))
 }
 
@@ -37,18 +53,22 @@ pub async fn song_url_eapi(client: &NeteaseClient, id: i64, level: &str) -> Resu
     };
     let body = json!({ "ids": format!("[{id}]"), "level": level, "encodeType": encode });
     let value = client.eapi_post(path::SONG_URL_EAPI, &body).await?;
+    validate(&value)?;
     Ok(extract_url(&value))
 }
 
 /// 账号信息（含登录态）。
 pub async fn account(client: &NeteaseClient) -> Result<Value> {
-    client.weapi_post(path::ACCOUNT, &json!({})).await
+    let value = client.weapi_post(path::ACCOUNT, &json!({})).await?;
+    validate(&value)?;
+    Ok(value)
 }
 
 /// 推荐歌单。
 pub async fn personalized_playlists(client: &NeteaseClient, limit: u32) -> Result<Vec<Playlist>> {
     let body = json!({ "limit": limit, "offset": 0, "total": true });
     let value = client.weapi_post(path::PERSONALIZED_PLAYLISTS, &body).await?;
+    validate(&value)?;
     Ok(crate::model::parse_personalized_playlists(&value))
 }
 
@@ -56,6 +76,7 @@ pub async fn personalized_playlists(client: &NeteaseClient, limit: u32) -> Resul
 pub async fn playlist_detail(client: &NeteaseClient, id: i64) -> Result<Option<PlaylistDetail>> {
     let body = json!({ "id": id, "n": 1000, "s": 8 });
     let value = client.weapi_post(path::PLAYLIST_DETAIL, &body).await?;
+    validate(&value)?;
     Ok(crate::model::parse_playlist_detail(&value))
 }
 
@@ -63,6 +84,7 @@ pub async fn playlist_detail(client: &NeteaseClient, id: i64) -> Result<Option<P
 pub async fn user_playlists(client: &NeteaseClient, uid: i64, limit: u32, offset: u32) -> Result<Vec<Playlist>> {
     let body = json!({ "uid": uid, "limit": limit, "offset": offset });
     let value = client.weapi_post(path::USER_PLAYLIST, &body).await?;
+    validate(&value)?;
     Ok(crate::model::parse_user_playlists(&value))
 }
 
@@ -96,6 +118,7 @@ pub fn account_avatar(value: &Value) -> Option<String> {
 /// 二维码登录：申请 unikey。
 pub async fn login_qr_key(client: &NeteaseClient) -> Result<String> {
     let value = client.weapi_post(path::QR_UNIKEY, &json!({ "type": 1 })).await?;
+    validate(&value)?;
     Ok(value
         .get("unikey")
         .and_then(Value::as_str)
