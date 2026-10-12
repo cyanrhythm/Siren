@@ -90,6 +90,36 @@ pub use windows::appmodel::set_app_user_model_id;
 #[cfg(not(target_os = "windows"))]
 pub fn set_app_user_model_id(_id: &str) {}
 
+/// 主显示器工作区（逻辑像素 `x,y,w,h`；非 Windows 返回 None）。
+#[cfg(target_os = "windows")]
+pub use windows::display::primary_work_area;
+#[cfg(not(target_os = "windows"))]
+pub fn primary_work_area() -> Option<(f32, f32, f32, f32)> {
+    None
+}
+
+/// 主显示器工作区（物理像素；非 Windows 返回 None）。
+#[cfg(target_os = "windows")]
+pub use windows::display::primary_work_area_physical;
+#[cfg(not(target_os = "windows"))]
+pub fn primary_work_area_physical() -> Option<(i32, i32, i32, i32)> {
+    None
+}
+
+/// 将窗口移动到物理坐标（非 Windows 无操作）。
+#[cfg(target_os = "windows")]
+pub use windows::display::move_window;
+#[cfg(not(target_os = "windows"))]
+pub fn move_window(_hwnd: u64, _x: i32, _y: i32, _w: i32, _h: i32) {}
+
+/// 窗口的物理矩形 `(x,y,w,h)`；非 Windows 返回 None。
+#[cfg(target_os = "windows")]
+pub use windows::display::window_physical_rect;
+#[cfg(not(target_os = "windows"))]
+pub fn window_physical_rect(_hwnd: u64) -> Option<(i32, i32, i32, i32)> {
+    None
+}
+
 /// 用系统默认程序打开 URL（如网页登录）。
 #[cfg(target_os = "windows")]
 pub fn open_url(url: &str) {

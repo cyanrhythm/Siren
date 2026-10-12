@@ -23,6 +23,8 @@ struct Settings {
     cards: Option<Vec<String>>,
     /// 右侧栏宽度（像素）。
     np_width: Option<f32>,
+    /// 上次窗口位置与大小（`x,y,w,h`）。
+    window: Option<[f32; 4]>,
 }
 
 /// 右侧栏宽度范围与默认值。
@@ -70,6 +72,23 @@ pub fn load_np_width() -> f32 {
 pub fn save_np_width(width: f32) {
     let mut settings = read();
     settings.np_width = Some(width.clamp(NP_WIDTH_MIN, NP_WIDTH_MAX));
+    write(&settings);
+}
+
+/// 读取上次窗口位置与大小 `(x, y, w, h)`。
+pub fn load_window_bounds() -> Option<(f32, f32, f32, f32)> {
+    let [x, y, w, h] = read().window?;
+    if w >= 320.0 && h >= 240.0 {
+        Some((x, y, w, h))
+    } else {
+        None
+    }
+}
+
+/// 保存窗口位置与大小。
+pub fn save_window_bounds(x: f32, y: f32, w: f32, h: f32) {
+    let mut settings = read();
+    settings.window = Some([x, y, w, h]);
     write(&settings);
 }
 

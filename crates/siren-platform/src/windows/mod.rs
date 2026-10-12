@@ -19,5 +19,6 @@
 //! pub mod lyric;      // 窗口样式
 
 pub mod appmodel;
+pub mod display;
 pub mod media;
 pub mod native;
