@@ -41,9 +41,11 @@ impl Root {
             Some(s) => (s.name.clone(), s.artists.clone()),
             None => ("未在播放".to_string(), String::new()),
         };
+        // 封面随面板宽度放大（封顶 420，对齐 Melodia NowPlayingMaxWidth）；无歌曲时用小占位。
+        let cover_size = (self.np_width - 28.0).clamp(220.0, 420.0);
         let cover: AnyElement = match &song {
-            Some(s) => self.services.covers.image(&s.cover_url, 280.0),
-            None => cover_placeholder(280.0).into_any_element(),
+            Some(s) => self.services.covers.image(&s.cover_url, cover_size),
+            None => cover_placeholder(200.0).into_any_element(),
         };
         let detail = self.playback.read(cx).current_detail().cloned();
         let lyrics = self.playback.read(cx).current_lyrics().to_vec();

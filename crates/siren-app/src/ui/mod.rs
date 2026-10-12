@@ -344,7 +344,7 @@ impl Root {
             self.cover_song = id;
             if let Some(song) = &song {
                 self.services.covers.prefetch([song.cover_url.clone()], 56.0, cx);
-                self.services.covers.prefetch([song.cover_url.clone()], 280.0, cx);
+                self.services.covers.prefetch([song.cover_url.clone()], 512.0, cx);
             }
         }
         cx.notify();
