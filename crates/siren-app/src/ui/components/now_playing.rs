@@ -4,7 +4,7 @@ use gpui_kit::assets::IconName;
 use gpui_kit::base::StyledExt;
 use gpui_kit::*;
 
-use super::super::{cover_placeholder, fmt_date, icon, Root};
+use super::super::{cover_placeholder, fmt_date, icon, NpTab, Root};
 use crate::theme;
 
 impl Root {
@@ -27,7 +27,7 @@ impl Root {
                 }
                 _ => state.song.as_ref().map(|s| s.album.clone()).unwrap_or_default(),
             };
-            let weak_toggle = weak;
+            let weak_toggle = weak.clone();
             // 歌词：取当前时间点附近的若干行，高亮当前行。
             let lyrics = self.playback.read(cx).current_lyrics().to_vec();
             let cur = siren_core::lyrics::current_index(&lyrics, state.position_ms);
@@ -80,6 +80,20 @@ impl Root {
                 }
                 col.into_any_element()
             };
+            let tab = self.np_tab;
+            let wiki = self.playback.read(cx).current_wiki().cloned();
+            let song = state.song.clone();
+            let tab_content: AnyElement = match tab {
+                NpTab::Song => song_detail_card(wiki.as_ref(), song.as_ref(), detail.as_ref()),
+                NpTab::Lyrics => lyrics_view,
+                NpTab::Comments => div()
+                    .flex_1()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(div().text_sm().text_color(theme::text_gray()).child("评论（待接入）"))
+                    .into_any_element(),
+            };
             div()
                 .v_flex()
                 .w(px(340.0))
@@ -122,11 +136,11 @@ impl Root {
                         .flex()
                         .items_center()
                         .gap(px(6.0))
-                        .child(pill("歌曲", true))
-                        .child(pill("歌词", false))
-                        .child(pill("评论", false)),
+                        .child(np_pill("歌曲", NpTab::Song, tab, weak.clone()))
+                        .child(np_pill("歌词", NpTab::Lyrics, tab, weak.clone()))
+                        .child(np_pill("评论", NpTab::Comments, tab, weak.clone())),
                 )
-                .child(lyrics_view)
+                .child(tab_content)
         } else {
             let weak_expand = weak;
             div()
@@ -161,8 +175,10 @@ fn toggle_button(id: &'static str, name: IconName, weak: WeakEntity<Root>) -> im
         .child(icon(name, 16.0, theme::text_gray()))
 }
 
-fn pill(label: &str, active: bool) -> impl IntoElement {
+fn np_pill(label: &str, tab: NpTab, current: NpTab, weak: WeakEntity<Root>) -> impl IntoElement {
+    let active = tab == current;
     div()
+        .id(("np-tab", tab as usize))
         .px(px(14.0))
         .h(px(30.0))
         .flex()
@@ -175,5 +191,109 @@ fn pill(label: &str, active: bool) -> impl IntoElement {
             theme::surface()
         })
         .text_color(if active { theme::pane() } else { theme::text_primary() })
+        .on_click(move |_ev, _window, cx| {
+            weak.update(cx, |root, cx| {
+                root.np_tab = tab;
+                cx.notify();
+            })
+            .ok();
+        })
         .child(div().text_sm().child(label.to_string()))
+}
+
+/// 歌曲详情卡：曲风/专辑/语种/发行时间/BPM/影综/获奖/制作人员（缺失项不显示）。
+fn song_detail_card(
+    wiki: Option<&siren_core::model::SongWiki>,
+    song: Option<&siren_core::model::Song>,
+    detail: Option<&siren_core::model::Song>,
+) -> AnyElement {
+    let mut rows: Vec<(String, String)> = Vec::new();
+    if let Some(w) = wiki {
+        if !w.style.is_empty() {
+            rows.push(("曲风".into(), w.style.clone()));
+        }
+    }
+    let album = wiki
+        .map(|w| w.album.clone())
+        .filter(|s| !s.is_empty())
+        .or_else(|| song.map(|s| s.album.clone()))
+        .unwrap_or_default();
+    if !album.is_empty() {
+        rows.push(("专辑".into(), album));
+    }
+    if let Some(w) = wiki {
+        if !w.language.is_empty() {
+            rows.push(("语种".into(), w.language.clone()));
+        }
+    }
+    let publish = wiki
+        .map(|w| w.publish_time.clone())
+        .filter(|s| !s.is_empty())
+        .or_else(|| detail.filter(|d| d.publish_time > 0).map(|d| fmt_date(d.publish_time)))
+        .unwrap_or_default();
+    if !publish.is_empty() {
+        rows.push(("发行时间".into(), publish));
+    }
+    if let Some(w) = wiki {
+        if !w.bpm.is_empty() {
+            rows.push(("BPM".into(), w.bpm.clone()));
+        }
+        if !w.entertainment.is_empty() {
+            rows.push(("影综".into(), w.entertainment.clone()));
+        }
+        if !w.awards.is_empty() {
+            let mut v = w.awards.join(" / ");
+            if w.award_total as usize > w.awards.len() {
+                v = format!("{v}（共 {} 项）", w.award_total);
+            }
+            rows.push(("获奖".into(), v));
+        }
+        if !w.creator_roles.is_empty() {
+            let creators = w
+                .creator_roles
+                .iter()
+                .map(|r| format!("{} {}", r.role, r.artists.join(" ")))
+                .collect::<Vec<_>>()
+                .join(" / ");
+            rows.push(("制作人员".into(), creators));
+        }
+    }
+
+    if rows.is_empty() {
+        return div()
+            .flex_1()
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(div().text_sm().text_color(theme::text_gray()).child("暂无歌曲详情"))
+            .into_any_element();
+    }
+
+    let mut col = div().flex_1().w_full().flex().flex_col().gap(px(6.0)).overflow_hidden();
+    for (label, value) in rows {
+        col = col.child(
+            div()
+                .w_full()
+                .flex()
+                .items_start()
+                .gap(px(8.0))
+                .child(
+                    div()
+                        .w(px(64.0))
+                        .flex_none()
+                        .text_xs()
+                        .text_color(theme::text_gray())
+                        .child(label),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .text_sm()
+                        .text_color(theme::text_primary())
+                        .child(value),
+                ),
+        );
+    }
+    col.into_any_element()
 }

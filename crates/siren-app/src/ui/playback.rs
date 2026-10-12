@@ -10,7 +10,7 @@ use gpui_kit::component::slider::{SliderEvent, SliderState, SliderValue};
 use gpui_kit::*;
 
 use siren_core::lyrics::LyricLine;
-use siren_core::model::{AudioQuality, Song};
+use siren_core::model::{AudioQuality, Song, SongWiki};
 use siren_core::network::client::NeteaseClient;
 use siren_core::player::{Mpv, PlayMode, PlaybackController, PlaybackState, Player, SilentEngine};
 use siren_platform::{
@@ -33,6 +33,8 @@ pub(crate) struct Playback {
     detail: Option<Song>,
     /// 当前歌曲歌词。
     lyrics: Vec<LyricLine>,
+    /// 当前歌曲百科/制作人。
+    wiki: Option<SongWiki>,
     /// 是否启用系统媒体控制（SMTC / MPRIS）。
     media_keys_enabled: bool,
     /// 正在播放的歌曲与起始时刻（用于打卡上报时长）。
@@ -119,6 +121,7 @@ impl Playback {
                 liked: HashSet::new(),
                 detail: None,
                 lyrics: Vec::new(),
+                wiki: None,
                 media_keys_enabled: siren_core::settings::load_media_keys(),
                 playing_id: None,
                 playing_at: None,
@@ -158,6 +161,11 @@ impl Playback {
     /// 当前歌曲歌词。
     pub(crate) fn current_lyrics(&self) -> &[LyricLine] {
         &self.lyrics
+    }
+
+    /// 当前歌曲百科/制作人。
+    pub(crate) fn current_wiki(&self) -> Option<&SongWiki> {
+        self.wiki.as_ref()
     }
 
     /// 是否启用系统媒体控制。
@@ -410,6 +418,25 @@ impl Playback {
             let lines = rx.await.unwrap_or_default();
             this.update(cx, |this, cx| {
                 this.lyrics = lines;
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+
+        // 拉取歌曲百科/制作人。
+        let client_wiki = self.client.clone();
+        let handle_wiki = self.handle.clone();
+        self.wiki = None;
+        cx.spawn(async move |this, cx| {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            handle_wiki.spawn(async move {
+                let wiki = siren_core::network::api::song_wiki(&client_wiki, song_id).await.ok();
+                let _ = tx.send(wiki);
+            });
+            let wiki = rx.await.ok().flatten();
+            this.update(cx, |this, cx| {
+                this.wiki = wiki;
                 cx.notify();
             })
             .ok();

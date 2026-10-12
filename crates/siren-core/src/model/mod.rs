@@ -4,8 +4,10 @@
 //! 后续按业务域（歌单、专辑、歌手、播客等）扩展。
 
 pub mod quality;
+pub mod wiki;
 
 pub use quality::AudioQuality;
+pub use wiki::{parse_song_wiki, CreatorRole, SongWiki};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

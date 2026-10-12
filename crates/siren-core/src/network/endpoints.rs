@@ -49,4 +49,8 @@ pub mod path {
     pub const LYRIC: &str = "/eapi/song/lyric/v1";
     /// 刷新登录态（WEAPI，新 Cookie 在 Set-Cookie）。
     pub const LOGIN_REFRESH: &str = "/weapi/login/token/refresh";
+    /// 歌曲百科摘要（WEAPI）。
+    pub const SONG_WIKI: &str = "/weapi/song/play/about/block/page";
+    /// 歌曲制作人员（WEAPI）。
+    pub const SONG_CREATORS: &str = "/weapi/song/creators";
 }

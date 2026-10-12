@@ -184,6 +184,15 @@ pub async fn song_detail(client: &NeteaseClient, id: i64) -> Result<Option<Song>
         .map(crate::model::parse_song))
 }
 
+/// 歌曲百科 + 制作人（WEAPI）。
+pub async fn song_wiki(client: &NeteaseClient, id: i64) -> Result<crate::model::SongWiki> {
+    let wiki = client.weapi_post(path::SONG_WIKI, &json!({ "songId": id })).await?;
+    validate(&wiki)?;
+    let creators = client.weapi_post(path::SONG_CREATORS, &json!({ "songId": id })).await?;
+    validate(&creators)?;
+    Ok(crate::model::parse_song_wiki(&wiki, &creators))
+}
+
 /// 刷新登录态：新 Cookie 经响应头 `Set-Cookie` 下发，成功返回合并后的 Cookie。
 pub async fn refresh_login(client: &NeteaseClient) -> Result<Option<String>> {
     let (value, cookie) = client.weapi_post_with_cookie(path::LOGIN_REFRESH, &json!({})).await?;
