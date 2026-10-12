@@ -66,6 +66,9 @@ pub fn run() {
                         appears_transparent: true,
                         ..Default::default()
                     }),
+                    // 先隐藏创建，移动到目标位置后再显示，避免可见的跳动
+                    show: false,
+                    focus: true,
                     ..Default::default()
                 },
                 cx,
@@ -91,12 +94,15 @@ pub fn run() {
                     } else {
                         None
                     };
-                    if let (Some(hwnd), Some(t)) = (siren_platform::window_hwnd(window), target) {
+                    if let Some(hwnd) = siren_platform::window_hwnd(window) {
                         cx.spawn(async move |cx| {
                             cx.background_executor()
-                                .timer(std::time::Duration::from_millis(150))
+                                .timer(std::time::Duration::from_millis(60))
                                 .await;
-                            siren_platform::move_window(hwnd, t.0, t.1, t.2, t.3);
+                            if let Some(t) = target {
+                                siren_platform::move_window(hwnd, t.0, t.1, t.2, t.3);
+                            }
+                            siren_platform::show_window(hwnd);
                         })
                         .detach();
                     }

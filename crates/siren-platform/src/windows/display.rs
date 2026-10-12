@@ -5,8 +5,8 @@ use windows::Win32::UI::HiDpi::{
     GetDpiForSystem, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetWindowRect, SetWindowPos, SystemParametersInfoW, SET_WINDOW_POS_FLAGS, SPI_GETWORKAREA, SWP_NOACTIVATE,
-    SWP_NOZORDER, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+    GetWindowRect, SetForegroundWindow, SetWindowPos, ShowWindowAsync, SystemParametersInfoW, SET_WINDOW_POS_FLAGS,
+    SPI_GETWORKAREA, SWP_NOACTIVATE, SWP_NOZORDER, SW_SHOW, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
 };
 
 fn raw_work_area() -> Option<RECT> {
@@ -49,6 +49,15 @@ pub fn move_window(hwnd: u64, x: i32, y: i32, width: i32, height: i32) {
         let flags = SET_WINDOW_POS_FLAGS(SWP_NOZORDER.0 | SWP_NOACTIVATE.0);
         let handle = HWND(hwnd as usize as *mut core::ffi::c_void);
         let _ = SetWindowPos(handle, None, x, y, width, height, flags);
+    }
+}
+
+/// 显示窗口并置前（用于隐藏创建后展示）。
+pub fn show_window(hwnd: u64) {
+    let handle = HWND(hwnd as usize as *mut core::ffi::c_void);
+    unsafe {
+        let _ = ShowWindowAsync(handle, SW_SHOW);
+        let _ = SetForegroundWindow(handle);
     }
 }
 

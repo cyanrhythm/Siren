@@ -112,6 +112,12 @@ pub use windows::display::move_window;
 #[cfg(not(target_os = "windows"))]
 pub fn move_window(_hwnd: u64, _x: i32, _y: i32, _w: i32, _h: i32) {}
 
+/// 显示窗口并置前（非 Windows 无操作）。
+#[cfg(target_os = "windows")]
+pub use windows::display::show_window;
+#[cfg(not(target_os = "windows"))]
+pub fn show_window(_hwnd: u64) {}
+
 /// 窗口的物理矩形 `(x,y,w,h)`；非 Windows 返回 None。
 #[cfg(target_os = "windows")]
 pub use windows::display::window_physical_rect;
