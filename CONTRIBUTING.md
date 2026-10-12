@@ -154,6 +154,25 @@ X11 与 Wayland 的差异**不是** GUI 工具包能抹平的：
 
 ---
 
+## AI 辅助开发
+
+项目内置了 **GPUI Kit 官方 Agent Skills**，位于 [`.opencode/skills/`](.opencode/skills/)：
+
+| Skill | 内容 |
+|---|---|
+| `gpui-kit` | 组件用法、GPUI 机制（Element / Entity / Action / 测试）、**编码规范** |
+| `gpui-kit-design-guides` | 设计规范（布局、间距、层级、色彩、动效） |
+
+支持 Agent Skills 的工具（opencode / Claude Code 等）会自动发现并加载。
+
+> ⚠️ 上游明确要求：**在做架构、状态所有权、公共 API、命名或测试决策前，
+> 先读 `gpui-kit/references/coding-guides.md`。** 这些是强制规范，不是参考建议。
+
+这些文件来自 [longbridge/gpui-kit](https://github.com/longbridge/gpui-kit)（CC BY 4.0），
+**请勿就地修改**——如需更新请从上游重新拉取。详见 `.opencode/skills/README.md`。
+
+---
+
 ## 自检清单
 
 提交前请确认：
