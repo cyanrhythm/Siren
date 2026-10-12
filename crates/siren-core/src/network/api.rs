@@ -278,17 +278,17 @@ pub async fn update_playlist_cover(
     ext: &str,
     filename: &str,
 ) -> Result<String> {
-    // 1. 申请上传凭证（图片场景 type=other，不带 md5）
+    // 1. 申请上传凭证（封面固定 bucket=yyimgs、nos_product=0、type=other，不带 md5）
     let token_value = client
         .weapi_post(
             path::NOS_TOKEN_ALLOC,
             &json!({
-                "bucket": "",
+                "bucket": "yyimgs",
                 "ext": ext,
                 "filename": filename,
-                "local": false,
-                "nos_product": 3,
-                "type": "other"
+                "nos_product": 0,
+                "type": "other",
+                "return_body": "{\"code\":200,\"size\":\"$(ObjectSize)\"}"
             }),
         )
         .await?;
@@ -309,7 +309,10 @@ pub async fn update_playlist_cover(
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
-    let doc_id = result.get("docId").and_then(Value::as_i64).unwrap_or_default();
+    let doc_id = result
+        .get("docId")
+        .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+        .unwrap_or_default();
     if bucket.is_empty() || object_key.is_empty() || doc_id <= 0 {
         return Err(Error::Biz {
             code: 0,

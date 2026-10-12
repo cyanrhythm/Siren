@@ -1,19 +1,45 @@
-//! 歌单详情：返回 + 曲目列表。
+//! 歌单详情：大封面头部 + 操作栏 + 曲目表（对齐 Melodia `PlaylistPage.kt`）。
 
 use std::sync::Arc;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::base::StyledExt;
 use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::menu::{ContextMenuExt, DropdownMenu, PopupMenuItem};
 use gpui_kit::*;
 
-use siren_core::model::PlaylistDetail;
+use siren_core::model::{PlaylistDetail, Song};
 
 use super::super::playback::Playback;
 use super::super::services::Services;
 use super::super::{fmt_time, icon, page_shell_with_header, PageEvent};
 use crate::theme;
+
+/// 曲目排序。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SortOrder {
+    Custom,
+    Name,
+    Duration,
+}
+
+impl SortOrder {
+    fn label(self) -> &'static str {
+        match self {
+            SortOrder::Custom => "自定义顺序",
+            SortOrder::Name => "按名称",
+            SortOrder::Duration => "按时长",
+        }
+    }
+    fn next(self) -> SortOrder {
+        match self {
+            SortOrder::Custom => SortOrder::Name,
+            SortOrder::Name => SortOrder::Duration,
+            SortOrder::Duration => SortOrder::Custom,
+        }
+    }
+}
 
 pub(crate) struct PlaylistPage {
     services: Services,
@@ -22,6 +48,10 @@ pub(crate) struct PlaylistPage {
     name: String,
     detail: Option<Arc<PlaylistDetail>>,
     subscribed: bool,
+    query_input: Entity<InputState>,
+    query: String,
+    sort: SortOrder,
+    _filter_sub: Subscription,
 }
 
 impl EventEmitter<PageEvent> for PlaylistPage {}
@@ -33,7 +63,14 @@ impl PlaylistPage {
         playback: Entity<Playback>,
         id: i64,
         name: String,
+        query_input: Entity<InputState>,
     ) -> Self {
+        let _filter_sub = cx.subscribe(&query_input, |this: &mut PlaylistPage, _i, ev: &InputEvent, cx| {
+            if let InputEvent::Change = ev {
+                this.query = this.query_input.read(cx).value().to_string();
+                cx.notify();
+            }
+        });
         let mut page = Self {
             services,
             playback,
@@ -41,6 +78,10 @@ impl PlaylistPage {
             name,
             detail: None,
             subscribed: false,
+            query_input,
+            query: String::new(),
+            sort: SortOrder::Custom,
+            _filter_sub,
         };
         page.load(cx);
         page
@@ -64,8 +105,7 @@ impl PlaylistPage {
                             all.append(&mut songs);
                         }
                     }
-                    let mut map: std::collections::HashMap<i64, siren_core::model::Song> =
-                        all.into_iter().map(|s| (s.id, s)).collect();
+                    let mut map: std::collections::HashMap<i64, Song> = all.into_iter().map(|s| (s.id, s)).collect();
                     d.tracks = d.track_ids.iter().filter_map(|id| map.remove(id)).collect();
                 }
             }
@@ -82,6 +122,10 @@ impl PlaylistPage {
                 if let Some(d) = &this.detail {
                     let urls: Vec<String> = d.tracks.iter().map(|t| t.cover_url.clone()).collect();
                     this.services.covers.prefetch(urls, 40.0, cx);
+                    this.services.covers.prefetch([d.cover_url.clone()], 200.0, cx);
+                    if !d.creator_avatar.is_empty() {
+                        this.services.covers.prefetch([d.creator_avatar.clone()], 24.0, cx);
+                    }
                 }
                 cx.notify();
             })
@@ -151,14 +195,12 @@ impl PlaylistPage {
             let Ok(bytes) = std::fs::read(&path) else { return };
             let (tx, rx) = tokio::sync::oneshot::channel();
             handle.spawn(async move {
-                let ok = siren_core::network::api::update_playlist_cover(&client, pid, bytes, &ext, &filename)
-                    .await
-                    .is_ok();
-                let _ = tx.send(ok);
+                let res = siren_core::network::api::update_playlist_cover(&client, pid, bytes, &ext, &filename).await;
+                let _ = tx.send(res);
             });
-            let ok = rx.await.unwrap_or(false);
+            let res = rx.await.ok().and_then(|r| r.ok());
             this.update(cx, |this, cx| {
-                if ok {
+                if let Some(_url) = res {
                     this.load(cx);
                     cx.emit(PageEvent::PlaylistChanged);
                 }
@@ -167,13 +209,40 @@ impl PlaylistPage {
         })
         .detach();
     }
+
+    /// 当前展示（过滤 + 排序后）的曲目。
+    fn shown(&self) -> Vec<Song> {
+        let Some(detail) = &self.detail else {
+            return Vec::new();
+        };
+        let q = self.query.trim().to_lowercase();
+        let mut tracks: Vec<Song> = detail
+            .tracks
+            .iter()
+            .filter(|s| q.is_empty() || s.name.to_lowercase().contains(&q) || s.artists.to_lowercase().contains(&q))
+            .cloned()
+            .collect();
+        match self.sort {
+            SortOrder::Custom => {}
+            SortOrder::Name => tracks.sort_by(|a, b| a.name.cmp(&b.name)),
+            SortOrder::Duration => tracks.sort_by_key(|s| s.duration_ms),
+        }
+        tracks
+    }
 }
 
 impl Render for PlaylistPage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let weak_back = cx.weak_entity();
         let weak_star = cx.weak_entity();
-        let weak_star2 = cx.weak_entity();
+        let weak_menu = cx.weak_entity();
+        let weak_play = cx.weak_entity();
+        let weak_shuffle = cx.weak_entity();
+        let weak_sort = cx.weak_entity();
+        let subscribed = self.subscribed;
+        let sort = self.sort;
+        let pid = self.id;
+
         let header = div()
             .flex()
             .items_center()
@@ -200,65 +269,201 @@ impl Render for PlaylistPage {
                     .text_color(theme::text_primary())
                     .child(self.name.clone()),
             )
-            .child(
-                div()
-                    .id("playlist-subscribe")
-                    .size(px(30.0))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded_full()
-                    .cursor_pointer()
-                    .hover(|s| s.bg(theme::surface()))
-                    .on_click({
-                        let weak_star = weak_star;
-                        move |_ev, _window, cx| {
-                            weak_star.update(cx, |p, cx| p.toggle_subscribe(cx)).ok();
-                        }
-                    })
-                    .child(icon(
-                        if self.subscribed {
-                            IconName::Star
-                        } else {
-                            IconName::StarOff
-                        },
-                        18.0,
-                        if self.subscribed {
-                            theme::accent()
-                        } else {
-                            theme::text_gray()
-                        },
-                    )),
-            )
             .child({
-                let weak_menu = weak_star2;
-                let pid = self.id;
+                let weak = weak_menu;
                 Button::new("pl-more")
                     .ghost()
                     .icon(IconName::Ellipsis)
                     .dropdown_menu(move |menu, _w, _cx| {
-                        let weak = weak_menu.clone();
-                        let weak_cover = weak_menu.clone();
+                        let weak_edit = weak.clone();
+                        let weak_cover = weak.clone();
+                        let weak_del = weak.clone();
                         menu.item(PopupMenuItem::new("编辑简介").on_click(move |_ev, _w, cx| {
-                            weak.update(cx, |_p, cx| cx.emit(PageEvent::EditPlaylistDesc { id: pid }))
+                            weak_edit
+                                .update(cx, |_p, cx| cx.emit(PageEvent::EditPlaylistDesc { id: pid }))
                                 .ok();
                         }))
                         .item(PopupMenuItem::new("更换封面").on_click(move |_ev, _w, cx| {
                             weak_cover.update(cx, |page, cx| page.change_cover(cx)).ok();
+                        }))
+                        .item(PopupMenuItem::new("删除歌单").on_click(move |_ev, _w, cx| {
+                            weak_del
+                                .update(cx, |_p, cx| cx.emit(PageEvent::DeletePlaylist { id: pid }))
+                                .ok();
                         }))
                     })
             });
 
         let body: AnyElement = match &self.detail {
             Some(detail) => {
-                let tracks = detail.tracks.clone();
-                let count = tracks.len();
-                let covers = self.services.covers.clone();
+                let shown = self.shown();
+                let count = detail.tracks.len();
+                let total_ms: i64 = detail.tracks.iter().map(|s| s.duration_ms).sum();
+                let summary = format!("{} 首歌曲，{}", count, fmt_duration(total_ms));
+                let type_label = if detail.privacy == 10 {
+                    "隐私歌单"
+                } else {
+                    "公开歌单"
+                };
+
+                let cover = self.services.covers.image(&detail.cover_url, 200.0);
+                let creator_avatar = if detail.creator_avatar.is_empty() {
+                    div().into_any_element()
+                } else {
+                    div()
+                        .mr(px(8.0))
+                        .child(self.services.covers.image_round(&detail.creator_avatar, 24.0))
+                        .into_any_element()
+                };
+
+                let hero = div()
+                    .w_full()
+                    .flex()
+                    .items_end()
+                    .gap(px(20.0))
+                    .p(px(24.0))
+                    .child(cover)
+                    .child(
+                        div()
+                            .v_flex()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .gap(px(6.0))
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(FontWeight::BOLD)
+                                    .text_color(theme::text_primary())
+                                    .child(type_label),
+                            )
+                            .child(
+                                div()
+                                    .text_color(theme::text_primary())
+                                    .font_weight(FontWeight::BOLD)
+                                    .text_size(px(40.0))
+                                    .truncate()
+                                    .child(detail.name.clone()),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .child(creator_avatar)
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .font_weight(FontWeight::BOLD)
+                                            .text_color(theme::text_primary())
+                                            .child(detail.creator_nickname.clone()),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .text_color(theme::text_gray())
+                                            .child(format!(" · {summary}")),
+                                    ),
+                            ),
+                    );
+
+                let action_row = div()
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .gap(px(14.0))
+                    .px(px(24.0))
+                    .pb(px(16.0))
+                    .child(
+                        div()
+                            .id("pl-play")
+                            .size(px(48.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded_full()
+                            .bg(theme::accent())
+                            .cursor_pointer()
+                            .on_click(move |_ev, _window, cx| {
+                                weak_play
+                                    .update(cx, |page, cx| {
+                                        let items = page.detail.as_ref().map(|d| d.tracks.clone()).unwrap_or_default();
+                                        page.playback.update(cx, |pb, cx| pb.play_from(items, 0, cx));
+                                    })
+                                    .ok();
+                            })
+                            .child(icon(IconName::Play, 22.0, theme::text_primary())),
+                    )
+                    .child(
+                        div()
+                            .id("pl-shuffle")
+                            .cursor_pointer()
+                            .on_click(move |_ev, _window, cx| {
+                                weak_shuffle
+                                    .update(cx, |page, cx| {
+                                        let items = page.detail.as_ref().map(|d| d.tracks.clone()).unwrap_or_default();
+                                        page.playback.update(cx, |pb, cx| pb.play_shuffled(items, cx));
+                                    })
+                                    .ok();
+                            })
+                            .child(icon(IconName::Shuffle, 22.0, theme::text_gray())),
+                    )
+                    .child(
+                        div()
+                            .id("pl-fav")
+                            .cursor_pointer()
+                            .on_click(move |_ev, _window, cx| {
+                                weak_star.update(cx, |page, cx| page.toggle_subscribe(cx)).ok();
+                            })
+                            .child(icon(
+                                if subscribed { IconName::Star } else { IconName::StarOff },
+                                22.0,
+                                if subscribed {
+                                    theme::accent()
+                                } else {
+                                    theme::text_gray()
+                                },
+                            )),
+                    )
+                    .child(div().flex_1())
+                    .child(
+                        div()
+                            .w(px(180.0))
+                            .h(px(32.0))
+                            .flex()
+                            .items_center()
+                            .gap(px(8.0))
+                            .px(px(12.0))
+                            .rounded(px(16.0))
+                            .bg(theme::surface())
+                            .child(icon(IconName::Search, 16.0, theme::text_gray()))
+                            .child(Input::new(&self.query_input)),
+                    )
+                    .child(
+                        div()
+                            .id("pl-sort")
+                            .flex()
+                            .items_center()
+                            .gap(px(6.0))
+                            .cursor_pointer()
+                            .text_sm()
+                            .text_color(theme::text_gray())
+                            .child(sort.label())
+                            .child(icon(IconName::List, 16.0, theme::text_gray()))
+                            .on_click(move |_ev, _window, cx| {
+                                weak_sort
+                                    .update(cx, |page, cx| {
+                                        page.sort = page.sort.next();
+                                        cx.notify();
+                                    })
+                                    .ok();
+                            }),
+                    );
+
                 let weak = cx.weak_entity();
-                let rows = uniform_list("playlist-tracks", count, move |range, _window, _cx| {
+                let covers = self.services.covers.clone();
+                let rows = uniform_list("playlist-tracks", shown.len(), move |range, _window, _cx| {
                     range
                         .map(|i| {
-                            let song = &tracks[i];
+                            let song = &shown[i];
                             let cover = covers.image(&song.cover_url, 40.0);
                             let weak = weak.clone();
                             let weak_ctx = weak.clone();
@@ -267,7 +472,7 @@ impl Render for PlaylistPage {
                                 .id(format!("playlist-track-{}", song.id))
                                 .w_full()
                                 .h(px(52.0))
-                                .px(px(16.0))
+                                .px(px(24.0))
                                 .flex()
                                 .items_center()
                                 .gap(px(12.0))
@@ -277,7 +482,8 @@ impl Render for PlaylistPage {
                                 .on_click(move |_ev, _window, cx| {
                                     weak.update(cx, |this, cx| {
                                         let items = this.detail.as_ref().map(|d| d.tracks.clone()).unwrap_or_default();
-                                        this.playback.update(cx, |pb, cx| pb.play_from(items, i, cx));
+                                        let idx = items.iter().position(|s| s.id == sid).unwrap_or(0);
+                                        this.playback.update(cx, |pb, cx| pb.play_from(items, idx, cx));
                                     })
                                     .ok();
                                 })
@@ -353,7 +559,8 @@ impl Render for PlaylistPage {
                     .flex_1()
                     .min_w(px(0.0))
                     .w_full()
-                    .child(column_header())
+                    .child(hero)
+                    .child(action_row)
                     .child(rows)
                     .into_any_element()
             }
@@ -369,22 +576,12 @@ impl Render for PlaylistPage {
     }
 }
 
-/// 曲目表头（与行内列宽对齐）。
-fn column_header() -> impl IntoElement {
-    div()
-        .w_full()
-        .h(px(32.0))
-        .px(px(16.0))
-        .flex()
-        .items_center()
-        .gap(px(12.0))
-        .border_b_1()
-        .border_color(theme::surface())
-        .text_xs()
-        .text_color(theme::text_gray())
-        .child(div().w(px(28.0)).child("#"))
-        .child(div().w(px(40.0)))
-        .child(div().flex_1().child("标题"))
-        .child(div().w(px(240.0)).child("专辑"))
-        .child(div().w(px(56.0)).child("时长"))
+/// 毫秒 → 「X 小时 Y 分钟 / Y 分钟」。
+fn fmt_duration(ms: i64) -> String {
+    let total_min = (ms.max(0) / 60_000) as u64;
+    if total_min >= 60 {
+        format!("{} 小时 {} 分钟", total_min / 60, total_min % 60)
+    } else {
+        format!("{total_min} 分钟")
+    }
 }

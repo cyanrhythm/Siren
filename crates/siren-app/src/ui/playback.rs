@@ -429,6 +429,14 @@ impl Playback {
         cx.notify();
     }
 
+    /// 随机播放：开启随机模式后从给定列表播放。
+    pub(crate) fn play_shuffled(&mut self, items: Vec<Song>, cx: &mut Context<Self>) {
+        if self.player.mode() != PlayMode::Shuffle {
+            self.player.set_mode(PlayMode::Shuffle);
+        }
+        self.play_from(items, 0, cx);
+    }
+
     /// 用给定歌曲列表建立队列并播放指定下标。
     pub(crate) fn play_from(&mut self, items: Vec<Song>, index: usize, cx: &mut Context<Self>) {
         if let Some(song) = self.player.set_queue(items) {

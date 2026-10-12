@@ -165,6 +165,8 @@ pub struct Root {
     services: Services,
     playback: Entity<Playback>,
     search_input: Entity<InputState>,
+    /// 歌单页内搜索框（跨歌单复用）。
+    pl_filter_input: Entity<InputState>,
     nav: Vec<Route>,
     home: Entity<HomePage>,
     library: Entity<LibraryPage>,
@@ -255,6 +257,7 @@ impl Root {
         let login_input = cx.new(|cx| InputState::new(window, cx).placeholder("粘贴 MUSIC_U 或完整 Cookie"));
         // 新建歌单名称输入
         let create_input = cx.new(|cx| InputState::new(window, cx).placeholder("歌单名称"));
+        let pl_filter_input = cx.new(|cx| InputState::new(window, cx).placeholder("搜索歌单里的歌曲"));
         let rename_input = cx.new(|cx| InputState::new(window, cx).placeholder("新名称"));
         let desc_input = cx.new(|cx| InputState::new(window, cx).placeholder("歌单简介"));
 
@@ -330,6 +333,7 @@ impl Root {
                 services,
                 playback,
                 search_input,
+                pl_filter_input,
                 nav: vec![initial_route],
                 home,
                 library,
@@ -468,7 +472,8 @@ impl Root {
 
     fn open_playlist(&mut self, id: i64, name: String, cx: &mut Context<Self>) {
         self.nav.push(Route::Playlist { id, name: name.clone() });
-        let page = cx.new(|cx| PlaylistPage::new(cx, self.services.clone(), self.playback.clone(), id, name));
+        let filter = self.pl_filter_input.clone();
+        let page = cx.new(|cx| PlaylistPage::new(cx, self.services.clone(), self.playback.clone(), id, name, filter));
         let sub = cx.subscribe(&page, |root: &mut Root, _e, ev: &PageEvent, cx| {
             root.on_page_event(ev, cx)
         });
