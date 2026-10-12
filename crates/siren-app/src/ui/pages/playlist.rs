@@ -1,5 +1,7 @@
 //! 歌单详情：大封面头部 + 操作栏 + 曲目表（对齐 Melodia `PlaylistPage.kt`）。
 
+use std::cell::Cell;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui_kit::assets::IconName;
@@ -7,6 +9,7 @@ use gpui_kit::base::StyledExt;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::menu::{ContextMenuExt, DropdownMenu, PopupMenuItem};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use siren_core::model::{PlaylistDetail, Song};
@@ -15,6 +18,21 @@ use super::super::playback::Playback;
 use super::super::services::Services;
 use super::super::{fmt_time, icon, page_shell_with_header, PageEvent};
 use crate::theme;
+
+/// 封面裁剪状态。
+struct CropState {
+    orig: Arc<Vec<u8>>,
+    image: Arc<Image>,
+    disp_w: f32,
+    disp_h: f32,
+    src_w: f32,
+    src_h: f32,
+    /// 选择方框（展示坐标）：(x, y, 边长)
+    rect: (f32, f32, f32),
+    drag_start: Option<(f32, f32)>,
+    /// 展示区左上角的窗口坐标（canvas 回填）。
+    origin: Rc<Cell<(f32, f32)>>,
+}
 
 /// 曲目排序。
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -51,6 +69,8 @@ pub(crate) struct PlaylistPage {
     query_input: Entity<InputState>,
     query: String,
     sort: SortOrder,
+    /// 封面裁剪浮层状态。
+    crop: Option<CropState>,
     _filter_sub: Subscription,
 }
 
@@ -81,6 +101,7 @@ impl PlaylistPage {
             query_input,
             query: String::new(),
             sort: SortOrder::Custom,
+            crop: None,
             _filter_sub,
         };
         page.load(cx);
@@ -168,7 +189,7 @@ impl PlaylistPage {
         .detach();
     }
 
-    /// 更换封面：选择图片 → NOS 直传 → 登记 → 重载。
+    /// 更换封面：选择图片 → 打开裁剪浮层。
     fn change_cover(&mut self, cx: &mut Context<Self>) {
         let options = PathPromptOptions {
             files: true,
@@ -177,37 +198,261 @@ impl PlaylistPage {
             prompt: Some("选择封面图片".into()),
         };
         let task = cx.prompt_for_paths(options);
-        let client = self.services.client.clone();
-        let handle = self.services.handle.clone();
-        let pid = self.id;
         cx.spawn(async move |this, cx| {
             let picked = match task.await {
                 Ok(Ok(paths)) => paths.and_then(|mut v| v.pop()),
                 _ => None,
             };
             let Some(path) = picked else { return };
-            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("jpg").to_string();
-            let filename = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("cover.jpg")
-                .to_string();
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("jpg")
+                .to_lowercase();
             let Ok(bytes) = std::fs::read(&path) else { return };
-            let (tx, rx) = tokio::sync::oneshot::channel();
-            handle.spawn(async move {
-                let res = siren_core::network::api::update_playlist_cover(&client, pid, bytes, &ext, &filename).await;
-                let _ = tx.send(res);
-            });
-            let res = rx.await.ok().and_then(|r| r.ok());
-            this.update(cx, |this, cx| {
-                if let Some(_url) = res {
-                    this.load(cx);
-                    cx.emit(PageEvent::PlaylistChanged);
-                }
+            let Ok(decoded) = image::load_from_memory(&bytes) else {
+                return;
+            };
+            let (sw, sh) = (decoded.width() as f32, decoded.height() as f32);
+            if sw <= 0.0 || sh <= 0.0 {
+                return;
+            }
+            let max = 440.0_f32;
+            let scale = (max / sw).min(max / sh);
+            let disp_w = (sw * scale).max(1.0);
+            let disp_h = (sh * scale).max(1.0);
+            let side = disp_w.min(disp_h);
+            let fmt = if ext == "png" {
+                ImageFormat::Png
+            } else {
+                ImageFormat::Jpeg
+            };
+            let image = Arc::new(Image::from_bytes(fmt, bytes.clone()));
+            this.update(cx, |page, cx| {
+                page.crop = Some(CropState {
+                    orig: Arc::new(bytes),
+                    image,
+                    disp_w,
+                    disp_h,
+                    src_w: sw,
+                    src_h: sh,
+                    rect: ((disp_w - side) / 2.0, (disp_h - side) / 2.0, side),
+                    drag_start: None,
+                    origin: Rc::new(Cell::new((0.0, 0.0))),
+                });
+                cx.notify();
             })
             .ok();
         })
         .detach();
+    }
+
+    fn crop_down(&mut self, pos: (f32, f32), cx: &mut Context<Self>) {
+        if let Some(c) = &mut self.crop {
+            let o = c.origin.get();
+            let local = ((pos.0 - o.0).clamp(0.0, c.disp_w), (pos.1 - o.1).clamp(0.0, c.disp_h));
+            c.drag_start = Some(local);
+            c.rect = (local.0.min(c.disp_w - 1.0), local.1.min(c.disp_h - 1.0), 1.0);
+            cx.notify();
+        }
+    }
+
+    fn crop_move(&mut self, pos: (f32, f32), cx: &mut Context<Self>) {
+        if let Some(c) = &mut self.crop {
+            if let Some(start) = c.drag_start {
+                let o = c.origin.get();
+                let cur = ((pos.0 - o.0).clamp(0.0, c.disp_w), (pos.1 - o.1).clamp(0.0, c.disp_h));
+                let side = (cur.0 - start.0)
+                    .abs()
+                    .max((cur.1 - start.1).abs())
+                    .max(16.0)
+                    .min(c.disp_w)
+                    .min(c.disp_h);
+                let x = start.0.min(cur.0).min(c.disp_w - side).max(0.0);
+                let y = start.1.min(cur.1).min(c.disp_h - side).max(0.0);
+                c.rect = (x, y, side);
+                cx.notify();
+            }
+        }
+    }
+
+    fn crop_up(&mut self, cx: &mut Context<Self>) {
+        if let Some(c) = &mut self.crop {
+            c.drag_start = None;
+            cx.notify();
+        }
+    }
+
+    fn crop_cancel(&mut self, cx: &mut Context<Self>) {
+        self.crop = None;
+        cx.notify();
+    }
+
+    /// 确认裁剪：按选区裁成正方形 → 缩放 → JPEG → NOS 上传登记。
+    fn crop_confirm(&mut self, cx: &mut Context<Self>) {
+        let Some(c) = self.crop.take() else { return };
+        let k = c.src_w / c.disp_w;
+        let sx = (c.rect.0 * k).round().max(0.0) as u32;
+        let sy = (c.rect.1 * k).round().max(0.0) as u32;
+        let src_w = c.src_w as u32;
+        let src_h = c.src_h as u32;
+        let side = ((c.rect.2 * k).round().max(1.0) as u32)
+            .min(src_w.saturating_sub(sx))
+            .min(src_h.saturating_sub(sy))
+            .max(1);
+        let client = self.services.client.clone();
+        let handle = self.services.handle.clone();
+        let pid = self.id;
+        let orig = c.orig.clone();
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            handle.spawn(async move {
+                let bytes = image::load_from_memory(&orig).ok().and_then(|img| {
+                    let cropped = img.crop_imm(sx, sy, side, side);
+                    let cropped = if side > 1024 {
+                        cropped.resize(1024, 1024, image::imageops::FilterType::Lanczos3)
+                    } else {
+                        cropped
+                    };
+                    let rgb = cropped.to_rgb8();
+                    let mut buf = Vec::new();
+                    let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, 90);
+                    enc.encode_image(&rgb).ok().map(|_| buf)
+                });
+                let res = match bytes {
+                    Some(bytes) => {
+                        siren_core::network::api::update_playlist_cover(&client, pid, bytes, "jpg", "cover.jpg")
+                            .await
+                            .ok()
+                    }
+                    None => None,
+                };
+                let _ = tx.send(res);
+            });
+            let res = rx.await.ok().flatten();
+            this.update(cx, |this, cx| {
+                if res.is_some() {
+                    this.load(cx);
+                    cx.emit(PageEvent::PlaylistChanged);
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// 裁剪浮层。
+    fn crop_overlay(&self, weak: WeakEntity<Self>) -> AnyElement {
+        let Some(c) = &self.crop else {
+            return div().into_any_element();
+        };
+        let (rx, ry, rs) = c.rect;
+        let (dw, dh) = (c.disp_w, c.disp_h);
+        let origin_cell = c.origin.clone();
+
+        let weak_down = weak.clone();
+        let weak_move = weak.clone();
+        let weak_up = weak.clone();
+        let weak_cancel = weak.clone();
+        let weak_ok = weak;
+
+        let stage = div()
+            .relative()
+            .w(px(dw))
+            .h(px(dh))
+            .child(img(c.image.clone()).w(px(dw)).h(px(dh)))
+            .child(
+                div()
+                    .absolute()
+                    .left(px(rx))
+                    .top(px(ry))
+                    .w(px(rs))
+                    .h(px(rs))
+                    .border_2()
+                    .border_color(theme::accent()),
+            )
+            .child(
+                canvas(
+                    move |bounds, _window, _cx| {
+                        origin_cell.set((f32::from(bounds.origin.x), f32::from(bounds.origin.y)));
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .left(px(0.0))
+                .top(px(0.0))
+                .w(px(dw))
+                .h(px(dh)),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .left(px(0.0))
+                    .top(px(0.0))
+                    .w(px(dw))
+                    .h(px(dh))
+                    .on_mouse_down(MouseButton::Left, move |ev, _w, cx| {
+                        let pos = (f32::from(ev.position.x), f32::from(ev.position.y));
+                        weak_down.update(cx, |page, cx| page.crop_down(pos, cx)).ok();
+                    })
+                    .on_mouse_move(move |ev, _w, cx| {
+                        let pos = (f32::from(ev.position.x), f32::from(ev.position.y));
+                        weak_move.update(cx, |page, cx| page.crop_move(pos, cx)).ok();
+                    })
+                    .on_mouse_up(MouseButton::Left, move |_ev, _w, cx| {
+                        weak_up.update(cx, |page, cx| page.crop_up(cx)).ok();
+                    }),
+            );
+
+        div()
+            .id("crop-overlay")
+            .occlude()
+            .absolute()
+            .top_0()
+            .left_0()
+            .w_full()
+            .h_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(rgba(0x000000cc))
+            .child(
+                div()
+                    .v_flex()
+                    .gap(px(14.0))
+                    .rounded(px(12.0))
+                    .bg(theme::surface())
+                    .p(px(20.0))
+                    .child(
+                        div()
+                            .text_lg()
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(theme::text_primary())
+                            .child("裁剪封面（拖拽选择正方形区域）"),
+                    )
+                    .child(stage)
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_end()
+                            .gap(px(8.0))
+                            .child(Button::new("crop-cancel").label("取消").on_click(move |_ev, _w, cx| {
+                                weak_cancel.update(cx, |page, cx| page.crop_cancel(cx)).ok();
+                            }))
+                            .child(
+                                Button::new("crop-ok")
+                                    .primary()
+                                    .label("确定")
+                                    .on_click(move |_ev, _w, cx| {
+                                        weak_ok.update(cx, |page, cx| page.crop_confirm(cx)).ok();
+                                    }),
+                            ),
+                    ),
+            )
+            .into_any_element()
     }
 
     /// 当前展示（过滤 + 排序后）的曲目。
@@ -572,7 +817,14 @@ impl Render for PlaylistPage {
                 .child(div().text_sm().text_color(theme::text_gray()).child("加载歌单中…"))
                 .into_any_element(),
         };
-        page_shell_with_header(header.into_any_element(), body)
+        let shell = page_shell_with_header(header.into_any_element(), body).into_any_element();
+        let overlay = self.crop.is_some().then(|| self.crop_overlay(cx.weak_entity()));
+        div()
+            .relative()
+            .size_full()
+            .child(shell)
+            .when_some(overlay, |this, overlay| this.child(overlay))
+            .into_any_element()
     }
 }
 
