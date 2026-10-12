@@ -1,0 +1,38 @@
+# 统一换行符为 LF，避免 Windows 工作区被转成 CRLF
+#
+# 背景：rustfmt.toml 声明 newline_style = "Unix"（LF），
+# 但 Windows 上 git 的 core.autocrlf 默认会把文件转成 CRLF，
+# 导致 cargo fmt --check 在 Windows CI 上报 "Incorrect newline style"。
+#
+# 用 text=auto 让 git 自动识别文本文件，eol=lf 强制检出为 LF。
+
+* text=auto eol=lf
+
+# 明确二进制文件，避免被当作文本处理
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.webp binary
+*.ttf  binary
+*.otf  binary
+*.woff binary
+*.woff2 binary
+*.mp3  binary
+*.flac binary
+*.m4a  binary
+*.zip  binary
+*.gz   binary
+*.7z   binary
+
+# Windows 专用脚本保留 CRLF
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+
+# 明确各类文本文件，便于 GitHub 语言统计与 diff
+*.md   text
+*.toml text
+*.yml  text
+*.yaml text
+*.json text
