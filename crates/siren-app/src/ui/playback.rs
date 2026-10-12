@@ -8,7 +8,7 @@ use std::time::Duration;
 use gpui_kit::component::slider::{SliderEvent, SliderState, SliderValue};
 use gpui_kit::*;
 
-use siren_core::model::Song;
+use siren_core::model::{AudioQuality, Song};
 use siren_core::network::client::NeteaseClient;
 use siren_core::player::{Mpv, PlayMode, PlaybackController, PlaybackState, Player, SilentEngine};
 use siren_platform::{
@@ -23,6 +23,8 @@ pub(crate) struct Playback {
     status: SharedString,
     mirrored: PlaybackState,
     seeking: bool,
+    /// 当前音质档位（持久化于 `siren-core::settings`）。
+    quality: AudioQuality,
     progress_slider: Entity<SliderState>,
     volume_slider: Entity<SliderState>,
     media: Option<PlatformMediaSession>,
@@ -100,6 +102,7 @@ impl Playback {
                 status: "就绪".into(),
                 mirrored: PlaybackState::default(),
                 seeking: false,
+                quality: siren_core::settings::load_quality(),
                 progress_slider,
                 volume_slider,
                 media,
@@ -114,6 +117,18 @@ impl Playback {
 
     pub(crate) fn state(&self) -> PlaybackState {
         self.player.state()
+    }
+
+    /// 当前音质档位。
+    pub(crate) fn quality(&self) -> AudioQuality {
+        self.quality
+    }
+
+    /// 设置音质档位（持久化）。
+    pub(crate) fn set_quality(&mut self, quality: AudioQuality, cx: &mut Context<Self>) {
+        self.quality = quality;
+        siren_core::settings::save_quality(quality);
+        cx.notify();
     }
 
     pub(crate) fn progress_slider(&self) -> &Entity<SliderState> {
@@ -212,9 +227,10 @@ impl Playback {
     fn resolve_and_play(&mut self, song: Song, cx: &mut Context<Self>) {
         let client = self.client.clone();
         let id = song.id;
+        let level = self.quality.code();
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.handle.spawn(async move {
-            let url = match siren_core::network::api::song_url_eapi(&client, id, "exhigh")
+            let url = match siren_core::network::api::song_url_eapi(&client, id, level)
                 .await
                 .ok()
                 .flatten()

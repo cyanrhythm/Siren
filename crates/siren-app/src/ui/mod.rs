@@ -282,7 +282,7 @@ impl Root {
         self.search.update(cx, |page, cx| page.search(keyword, cx));
     }
 
-    fn page(&self) -> AnyElement {
+    fn page(&self, weak: WeakEntity<Self>, cx: &App) -> AnyElement {
         match self.route() {
             Route::Home => self.home.clone().into_any_element(),
             Route::Search => self.search.clone().into_any_element(),
@@ -291,10 +291,10 @@ impl Root {
                 .as_ref()
                 .map(|p| p.clone().into_any_element())
                 .unwrap_or_else(|| div().into_any_element()),
+            Route::Settings => self.settings_page(weak, cx),
             // 以下页面先接路由占位，后续逐个补齐
             Route::Profile { .. } => placeholder_page("个人主页", "个人主页（待实现）"),
             Route::RecentPlay => placeholder_page("最近播放", "最近播放（待实现）"),
-            Route::Settings => placeholder_page("设置", "设置（待实现）"),
         }
     }
 }
@@ -303,6 +303,7 @@ impl Render for Root {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let vw = f32::from(window.viewport_size().width);
         let weak = cx.weak_entity();
+        let weak_page = cx.weak_entity();
         let weak_login = cx.weak_entity();
         let login_overlay = self.login_open.then(|| self.login_overlay(weak_login));
         // 中间列显式分配宽度，规避 gpui `flex_1` 的横向过度伸展
@@ -337,7 +338,7 @@ impl Render for Root {
                             .flex_none()
                             .h_full()
                             .overflow_hidden()
-                            .child(self.page()),
+                            .child(self.page(weak_page, cx)),
                     )
                     .child(self.now_playing(weak.clone(), cx)),
             )

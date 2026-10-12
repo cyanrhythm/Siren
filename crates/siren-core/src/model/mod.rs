@@ -3,6 +3,10 @@
 //! 对应 Melodia 的 `core/model/`。当前落地播放/搜索所需的子集，
 //! 后续按业务域（歌单、专辑、歌手、播客等）扩展。
 
+pub mod quality;
+
+pub use quality::AudioQuality;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

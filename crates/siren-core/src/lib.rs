@@ -23,5 +23,6 @@ pub mod lyrics;
 pub mod model;
 pub mod network;
 pub mod player;
+pub mod settings;
 
 pub use error::{Error, Result};

@@ -4,6 +4,7 @@ mod home;
 mod library;
 mod playlist;
 mod search;
+mod settings;
 
 pub(crate) use home::HomePage;
 pub(crate) use library::LibraryPage;
