@@ -115,6 +115,22 @@ pub struct PlaylistDetail {
     pub name: String,
     pub cover_url: String,
     pub tracks: Vec<Song>,
+    /// 当前用户是否已收藏。
+    pub subscribed: bool,
+    /// 曲目总数（详情可能截断，供展示）。
+    pub track_count: i64,
+}
+
+/// 专辑详情。
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct AlbumDetail {
+    pub id: i64,
+    pub name: String,
+    pub cover_url: String,
+    pub description: String,
+    /// 以 `/` 拼接的歌手名。
+    pub artists: String,
+    pub songs: Vec<Song>,
 }
 
 /// 解析推荐歌单（`/weapi/personalized/playlist`，`result` 数组）。
@@ -314,6 +330,44 @@ pub fn parse_playlist_detail(value: &Value) -> Option<PlaylistDetail> {
             .unwrap_or_default()
             .to_string(),
         tracks,
+        subscribed: playlist.get("subscribed").and_then(Value::as_bool).unwrap_or(false),
+        track_count: playlist.get("trackCount").and_then(Value::as_i64).unwrap_or_default(),
+    })
+}
+
+/// 解析专辑详情（`/weapi/v1/album/{id}`）。
+pub fn parse_album_detail(value: &Value) -> Option<AlbumDetail> {
+    let album = value.get("album")?;
+    let artists = album
+        .get("artists")
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|a| a.get("name").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join("/")
+        })
+        .unwrap_or_default();
+    let songs = value
+        .get("songs")
+        .and_then(Value::as_array)
+        .map(|arr| arr.iter().map(parse_song).collect())
+        .unwrap_or_default();
+    Some(AlbumDetail {
+        id: album.get("id").and_then(Value::as_i64).unwrap_or_default(),
+        name: str_field(album, "name"),
+        cover_url: album
+            .get("picUrl")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        description: album
+            .get("description")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        artists,
+        songs,
     })
 }
 

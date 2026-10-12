@@ -3,7 +3,7 @@
 use serde_json::{json, Value};
 
 use crate::error::{Error, Result};
-use crate::model::{parse_search_songs, Playlist, PlaylistDetail, Song};
+use crate::model::{parse_search_songs, AlbumDetail, Playlist, PlaylistDetail, Song};
 use crate::network::client::NeteaseClient;
 use crate::network::endpoints::path;
 
@@ -182,6 +182,71 @@ pub async fn song_detail(client: &NeteaseClient, id: i64) -> Result<Option<Song>
         .and_then(Value::as_array)
         .and_then(|arr| arr.first())
         .map(crate::model::parse_song))
+}
+
+/// 专辑详情（WEAPI，`/weapi/v1/album/{id}`）。
+pub async fn album_detail(client: &NeteaseClient, id: i64) -> Result<Option<AlbumDetail>> {
+    let url = format!("{}{id}", path::ALBUM_DETAIL);
+    let value = client.weapi_post(&url, &json!({})).await?;
+    validate(&value)?;
+    Ok(crate::model::parse_album_detail(&value))
+}
+
+/// 收藏 / 取消收藏歌单（EAPI）。
+pub async fn playlist_subscribe(client: &NeteaseClient, id: i64, subscribe: bool) -> Result<()> {
+    let op = if subscribe { "subscribe" } else { "unsubscribe" };
+    let url = format!("{}{op}", path::PLAYLIST_SUB);
+    let value = client.eapi_post(&url, &json!({ "id": id })).await?;
+    validate(&value)?;
+    Ok(())
+}
+
+/// 收藏 / 取消收藏专辑（WEAPI）。
+pub async fn album_subscribe(client: &NeteaseClient, id: i64, subscribe: bool) -> Result<()> {
+    let op = if subscribe { "sub" } else { "unsub" };
+    let url = format!("{}{op}", path::ALBUM_SUB);
+    let value = client.weapi_post(&url, &json!({ "id": id })).await?;
+    validate(&value)?;
+    Ok(())
+}
+
+/// 歌单添加歌曲（EAPI）。
+pub async fn playlist_add_tracks(client: &NeteaseClient, pid: i64, track_ids: &[i64]) -> Result<()> {
+    let ids = track_ids.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(",");
+    let body = json!({ "op": "add", "pid": pid, "trackIds": format!("[{ids}]"), "imme": "true" });
+    let value = client.eapi_post(path::PLAYLIST_MANIPULATE, &body).await?;
+    validate(&value)?;
+    Ok(())
+}
+
+/// 歌单改名（EAPI）。
+pub async fn playlist_rename(client: &NeteaseClient, id: i64, name: &str) -> Result<()> {
+    let value = client
+        .eapi_post(path::PLAYLIST_UPDATE_NAME, &json!({ "id": id, "name": name }))
+        .await?;
+    validate(&value)?;
+    Ok(())
+}
+
+/// 删除歌单（WEAPI）。
+pub async fn playlist_delete(client: &NeteaseClient, id: i64) -> Result<()> {
+    let value = client
+        .weapi_post(path::PLAYLIST_REMOVE, &json!({ "ids": format!("[{id}]") }))
+        .await?;
+    validate(&value)?;
+    Ok(())
+}
+
+/// 新建歌单（EAPI），返回新歌单 id。
+pub async fn playlist_create(client: &NeteaseClient, name: &str, privacy: i64) -> Result<i64> {
+    let body = json!({ "name": name, "privacy": privacy, "type": "NORMAL" });
+    let value = client.eapi_post(path::PLAYLIST_CREATE, &body).await?;
+    validate(&value)?;
+    Ok(value
+        .get("id")
+        .or_else(|| value.get("playlist").and_then(|p| p.get("id")))
+        .and_then(Value::as_i64)
+        .unwrap_or_default())
 }
 
 /// 歌曲百科 + 制作人（WEAPI）。

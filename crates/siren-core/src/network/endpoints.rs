@@ -73,4 +73,18 @@ pub mod path {
     pub const SIMI_SONG: &str = "/eapi/v1/discovery/simiSong";
     /// 心动模式推荐（EAPI）。
     pub const INTELLIGENCE: &str = "/eapi/playmode/intelligence/list";
+    /// 专辑详情（WEAPI，后接 `{id}`）。
+    pub const ALBUM_DETAIL: &str = "/weapi/v1/album/";
+    /// 歌单增删歌曲（EAPI）。
+    pub const PLAYLIST_MANIPULATE: &str = "/eapi/playlist/manipulate/tracks";
+    /// 歌单收藏/取消（EAPI，后接 `subscribe` / `unsubscribe`）。
+    pub const PLAYLIST_SUB: &str = "/eapi/playlist/";
+    /// 专辑收藏/取消（WEAPI，后接 `sub` / `unsub`）。
+    pub const ALBUM_SUB: &str = "/weapi/album/";
+    /// 歌单改名（EAPI）。
+    pub const PLAYLIST_UPDATE_NAME: &str = "/eapi/playlist/update/name";
+    /// 歌单删除（WEAPI）。
+    pub const PLAYLIST_REMOVE: &str = "/weapi/playlist/remove";
+    /// 新建歌单（EAPI）。
+    pub const PLAYLIST_CREATE: &str = "/eapi/playlist/create";
 }
