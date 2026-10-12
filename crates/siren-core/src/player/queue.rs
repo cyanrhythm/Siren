@@ -1,0 +1,222 @@
+//! 播放队列与播放模式（纯逻辑，可单测）。
+//!
+//! 队列只管理「顺序、当前索引、模式」；实际解码由音频引擎负责。
+
+use rand::Rng;
+
+use crate::model::Song;
+
+/// 播放模式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PlayMode {
+    /// 列表循环。
+    #[default]
+    ListLoop,
+    /// 单曲循环。
+    SingleLoop,
+    /// 随机播放。
+    Shuffle,
+}
+
+/// 播放队列。
+#[derive(Debug, Default)]
+pub struct PlayerQueue {
+    items: Vec<Song>,
+    current: Option<usize>,
+    mode: PlayMode,
+}
+
+impl PlayerQueue {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 用新列表替换队列，并把当前项指向首曲。
+    pub fn set_items(&mut self, items: Vec<Song>) {
+        self.current = (!items.is_empty()).then_some(0);
+        self.items = items;
+    }
+
+    pub fn items(&self) -> &[Song] {
+        &self.items
+    }
+
+    pub fn len(&self) -> usize {
+        self.items.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+
+    pub fn current_index(&self) -> Option<usize> {
+        self.current
+    }
+
+    pub fn current(&self) -> Option<&Song> {
+        self.current.and_then(|i| self.items.get(i))
+    }
+
+    pub fn mode(&self) -> PlayMode {
+        self.mode
+    }
+
+    pub fn set_mode(&mut self, mode: PlayMode) {
+        self.mode = mode;
+    }
+
+    /// 选中指定下标；越界返回 `false`（队列不变）。
+    pub fn select(&mut self, index: usize) -> bool {
+        if index < self.items.len() {
+            self.current = Some(index);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// 手动「下一首」：始终顺序 +1 并环形回绕。
+    pub fn next_index(&self) -> Option<usize> {
+        if self.items.is_empty() {
+            return None;
+        }
+        let last = self.items.len() - 1;
+        Some(match self.current {
+            Some(i) if i < last => i + 1,
+            Some(_) => 0,
+            None => 0,
+        })
+    }
+
+    /// 手动「上一首」：顺序 -1 并环形回绕。
+    pub fn previous_index(&self) -> Option<usize> {
+        if self.items.is_empty() {
+            return None;
+        }
+        let last = self.items.len() - 1;
+        Some(match self.current {
+            Some(0) | None => last,
+            Some(i) => i - 1,
+        })
+    }
+
+    /// 自然播完后应切换到的下标（遵循播放模式）。
+    pub fn auto_next_index(&self) -> Option<usize> {
+        match self.mode {
+            PlayMode::SingleLoop => self.current,
+            PlayMode::Shuffle => self.random_index(),
+            PlayMode::ListLoop => self.next_index(),
+        }
+    }
+
+    /// 按模式推进到下一首，返回新的当前曲。
+    pub fn advance(&mut self) -> Option<&Song> {
+        if let Some(i) = self.auto_next_index() {
+            self.current = Some(i);
+        }
+        self.current()
+    }
+
+    fn random_index(&self) -> Option<usize> {
+        match self.items.len() {
+            0 => None,
+            1 => Some(0),
+            len => {
+                let mut rng = rand::thread_rng();
+                let mut idx = rng.gen_range(0..len);
+                if Some(idx) == self.current {
+                    idx = (idx + 1) % len;
+                }
+                Some(idx)
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn song(id: i64) -> Song {
+        Song {
+            id,
+            name: format!("song{id}"),
+            artists: String::new(),
+            album: String::new(),
+            duration_ms: 0,
+        }
+    }
+
+    fn queue_with(n: i64) -> PlayerQueue {
+        let mut q = PlayerQueue::new();
+        q.set_items((0..n).map(song).collect());
+        q
+    }
+
+    #[test]
+    fn empty_queue_has_no_current() {
+        let q = PlayerQueue::new();
+        assert_eq!(q.current_index(), None);
+        assert!(q.next_index().is_none());
+        assert!(q.previous_index().is_none());
+    }
+
+    #[test]
+    fn set_items_selects_first() {
+        let q = queue_with(3);
+        assert_eq!(q.current_index(), Some(0));
+        assert_eq!(q.current().unwrap().id, 0);
+    }
+
+    #[test]
+    fn next_wraps_around() {
+        let mut q = queue_with(3);
+        assert_eq!(q.next_index(), Some(1));
+        q.select(2);
+        assert_eq!(q.next_index(), Some(0));
+    }
+
+    #[test]
+    fn previous_wraps_around() {
+        let mut q = queue_with(3);
+        assert_eq!(q.previous_index(), Some(2));
+        q.select(1);
+        assert_eq!(q.previous_index(), Some(0));
+    }
+
+    #[test]
+    fn select_out_of_range_fails() {
+        let mut q = queue_with(2);
+        assert!(!q.select(5));
+        assert_eq!(q.current_index(), Some(0));
+    }
+
+    #[test]
+    fn single_loop_auto_stays() {
+        let mut q = queue_with(3);
+        q.select(1);
+        q.set_mode(PlayMode::SingleLoop);
+        assert_eq!(q.auto_next_index(), Some(1));
+    }
+
+    #[test]
+    fn shuffle_advances_within_range_and_changes() {
+        let mut q = queue_with(3);
+        q.select(1);
+        q.set_mode(PlayMode::Shuffle);
+        for _ in 0..20 {
+            let idx = q.auto_next_index().unwrap();
+            assert!(idx < 3);
+            assert_ne!(idx, 1, "随机播放应换一首");
+        }
+    }
+
+    #[test]
+    fn list_loop_advance_moves_forward() {
+        let mut q = queue_with(3);
+        q.set_mode(PlayMode::ListLoop);
+        assert_eq!(q.advance().unwrap().id, 1);
+        assert_eq!(q.advance().unwrap().id, 2);
+        assert_eq!(q.advance().unwrap().id, 0);
+    }
+}

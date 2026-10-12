@@ -14,6 +14,7 @@ use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use libloading::{Library, Symbol};
+use serde::{Deserialize, Serialize};
 
 // mpv_format
 const MPV_FORMAT_DOUBLE: c_int = 5;
@@ -23,9 +24,20 @@ type MpvInitialize = unsafe extern "C" fn(*mut c_void) -> c_int;
 type MpvSetOptionString = unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char) -> c_int;
 type MpvSetPropertyString = unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char) -> c_int;
 type MpvGetProperty = unsafe extern "C" fn(*mut c_void, *const c_char, c_int, *mut c_void) -> c_int;
+type MpvGetPropertyString = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_char;
 type MpvCommand = unsafe extern "C" fn(*mut c_void, *const *const c_char) -> c_int;
+type MpvFree = unsafe extern "C" fn(*mut c_void);
 type MpvTerminateDestroy = unsafe extern "C" fn(*mut c_void);
 type MpvErrorString = unsafe extern "C" fn(c_int) -> *const c_char;
+
+/// 音频输出设备。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AudioDevice {
+    /// mpv 内部设备名（如 `wasapi/{...}` / `pipewire/...`）。
+    pub name: String,
+    /// 面向用户的描述。
+    pub description: String,
+}
 
 /// 已加载的 libmpv 函数表，持有 `Library` 以延长其生命周期。
 struct MpvLib {
@@ -35,7 +47,9 @@ struct MpvLib {
     set_option_string: MpvSetOptionString,
     set_property_string: MpvSetPropertyString,
     get_property: MpvGetProperty,
+    get_property_string: MpvGetPropertyString,
     command: MpvCommand,
+    free: MpvFree,
     terminate_destroy: MpvTerminateDestroy,
     error_string: MpvErrorString,
 }
@@ -66,7 +80,9 @@ impl MpvLib {
             set_option_string: sym!(b"mpv_set_option_string", MpvSetOptionString),
             set_property_string: sym!(b"mpv_set_property_string", MpvSetPropertyString),
             get_property: sym!(b"mpv_get_property", MpvGetProperty),
+            get_property_string: sym!(b"mpv_get_property_string", MpvGetPropertyString),
             command: sym!(b"mpv_command", MpvCommand),
+            free: sym!(b"mpv_free", MpvFree),
             terminate_destroy: sym!(b"mpv_terminate_destroy", MpvTerminateDestroy),
             error_string: sym!(b"mpv_error_string", MpvErrorString),
             _lib: lib,
@@ -91,7 +107,7 @@ impl Mpv {
     /// 从候选库名/路径加载并初始化引擎。
     pub fn load(candidates: &[String]) -> Result<Self, String> {
         let lib = MpvLib::load(candidates)?;
-        let mpv = unsafe {
+        unsafe {
             let handle = (lib.create)();
             if handle.is_null() {
                 return Err("mpv_create 返回空句柄（常见原因：进程 locale 非 C）".to_string());
@@ -113,9 +129,8 @@ impl Mpv {
             if rc < 0 {
                 return Err(format!("mpv_initialize 失败: {}", mpv.error(rc)));
             }
-            mpv
-        };
-        Ok(mpv)
+            Ok(mpv)
+        }
     }
 
     /// 加载并播放（或预载）地址。
@@ -150,6 +165,18 @@ impl Mpv {
     /// 总时长（秒）；未加载时为 `None`。
     pub fn duration(&self) -> Option<f64> {
         self.get_property_double("duration")
+    }
+
+    /// 音频输出设备列表（解析 `audio-device-list`）。
+    pub fn audio_devices(&self) -> Vec<AudioDevice> {
+        self.get_property_string("audio-device-list")
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default()
+    }
+
+    /// 切换音频输出设备（失败时原设备不变）。
+    pub fn set_audio_device(&self, name: &str) {
+        self.set_property("audio-device", name);
     }
 
     pub fn set_option(&self, name: &str, value: &str) {
@@ -190,6 +217,20 @@ impl Mpv {
         (rc >= 0).then_some(value)
     }
 
+    fn get_property_string(&self, name: &str) -> Option<String> {
+        if !self.alive.load(Ordering::Relaxed) {
+            return None;
+        }
+        let name = CString::new(name).ok()?;
+        let ptr = unsafe { (self.lib.get_property_string)(self.handle, name.as_ptr()) };
+        if ptr.is_null() {
+            return None;
+        }
+        let text = unsafe { CStr::from_ptr(ptr) }.to_string_lossy().into_owned();
+        unsafe { (self.lib.free)(ptr as *mut c_void) };
+        Some(text)
+    }
+
     fn command(&self, args: &[&str]) {
         if !self.alive.load(Ordering::Relaxed) {
             return;
@@ -223,5 +264,35 @@ impl Drop for Mpv {
                 (self.lib.terminate_destroy)(self.handle);
             }
         }
+    }
+}
+
+impl crate::player::PlaybackController for Mpv {
+    fn load(&self, url: &str) {
+        self.load_file(url);
+    }
+
+    fn set_paused(&self, paused: bool) {
+        Mpv::set_paused(self, paused);
+    }
+
+    fn stop(&self) {
+        Mpv::stop(self);
+    }
+
+    fn seek_to_ms(&self, position_ms: i64) {
+        Mpv::seek_to_ms(self, position_ms);
+    }
+
+    fn set_volume(&self, percent: f64) {
+        Mpv::set_volume(self, percent);
+    }
+
+    fn position_ms(&self) -> Option<i64> {
+        self.position().map(|s| (s * 1000.0) as i64)
+    }
+
+    fn duration_ms(&self) -> Option<i64> {
+        self.duration().map(|s| (s * 1000.0) as i64)
     }
 }

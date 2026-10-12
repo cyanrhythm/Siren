@@ -20,6 +20,7 @@
 // ── 平台能力 trait（与平台无关，始终编译）────────────────────────
 pub mod accent;
 pub mod app_paths;
+pub mod audio;
 pub mod lyric_window;
 pub mod media_session;
 pub mod native_library;

@@ -18,14 +18,10 @@
 
 pub mod auth;
 pub mod crypto;
+pub mod error;
 pub mod lyrics;
 pub mod model;
 pub mod network;
 pub mod player;
 
-/// 统一错误类型。
-///
-/// 各模块的错误都应能转换到此类型，便于上层集中处理。
-pub mod error {
-    // TODO: 定义 Error 枚举与 Result 别名
-}
+pub use error::{Error, Result};

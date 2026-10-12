@@ -32,4 +32,6 @@ pub mod linuxapi;
 pub mod rsa;
 pub mod weapi;
 
-pub use weapi::WeapiParams;
+pub use eapi::eapi;
+pub use linuxapi::linuxapi;
+pub use weapi::{weapi, weapi_with_key, WeapiParams};

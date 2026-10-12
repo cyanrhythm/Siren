@@ -23,6 +23,14 @@ num-traits.workspace = true
 
 # 序列化
 serde.workspace = true
+serde_json.workspace = true
+
+# 网络（异步）
+reqwest.workspace = true
+tokio.workspace = true
+
+# 目录规范（跨平台，无平台 cfg）
+directories.workspace = true
 
 # 音频（运行时动态加载 libmpv）
 libloading.workspace = true
