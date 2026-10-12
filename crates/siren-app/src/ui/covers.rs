@@ -14,7 +14,7 @@ use gpui_kit::*;
 
 use siren_core::network::client::NeteaseClient;
 
-use super::cover_placeholder;
+use super::{cover_placeholder, cover_placeholder_round};
 
 /// 尺寸分档：向上取到最近的档位（≥ 请求尺寸）。
 fn bucket(size: f32) -> u32 {
@@ -54,6 +54,18 @@ impl CoverLoader {
             return img(image).w(px(size)).h(px(size)).rounded(px(6.0)).into_any_element();
         }
         cover_placeholder(size).into_any_element()
+    }
+
+    /// 只读：圆形裁剪（头像）。
+    pub(crate) fn image_round(&self, url: &str, size: f32) -> AnyElement {
+        if url.is_empty() {
+            return cover_placeholder_round(size);
+        }
+        let key = sized_url(url, bucket(size));
+        if let Some(image) = self.cache.lock().unwrap().get(&key).cloned() {
+            return img(image).w(px(size)).h(px(size)).rounded_full().into_any_element();
+        }
+        cover_placeholder_round(size)
     }
 
     /// 预取一批封面（数据加载完成后调用）；完成后通知重绘。

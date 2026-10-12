@@ -302,6 +302,8 @@ impl Root {
         };
 
         div()
+            .id("login-overlay")
+            .occlude()
             .absolute()
             .top_0()
             .left_0()

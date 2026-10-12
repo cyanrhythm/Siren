@@ -383,3 +383,16 @@ pub(crate) fn cover_placeholder(size: f32) -> impl IntoElement {
         .bg(theme::cover_placeholder())
         .child(icon(IconName::Music, size * 0.5, theme::text_gray()))
 }
+
+/// 圆形占位（头像）。返回 `AnyElement` 以便与 [`crate::ui::covers`] 的图片互替。
+pub(crate) fn cover_placeholder_round(size: f32) -> AnyElement {
+    div()
+        .size(px(size))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_full()
+        .bg(theme::cover_placeholder())
+        .child(icon(IconName::Music, size * 0.5, theme::text_gray()))
+        .into_any_element()
+}

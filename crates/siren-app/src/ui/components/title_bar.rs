@@ -36,13 +36,7 @@ impl Root {
                 .h(px(32.0))
                 .p(px(0.0))
                 .rounded_full()
-                .child(
-                    div()
-                        .size(px(32.0))
-                        .rounded_full()
-                        .overflow_hidden()
-                        .child(self.services.covers.image(url, 32.0)),
-                ),
+                .child(self.services.covers.image_round(url, 32.0)),
             None => Button::new("account")
                 .custom(
                     ButtonCustomVariant::new(cx)
@@ -72,7 +66,7 @@ impl Root {
                             .gap(px(8.0))
                             .px(px(8.0))
                             .py(px(4.0))
-                            .child(covers_render.image(&url_render, 32.0))
+                            .child(covers_render.image_round(&url_render, 32.0))
                             .child(
                                 div()
                                     .text_sm()
