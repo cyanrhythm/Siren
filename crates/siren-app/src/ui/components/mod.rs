@@ -1,10 +1,6 @@
-//! 可复用组件。
+//! 可复用组件：侧栏、播放条。
 //!
-//! TODO: 按需拆分文件
-//!
-//! - `player_bar.rs`   底部播放条
-//! - `track_row.rs`    曲目行
-//! - `cover.rs`        封面（含取色）
-//! - `lyrics.rs`       歌词视图
-//! - `sidebar.rs`      侧边栏
-//! - `title_bar.rs`    自绘标题栏
+//! 视图方法以 `impl Root` 分文件承载（同一 crate 内允许）。
+
+mod player_bar;
+mod sidebar;
