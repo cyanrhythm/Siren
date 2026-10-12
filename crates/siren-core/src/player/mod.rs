@@ -14,9 +14,11 @@
 //! - 交叉淡入、流式缓存
 
 pub mod mpv;
+pub mod playback;
 pub mod queue;
 
 pub use mpv::{AudioDevice, Mpv};
+pub use playback::{PlaybackState, Player};
 pub use queue::{PlayMode, PlayerQueue};
 
 /// 播放控制抽象：由具体音频引擎实现（当前为 libmpv）。
@@ -37,6 +39,10 @@ pub trait PlaybackController: Send + Sync {
     fn position_ms(&self) -> Option<i64>;
     /// 总时长（毫秒）。
     fn duration_ms(&self) -> Option<i64>;
+    /// 是否暂停；引擎不支持时返回 `None`。
+    fn is_paused(&self) -> Option<bool>;
+    /// 是否已到文件结尾；引擎不支持时返回 `None`。
+    fn eof_reached(&self) -> Option<bool>;
 }
 
 /// 按平台前缀过滤音频设备（前缀由 `siren-platform` 提供）。

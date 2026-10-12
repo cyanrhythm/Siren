@@ -17,6 +17,7 @@ use libloading::{Library, Symbol};
 use serde::{Deserialize, Serialize};
 
 // mpv_format
+const MPV_FORMAT_FLAG: c_int = 3;
 const MPV_FORMAT_DOUBLE: c_int = 5;
 
 type MpvCreate = unsafe extern "C" fn() -> *mut c_void;
@@ -167,6 +168,16 @@ impl Mpv {
         self.get_property_double("duration")
     }
 
+    /// 是否暂停（`pause` 属性）。
+    pub fn is_paused(&self) -> Option<bool> {
+        self.get_property_flag("pause")
+    }
+
+    /// 是否已到文件结尾（`eof-reached` 属性），用于自然播完后自动切歌。
+    pub fn eof_reached(&self) -> Option<bool> {
+        self.get_property_flag("eof-reached")
+    }
+
     /// 音频输出设备列表（解析 `audio-device-list`）。
     pub fn audio_devices(&self) -> Vec<AudioDevice> {
         self.get_property_string("audio-device-list")
@@ -215,6 +226,23 @@ impl Mpv {
             )
         };
         (rc >= 0).then_some(value)
+    }
+
+    fn get_property_flag(&self, name: &str) -> Option<bool> {
+        if !self.alive.load(Ordering::Relaxed) {
+            return None;
+        }
+        let name = CString::new(name).ok()?;
+        let mut value: c_int = 0;
+        let rc = unsafe {
+            (self.lib.get_property)(
+                self.handle,
+                name.as_ptr(),
+                MPV_FORMAT_FLAG,
+                &mut value as *mut c_int as *mut c_void,
+            )
+        };
+        (rc >= 0).then_some(value != 0)
     }
 
     fn get_property_string(&self, name: &str) -> Option<String> {
@@ -294,5 +322,13 @@ impl crate::player::PlaybackController for Mpv {
 
     fn duration_ms(&self) -> Option<i64> {
         self.duration().map(|s| (s * 1000.0) as i64)
+    }
+
+    fn is_paused(&self) -> Option<bool> {
+        Mpv::is_paused(self)
+    }
+
+    fn eof_reached(&self) -> Option<bool> {
+        Mpv::eof_reached(self)
     }
 }
