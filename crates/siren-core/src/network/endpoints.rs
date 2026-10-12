@@ -27,4 +27,6 @@ pub mod path {
     pub const PERSONALIZED_PLAYLISTS: &str = "/weapi/personalized/playlist";
     /// 歌单详情。
     pub const PLAYLIST_DETAIL: &str = "/weapi/v6/playlist/detail";
+    /// 用户歌单。
+    pub const USER_PLAYLIST: &str = "/weapi/user/playlist";
 }

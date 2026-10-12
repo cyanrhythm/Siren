@@ -21,6 +21,9 @@ Thumbs.db
 .env
 .env.local
 
+# 本地凭据（勿入库）
+cookie.txt
+
 # 构建产物
 /dist/
 *.deb

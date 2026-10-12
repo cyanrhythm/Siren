@@ -9,11 +9,14 @@
 pub mod components;
 pub mod pages;
 
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::base::StyledExt;
+use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::slider::{Slider, SliderEvent, SliderState, SliderValue};
 use gpui_kit::component::Icon;
@@ -57,25 +60,41 @@ pub struct Root {
     // 歌单详情
     playlist: Option<Arc<PlaylistDetail>>,
 
+    // 音乐库 / 登录
+    logged_in: bool,
+    nickname: SharedString,
+    login_input: Entity<InputState>,
+    login_status: SharedString,
+    my_playlists: Arc<Vec<Playlist>>,
+    uid: Option<i64>,
+
     // 播放
     status: SharedString,
     mirrored: PlaybackState,
     seeking: bool,
     progress_slider: Entity<SliderState>,
     volume_slider: Entity<SliderState>,
+    covers: CoverLoader,
     media: Option<PlatformMediaSession>,
     media_cmds: std::sync::mpsc::Receiver<MediaCommand>,
 
     _search_sub: Subscription,
     _progress_sub: Subscription,
     _volume_sub: Subscription,
+    _login_sub: Subscription,
 }
 
 impl Root {
     pub fn new(window: &mut Window, cx: &mut App, runtime: tokio::runtime::Runtime) -> Entity<Self> {
         siren_platform::prepare_native_environment();
-        let cookie = siren_core::auth::load_cookie();
+        let cookie = std::env::var("SIREN_COOKIE")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .and_then(|s| siren_core::auth::normalize_cookie(&s))
+            .or_else(siren_core::auth::load_cookie);
+        let has_cookie = cookie.is_some();
         let client = Arc::new(NeteaseClient::with_cookie(cookie));
+        let covers = CoverLoader::new(client.clone(), runtime.handle().clone());
         let engine: Arc<dyn PlaybackController> = match Mpv::load(&siren_platform::mpv_library_candidates()) {
             Ok(mpv) => Arc::new(mpv),
             Err(_) => Arc::new(SilentEngine),
@@ -105,6 +124,12 @@ impl Root {
             eprintln!("[siren] 系统媒体控制已启用");
         }
 
+        let initial_route = match std::env::var("SIREN_START").ok().as_deref() {
+            Some("library") => Route::Library,
+            Some("search") => Route::Search,
+            _ => Route::Home,
+        };
+
         let entity = cx.new(|cx| {
             let search_input = cx.new(|cx| {
                 InputState::new(window, cx)
@@ -114,6 +139,13 @@ impl Root {
             let _search_sub = cx.subscribe(&search_input, |this: &mut Root, _input, event: &InputEvent, cx| {
                 if let InputEvent::PressEnter { .. } = event {
                     this.start_search(cx);
+                }
+            });
+
+            let login_input = cx.new(|cx| InputState::new(window, cx).placeholder("粘贴 MUSIC_U 或完整 Cookie"));
+            let _login_sub = cx.subscribe(&login_input, |this: &mut Root, _input, event: &InputEvent, cx| {
+                if let InputEvent::PressEnter { .. } = event {
+                    this.do_login(cx);
                 }
             });
 
@@ -146,7 +178,7 @@ impl Root {
                 runtime,
                 client,
                 player,
-                nav: vec![Route::Home],
+                nav: vec![initial_route],
                 playlists: Arc::new(Vec::new()),
                 playlists_status: "加载中…".into(),
                 search_input,
@@ -154,22 +186,37 @@ impl Root {
                 selected: None,
                 search_status: "回车搜索".into(),
                 playlist: None,
+                logged_in: false,
+                nickname: "未登录".into(),
+                login_input,
+                login_status: if has_cookie {
+                    "登录校验中…".into()
+                } else {
+                    "未登录".into()
+                },
+                my_playlists: Arc::new(Vec::new()),
+                uid: None,
                 status: "就绪".into(),
                 mirrored: PlaybackState::default(),
                 seeking: false,
                 progress_slider,
                 volume_slider,
+                covers,
                 media,
                 media_cmds: cmd_rx,
                 _search_sub,
                 _progress_sub,
                 _volume_sub,
+                _login_sub,
             }
         });
 
         entity.update(cx, |this, cx| {
             this.start_tick_timer(window, cx);
             this.load_playlists(cx);
+            if has_cookie {
+                this.refresh_account(cx);
+            }
         });
         entity
     }
@@ -249,6 +296,82 @@ impl Root {
             this.update(cx, |this, cx| {
                 this.playlists_status = format!("推荐歌单 {} 个", list.len()).into();
                 this.playlists = Arc::new(list);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn do_login(&mut self, cx: &mut Context<Self>) {
+        let raw = self.login_input.read(cx).value().trim().to_string();
+        let Some(cookie) = siren_core::auth::normalize_cookie(&raw) else {
+            self.login_status = "请输入 MUSIC_U 或完整 Cookie".into();
+            cx.notify();
+            return;
+        };
+        siren_core::auth::save_cookie(&cookie);
+        self.client = Arc::new(NeteaseClient::with_cookie(Some(cookie)));
+        self.login_status = "登录校验中…".into();
+        cx.notify();
+        self.refresh_account(cx);
+    }
+
+    fn refresh_account(&mut self, cx: &mut Context<Self>) {
+        let client = self.client.clone();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.runtime.handle().spawn(async move {
+            let account = siren_core::network::api::account(&client).await.ok();
+            let _ = tx.send(account);
+        });
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let account = rx.await.ok().flatten();
+            this.update(cx, |this, cx| {
+                let profile = account.and_then(|v| {
+                    siren_core::network::api::account_uid(&v)
+                        .map(|uid| (uid, siren_core::network::api::account_nickname(&v)))
+                });
+                match profile {
+                    Some((uid, nick)) => {
+                        this.logged_in = true;
+                        this.uid = Some(uid);
+                        this.nickname = nick.unwrap_or_else(|| "已登录".to_string()).into();
+                        this.login_status = format!("已登录：{}", this.nickname).into();
+                        eprintln!("[siren] 已登录：{} (uid={uid})", this.nickname);
+                        this.load_my_playlists(cx);
+                    }
+                    None => {
+                        this.logged_in = false;
+                        this.login_status = "未登录（Cookie 无效或已过期）".into();
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn load_my_playlists(&mut self, cx: &mut Context<Self>) {
+        let Some(uid) = self.uid else {
+            return;
+        };
+        let client = self.client.clone();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.runtime.handle().spawn(async move {
+            let list = siren_core::network::api::user_playlists(&client, uid, 50, 0)
+                .await
+                .unwrap_or_default();
+            let _ = tx.send(list);
+        });
+        self.login_status = "加载我的歌单…".into();
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let list = rx.await.unwrap_or_default();
+            this.update(cx, |this, cx| {
+                this.login_status = format!("我的歌单 {} 个", list.len()).into();
+                this.my_playlists = Arc::new(list);
                 cx.notify();
             })
             .ok();
@@ -525,7 +648,7 @@ impl Root {
     fn page(&self, weak: WeakEntity<Self>) -> impl IntoElement {
         match self.route() {
             Route::Home => self.home_page(weak).into_any_element(),
-            Route::Library => self.library_page().into_any_element(),
+            Route::Library => self.library_page(weak).into_any_element(),
             Route::Search => self.search_page(weak).into_any_element(),
             Route::Playlist { name, .. } => self.playlist_page(name, weak).into_any_element(),
         }
@@ -534,11 +657,13 @@ impl Root {
     fn home_page(&self, weak: WeakEntity<Self>) -> impl IntoElement {
         let playlists = self.playlists.clone();
         let count = playlists.len();
+        let covers = self.covers.clone();
         let weak_list = weak;
-        let list = uniform_list("home-playlists", count, move |range, _window, _cx| {
+        let list = uniform_list("home-playlists", count, move |range, _window, cx| {
             range
                 .map(|i| {
                     let pl = &playlists[i];
+                    let cover = covers.image(&pl.cover_url, 48.0, &weak_list, cx);
                     let weak = weak_list.clone();
                     let id = pl.id;
                     let name = pl.name.clone();
@@ -559,7 +684,7 @@ impl Root {
                             })
                             .ok();
                         })
-                        .child(cover_placeholder(48.0))
+                        .child(cover)
                         .child(
                             div()
                                 .v_flex()
@@ -591,34 +716,124 @@ impl Root {
         page_shell(format!("首页 · {}", self.playlists_status), list.into_any_element())
     }
 
-    fn library_page(&self) -> impl IntoElement {
-        page_shell(
-            "音乐库".to_string(),
-            div()
-                .flex_1()
-                .flex()
-                .items_center()
-                .justify_center()
+    fn library_page(&self, weak: WeakEntity<Self>) -> impl IntoElement {
+        if self.logged_in {
+            let playlists = self.my_playlists.clone();
+            let count = playlists.len();
+            let covers = self.covers.clone();
+            let weak_list = weak;
+            let list = uniform_list("lib-playlists", count, move |range, _window, cx| {
+                range
+                    .map(|i| {
+                        let pl = &playlists[i];
+                        let cover = covers.image(&pl.cover_url, 48.0, &weak_list, cx);
+                        let weak = weak_list.clone();
+                        let id = pl.id;
+                        let name = pl.name.clone();
+                        div()
+                            .id(i)
+                            .w_full()
+                            .h(px(64.0))
+                            .px(px(16.0))
+                            .flex()
+                            .items_center()
+                            .gap(px(14.0))
+                            .rounded(px(8.0))
+                            .hover(|s| s.bg(theme::card_surface()))
+                            .cursor_pointer()
+                            .on_click(move |_ev, _window, cx| {
+                                weak.update(cx, |this, cx| {
+                                    this.open_playlist(id, name.clone(), cx);
+                                })
+                                .ok();
+                            })
+                            .child(cover)
+                            .child(
+                                div()
+                                    .v_flex()
+                                    .flex_1()
+                                    .min_w(px(0.0))
+                                    .overflow_hidden()
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .text_color(theme::text_primary())
+                                            .truncate()
+                                            .child(pl.name.clone()),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(theme::text_gray())
+                                            .child(format!("{} 首", pl.track_count)),
+                                    ),
+                            )
+                            .into_any_element()
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .flex_1()
+            .w_full()
+            .min_w(px(0.0));
+
+            page_shell(
+                format!("音乐库 · {} · {}", self.nickname, self.login_status),
+                list.into_any_element(),
+            )
+        } else {
+            let weak_login = weak;
+            let card = div()
+                .v_flex()
+                .gap(px(10.0))
+                .w(px(440.0))
+                .p(px(16.0))
+                .rounded(px(10.0))
+                .bg(theme::card_surface())
                 .child(
                     div()
-                        .v_flex()
+                        .text_sm()
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(theme::text_primary())
+                        .child("登录后查看你的歌单"),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme::text_gray())
+                        .child("粘贴 MUSIC_U 或完整 Cookie（也可用 SIREN_COOKIE 环境变量）"),
+                )
+                .child(Input::new(&self.login_input))
+                .child(
+                    div()
+                        .flex()
                         .items_center()
                         .gap(px(8.0))
                         .child(
-                            div()
-                                .text_sm()
-                                .text_color(theme::text_primary())
-                                .child("登录后查看你的歌单、收藏与最近播放"),
+                            Button::new("login")
+                                .primary()
+                                .label("登录")
+                                .on_click(move |_ev, _window, cx| {
+                                    weak_login.update(cx, |this, cx| this.do_login(cx)).ok();
+                                }),
                         )
                         .child(
                             div()
                                 .text_xs()
                                 .text_color(theme::text_gray())
-                                .child("（Cookie 登录待接入界面）"),
+                                .child(self.login_status.clone()),
                         ),
-                )
-                .into_any_element(),
-        )
+                );
+            page_shell(
+                "音乐库".to_string(),
+                div()
+                    .flex_1()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(card)
+                    .into_any_element(),
+            )
+        }
     }
 
     fn search_page(&self, weak: WeakEntity<Self>) -> impl IntoElement {
@@ -964,6 +1179,95 @@ impl Render for Root {
                     .child(self.page(weak.clone())),
             )
             .child(self.player_bar(weak, vw))
+    }
+}
+
+/// 封面加载器：按尺寸缓存 + 后台抓取 + 通知重绘。
+#[derive(Clone)]
+struct CoverLoader {
+    cache: Arc<Mutex<HashMap<String, Arc<Image>>>>,
+    inflight: Arc<Mutex<HashSet<String>>>,
+    client: Arc<NeteaseClient>,
+    handle: tokio::runtime::Handle,
+}
+
+impl CoverLoader {
+    fn new(client: Arc<NeteaseClient>, handle: tokio::runtime::Handle) -> Self {
+        Self {
+            cache: Arc::new(Mutex::new(HashMap::new())),
+            inflight: Arc::new(Mutex::new(HashSet::new())),
+            client,
+            handle,
+        }
+    }
+
+    fn image(&self, url: &str, size: f32, weak: &WeakEntity<Root>, cx: &mut App) -> AnyElement {
+        if url.is_empty() {
+            return cover_placeholder(size).into_any_element();
+        }
+        let key = sized_url(url, size);
+        if let Some(image) = self.cache.lock().unwrap().get(&key).cloned() {
+            return img(image).w(px(size)).h(px(size)).rounded(px(6.0)).into_any_element();
+        }
+        self.request(key, weak, cx);
+        cover_placeholder(size).into_any_element()
+    }
+
+    fn request(&self, key: String, weak: &WeakEntity<Root>, cx: &mut App) {
+        if !self.inflight.lock().unwrap().insert(key.clone()) {
+            return;
+        }
+        let client = self.client.clone();
+        let (tx, rx) = tokio::sync::oneshot::channel::<Option<Arc<Image>>>();
+        let fetch_key = key.clone();
+        self.handle.spawn(async move {
+            let image = match client.get_bytes(&fetch_key).await {
+                Ok(bytes) => guess_format(&bytes).map(|fmt| Arc::new(Image::from_bytes(fmt, bytes))),
+                Err(_) => None,
+            };
+            let _ = tx.send(image);
+        });
+
+        let cache = self.cache.clone();
+        let inflight = self.inflight.clone();
+        let key_for = key;
+        weak.clone()
+            .update(cx, move |_this, cx| {
+                cx.spawn(async move |this, cx| {
+                    let image = rx.await.ok().flatten();
+                    inflight.lock().unwrap().remove(&key_for);
+                    if let Some(image) = image {
+                        cache.lock().unwrap().insert(key_for, image);
+                        this.update(cx, |_this, cx| cx.notify()).ok();
+                    }
+                })
+                .detach();
+            })
+            .ok();
+    }
+}
+
+/// 网易云封面支持 `?param=WxH` 生成指定尺寸，减少下载量。
+fn sized_url(url: &str, size: f32) -> String {
+    if url.contains("126.net") && !url.contains("param=") {
+        format!("{url}?param={}y{}", size as u32, size as u32)
+    } else {
+        url.to_string()
+    }
+}
+
+/// 通过魔数猜测图片格式。
+fn guess_format(bytes: &[u8]) -> Option<ImageFormat> {
+    if bytes.len() >= 8 && &bytes[..8] == b"\x89PNG\r\n\x1a\n" {
+        Some(ImageFormat::Png)
+    } else if bytes.len() >= 3 && bytes[..3] == [0xFF, 0xD8, 0xFF] {
+        Some(ImageFormat::Jpeg)
+    } else if bytes.len() >= 6 && (&bytes[..6] == b"GIF89a" || &bytes[..6] == b"GIF87a") {
+        Some(ImageFormat::Gif)
+    } else if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        Some(ImageFormat::Webp)
+    } else {
+        None
     }
 }
 

@@ -59,6 +59,30 @@ pub async fn playlist_detail(client: &NeteaseClient, id: i64) -> Result<Option<P
     Ok(crate::model::parse_playlist_detail(&value))
 }
 
+/// 用户歌单（需登录）。
+pub async fn user_playlists(client: &NeteaseClient, uid: i64, limit: u32, offset: u32) -> Result<Vec<Playlist>> {
+    let body = json!({ "uid": uid, "limit": limit, "offset": offset });
+    let value = client.weapi_post(path::USER_PLAYLIST, &body).await?;
+    Ok(crate::model::parse_user_playlists(&value))
+}
+
+/// 从账号返回体取 uid。
+pub fn account_uid(value: &Value) -> Option<i64> {
+    value
+        .get("profile")
+        .and_then(|p| p.get("userId"))
+        .and_then(Value::as_i64)
+}
+
+/// 从账号返回体取昵称。
+pub fn account_nickname(value: &Value) -> Option<String> {
+    value
+        .get("profile")
+        .and_then(|p| p.get("nickname"))
+        .and_then(|n| n.as_str())
+        .map(str::to_string)
+}
+
 /// 从播放地址返回体取第一条的 url。
 fn extract_url(value: &Value) -> Option<String> {
     value

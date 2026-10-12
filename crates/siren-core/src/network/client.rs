@@ -90,4 +90,16 @@ impl NeteaseClient {
         let text = response.text().await?;
         Ok(serde_json::from_str(&text)?)
     }
+
+    /// 下载二进制内容（封面等）。
+    pub async fn get_bytes(&self, url: &str) -> Result<Vec<u8>> {
+        let response = self
+            .http
+            .get(url)
+            .header("User-Agent", interceptor::PC_USER_AGENT)
+            .send()
+            .await?;
+        let bytes = response.bytes().await?;
+        Ok(bytes.to_vec())
+    }
 }

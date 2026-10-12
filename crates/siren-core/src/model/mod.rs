@@ -52,12 +52,22 @@ fn parse_playlist(value: &Value) -> Playlist {
         name: str_field(value, "name"),
         cover_url: value
             .get("picUrl")
+            .or_else(|| value.get("coverImgUrl"))
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string(),
         track_count: value.get("trackCount").and_then(Value::as_i64).unwrap_or_default(),
         play_count: value.get("playCount").and_then(Value::as_i64).unwrap_or_default(),
     }
+}
+
+/// 解析用户歌单（`/weapi/user/playlist`，`playlist` 数组）。
+pub fn parse_user_playlists(value: &Value) -> Vec<Playlist> {
+    value
+        .get("playlist")
+        .and_then(Value::as_array)
+        .map(|items| items.iter().map(parse_playlist).collect())
+        .unwrap_or_default()
 }
 
 /// 解析歌单详情（`/weapi/v6/playlist/detail`，`playlist` 对象）。
