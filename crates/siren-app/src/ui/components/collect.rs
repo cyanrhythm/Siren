@@ -81,17 +81,33 @@ impl Root {
         cx.notify();
     }
 
-    /// 把待加入歌曲加到指定歌单。
+    /// 把待加入歌曲加到指定歌单，成功后刷新音乐库歌单列表（封面/数量）。
     pub(crate) fn add_to_playlist(&mut self, pid: i64, cx: &mut Context<Self>) {
         let Some(song) = self.picker_song else {
             return;
         };
         let client = self.services.client.clone();
+        let (tx, rx) = tokio::sync::oneshot::channel();
         self.services.handle.spawn(async move {
-            let _ = siren_core::network::api::playlist_add_tracks(&client, pid, &[song]).await;
+            let ok = siren_core::network::api::playlist_add_tracks(&client, pid, &[song])
+                .await
+                .is_ok();
+            let _ = tx.send(ok);
         });
         self.picker_song = None;
         cx.notify();
+        // 待接口返回后再刷新列表
+        cx.spawn(async move |this, cx| {
+            let ok = rx.await.unwrap_or(false);
+            this.update(cx, |this, cx| {
+                if ok {
+                    this.library.update(cx, |page, cx| page.reload_playlists(cx));
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// 新建歌单浮层。
