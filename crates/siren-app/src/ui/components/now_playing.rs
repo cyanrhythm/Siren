@@ -4,7 +4,7 @@ use gpui_kit::assets::IconName;
 use gpui_kit::base::StyledExt;
 use gpui_kit::*;
 
-use super::super::{cover_placeholder, icon, Root};
+use super::super::{cover_placeholder, fmt_date, icon, Root};
 use crate::theme;
 
 impl Root {
@@ -18,6 +18,14 @@ impl Root {
             let cover: AnyElement = match &state.song {
                 Some(song) => self.services.covers.image(&song.cover_url, 220.0),
                 None => cover_placeholder(220.0).into_any_element(),
+            };
+            // 歌曲详情：发行时间（来自 song_detail），回退到专辑名。
+            let detail = self.playback.read(cx).current_detail().cloned();
+            let meta_line = match &detail {
+                Some(d) if d.publish_time > 0 => {
+                    format!("{} · {}", d.album, fmt_date(d.publish_time))
+                }
+                _ => state.song.as_ref().map(|s| s.album.clone()).unwrap_or_default(),
             };
             let weak_toggle = weak;
             div()
@@ -48,7 +56,14 @@ impl Root {
                                 .truncate()
                                 .child(title),
                         )
-                        .child(div().text_sm().text_color(theme::text_gray()).truncate().child(artist)),
+                        .child(div().text_sm().text_color(theme::text_gray()).truncate().child(artist))
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(theme::text_gray())
+                                .truncate()
+                                .child(meta_line),
+                        ),
                 )
                 .child(
                     div()

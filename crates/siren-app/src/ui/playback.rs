@@ -28,6 +28,8 @@ pub(crate) struct Playback {
     quality: AudioQuality,
     /// 已喜欢的歌曲 ID 集合。
     liked: HashSet<i64>,
+    /// 当前播放歌曲的详情（含发行时间等，来自 `song_detail`）。
+    detail: Option<Song>,
     /// 正在播放的歌曲与起始时刻（用于打卡上报时长）。
     playing_id: Option<i64>,
     playing_at: Option<Instant>,
@@ -110,6 +112,7 @@ impl Playback {
                 seeking: false,
                 quality: siren_core::settings::load_quality(),
                 liked: HashSet::new(),
+                detail: None,
                 playing_id: None,
                 playing_at: None,
                 progress_slider,
@@ -138,6 +141,11 @@ impl Playback {
         self.quality = quality;
         siren_core::settings::save_quality(quality);
         cx.notify();
+    }
+
+    /// 当前歌曲详情（含发行时间）。
+    pub(crate) fn current_detail(&self) -> Option<&Song> {
+        self.detail.as_ref()
     }
 
     /// 当前歌曲是否已喜欢。
@@ -334,6 +342,28 @@ impl Playback {
         self.handle.spawn(async move {
             let _ = siren_core::network::api::report_start_play(&client_report, song_id, song_id).await;
         });
+
+        // 拉取歌曲详情（发行时间等），完成后刷新正在播放栏。
+        let client_detail = self.client.clone();
+        let handle_detail = self.handle.clone();
+        self.detail = None;
+        cx.spawn(async move |this, cx| {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            handle_detail.spawn(async move {
+                let detail = siren_core::network::api::song_detail(&client_detail, song_id)
+                    .await
+                    .ok()
+                    .flatten();
+                let _ = tx.send(detail);
+            });
+            let detail = rx.await.ok().flatten();
+            this.update(cx, |this, cx| {
+                this.detail = detail;
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
 
         let client = self.client.clone();
         let id = song.id;

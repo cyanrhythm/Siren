@@ -43,4 +43,6 @@ pub mod path {
     pub const RECENT_SONGS: &str = "/weapi/play-record/song/list";
     /// 打卡上报（EAPI）。
     pub const WEBLOG: &str = "/eapi/feedback/weblog";
+    /// 歌曲详情（EAPI，`c=[{"id":..}]`）。
+    pub const SONG_DETAIL: &str = "/eapi/v3/song/detail";
 }

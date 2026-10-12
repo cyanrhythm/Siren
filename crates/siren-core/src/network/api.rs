@@ -172,6 +172,18 @@ pub fn parse_recent_songs(value: &Value) -> Vec<Song> {
         .unwrap_or_default()
 }
 
+/// 歌曲详情（EAPI `/eapi/v3/song/detail`）。
+pub async fn song_detail(client: &NeteaseClient, id: i64) -> Result<Option<Song>> {
+    let c = format!("[{{\"id\":{id}}}]");
+    let value = client.eapi_post(path::SONG_DETAIL, &json!({ "c": c })).await?;
+    validate(&value)?;
+    Ok(value
+        .get("songs")
+        .and_then(Value::as_array)
+        .and_then(|arr| arr.first())
+        .map(crate::model::parse_song))
+}
+
 /// 打卡上报：开始播放（`action=startplay`），使歌曲进入「最近播放」。
 pub async fn report_start_play(client: &NeteaseClient, song_id: i64, container_id: i64) -> Result<()> {
     let logs = json!([

@@ -22,6 +22,8 @@ pub struct Song {
     pub cover_url: String,
     /// 时长（毫秒），源头可能缺失。
     pub duration_ms: i64,
+    /// 发行时间戳（毫秒），可能为 0。
+    pub publish_time: i64,
 }
 
 /// 歌单（列表项）。
@@ -238,6 +240,8 @@ pub fn parse_song(value: &Value) -> Song {
         .and_then(Value::as_i64)
         .unwrap_or_default();
 
+    let publish_time = value.get("publishTime").and_then(Value::as_i64).unwrap_or_default();
+
     Song {
         id,
         name,
@@ -245,6 +249,7 @@ pub fn parse_song(value: &Value) -> Song {
         album,
         cover_url,
         duration_ms,
+        publish_time,
     }
 }
 

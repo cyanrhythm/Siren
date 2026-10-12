@@ -299,6 +299,7 @@ mod tests {
                 album: String::new(),
                 cover_url: String::new(),
                 duration_ms: 0,
+                publish_time: 0,
             })
             .collect()
     }

@@ -409,6 +409,29 @@ pub(crate) fn fmt_time(ms: i64) -> String {
     format!("{}:{:02}", total / 60, total % 60)
 }
 
+/// 毫秒时间戳 → `YYYY-MM-DD`（无日期时返回空串）。
+pub(crate) fn fmt_date(ms: i64) -> String {
+    if ms <= 0 {
+        return String::new();
+    }
+    let (y, m, d) = civil_from_days(ms / 86_400_000);
+    format!("{y}-{m:02}-{d:02}")
+}
+
+/// 自 1970-01-01 起的天数 → (年, 月, 日)（Howard Hinnant 算法）。
+fn civil_from_days(days: i64) -> (i64, i64, i64) {
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
 pub(crate) fn icon(name: IconName, size: f32, color: Rgba) -> Icon {
     Icon::new(name).size(px(size)).text_color(color)
 }
