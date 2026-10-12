@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Siren 应用图标
+
+  设计：
+  - 主色：蔚蓝，从浅到深的同色系渐变，避免色彩冲突
+  - 符号：极简——一个音符 + 一圈声波，不做多余装饰
+  - 风格：扁平、干净，小尺寸下仍可辨识
+
+  视图框 1024×1024，四周留安全边距
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" role="img" aria-label="Siren">
+  <title>Siren</title>
+  <desc>音乐播放器图标：蔚蓝底上的音符与声波</desc>
+
+  <defs>
+    <!-- 蔚蓝背景：深 → 浅，同色系不冲突 -->
+    <linearGradient id="bg" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#38BDF8"/>
+      <stop offset="100%" stop-color="#0284C7"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 圆角方形底 -->
+  <rect x="0" y="0" width="1024" height="1024" rx="224" ry="224" fill="url(#bg)"/>
+
+  <!--
+    极简音符：符头 + 符干，共两个形状
+    整体居中，留白充足
+  -->
+  <g fill="#FFFFFF">
+    <!-- 符干 -->
+    <rect x="540" y="330" width="24" height="330" rx="12"/>
+    <!-- 符头 -->
+    <ellipse cx="500" cy="660" rx="88" ry="68" transform="rotate(-20 500 660)"/>
+  </g>
+
+  <!-- 一圈声波：细圆环，开口朝上，象征声音扩散 -->
+  <path d="M 336 620 A 200 200 0 1 1 688 620"
+        fill="none" stroke="#FFFFFF" stroke-width="26"
+        stroke-linecap="round" opacity="0.55"/>
+</svg>
