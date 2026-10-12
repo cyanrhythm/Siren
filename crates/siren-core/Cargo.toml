@@ -32,6 +32,9 @@ tokio.workspace = true
 # 目录规范（跨平台，无平台 cfg）
 directories.workspace = true
 
+# 歌词解析
+regex.workspace = true
+
 # 二维码登录
 qrcode.workspace = true
 png.workspace = true

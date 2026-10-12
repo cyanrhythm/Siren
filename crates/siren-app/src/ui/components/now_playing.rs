@@ -28,6 +28,58 @@ impl Root {
                 _ => state.song.as_ref().map(|s| s.album.clone()).unwrap_or_default(),
             };
             let weak_toggle = weak;
+            // 歌词：取当前时间点附近的若干行，高亮当前行。
+            let lyrics = self.playback.read(cx).current_lyrics().to_vec();
+            let cur = siren_core::lyrics::current_index(&lyrics, state.position_ms);
+            let lyrics_view: AnyElement = if lyrics.is_empty() {
+                div()
+                    .flex_1()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(div().text_sm().text_color(theme::text_gray()).child("暂无歌词"))
+                    .into_any_element()
+            } else {
+                let idx = cur.unwrap_or(0);
+                let start = idx.saturating_sub(3);
+                let end = (idx + 4).min(lyrics.len());
+                let mut col = div()
+                    .flex_1()
+                    .w_full()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .justify_center()
+                    .gap(px(6.0))
+                    .overflow_hidden();
+                for (i, line) in lyrics.iter().enumerate().skip(start).take(end - start) {
+                    let active = i == idx;
+                    let color = if active {
+                        theme::text_primary()
+                    } else {
+                        theme::text_gray()
+                    };
+                    let mut item = div()
+                        .w_full()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .gap(px(2.0))
+                        .child(div().max_w_full().truncate().text_color(color).child(line.text.clone()));
+                    if let Some(t) = &line.translation {
+                        item = item.child(
+                            div()
+                                .max_w_full()
+                                .truncate()
+                                .text_xs()
+                                .text_color(theme::text_gray())
+                                .child(t.clone()),
+                        );
+                    }
+                    col = col.child(item);
+                }
+                col.into_any_element()
+            };
             div()
                 .v_flex()
                 .w(px(340.0))
@@ -74,14 +126,7 @@ impl Root {
                         .child(pill("歌词", false))
                         .child(pill("评论", false)),
                 )
-                .child(
-                    div().flex_1().flex().items_center().justify_center().child(
-                        div()
-                            .text_sm()
-                            .text_color(theme::text_gray())
-                            .child("歌词区域（待接入）"),
-                    ),
-                )
+                .child(lyrics_view)
         } else {
             let weak_expand = weak;
             div()

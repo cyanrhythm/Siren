@@ -45,4 +45,6 @@ pub mod path {
     pub const WEBLOG: &str = "/eapi/feedback/weblog";
     /// 歌曲详情（EAPI，`c=[{"id":..}]`）。
     pub const SONG_DETAIL: &str = "/eapi/v3/song/detail";
+    /// 歌词（EAPI，含 lrc/tlyric/yrc）。
+    pub const LYRIC: &str = "/eapi/song/lyric/v1";
 }

@@ -184,6 +184,47 @@ pub async fn song_detail(client: &NeteaseClient, id: i64) -> Result<Option<Song>
         .map(crate::model::parse_song))
 }
 
+/// 歌词（EAPI `/eapi/song/lyric/v1`）：优先逐字（yrc），合并译文（tlyric）。
+pub async fn lyrics(client: &NeteaseClient, id: i64) -> Result<Vec<crate::lyrics::LyricLine>> {
+    let body = json!({
+        "id": id,
+        "cp": false,
+        "tv": -1,
+        "lv": -1,
+        "rv": -1,
+        "kv": -1,
+        "yv": 99,
+        "ytv": -1,
+        "yrv": -1
+    });
+    let value = client.eapi_post(path::LYRIC, &body).await?;
+    validate(&value)?;
+    Ok(parse_lyrics(&value))
+}
+
+/// 从歌词返回体解析歌词行（优先 yrc，其次 lrc，并合并 tlyric 译文）。
+pub fn parse_lyrics(value: &Value) -> Vec<crate::lyrics::LyricLine> {
+    let content = |key: &str| -> &str {
+        value
+            .get(key)
+            .and_then(|c| c.get("lyric"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+    };
+    let yrc = content("yrc");
+    let mut lines = if yrc.trim().is_empty() {
+        crate::lyrics::parse(content("lrc"))
+    } else {
+        crate::lyrics::parse(yrc)
+    };
+    let tlyric = content("tlyric");
+    if !tlyric.trim().is_empty() {
+        let t = crate::lyrics::parse(tlyric);
+        crate::lyrics::merge_translation(&mut lines, &t);
+    }
+    lines
+}
+
 /// 打卡上报：开始播放（`action=startplay`），使歌曲进入「最近播放」。
 pub async fn report_start_play(client: &NeteaseClient, song_id: i64, container_id: i64) -> Result<()> {
     let logs = json!([
@@ -294,6 +335,18 @@ mod tests {
         assert!(validate(&json!({ "code": 301 })).unwrap_err().is_unauthorized());
         assert!(validate(&json!({ "code": 200 })).is_ok());
         assert!(validate(&json!({})).is_ok());
+    }
+
+    #[test]
+    fn parses_lyrics_prefers_yrc_and_merges_translation() {
+        let value = json!({
+            "code": 200,
+            "yrc": { "lyric": "[0,1000](0,500,0)你(500,500,0)好" },
+            "tlyric": { "lyric": "[00:00.00]hello" }
+        });
+        let lines = parse_lyrics(&value);
+        assert_eq!(lines[0].text, "你好");
+        assert_eq!(lines[0].translation.as_deref(), Some("hello"));
     }
 
     #[test]

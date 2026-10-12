@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 use gpui_kit::component::slider::{SliderEvent, SliderState, SliderValue};
 use gpui_kit::*;
 
+use siren_core::lyrics::LyricLine;
 use siren_core::model::{AudioQuality, Song};
 use siren_core::network::client::NeteaseClient;
 use siren_core::player::{Mpv, PlayMode, PlaybackController, PlaybackState, Player, SilentEngine};
@@ -30,6 +31,8 @@ pub(crate) struct Playback {
     liked: HashSet<i64>,
     /// 当前播放歌曲的详情（含发行时间等，来自 `song_detail`）。
     detail: Option<Song>,
+    /// 当前歌曲歌词。
+    lyrics: Vec<LyricLine>,
     /// 正在播放的歌曲与起始时刻（用于打卡上报时长）。
     playing_id: Option<i64>,
     playing_at: Option<Instant>,
@@ -113,6 +116,7 @@ impl Playback {
                 quality: siren_core::settings::load_quality(),
                 liked: HashSet::new(),
                 detail: None,
+                lyrics: Vec::new(),
                 playing_id: None,
                 playing_at: None,
                 progress_slider,
@@ -146,6 +150,11 @@ impl Playback {
     /// 当前歌曲详情（含发行时间）。
     pub(crate) fn current_detail(&self) -> Option<&Song> {
         self.detail.as_ref()
+    }
+
+    /// 当前歌曲歌词。
+    pub(crate) fn current_lyrics(&self) -> &[LyricLine] {
+        &self.lyrics
     }
 
     /// 当前歌曲是否已喜欢。
@@ -359,6 +368,27 @@ impl Playback {
             let detail = rx.await.ok().flatten();
             this.update(cx, |this, cx| {
                 this.detail = detail;
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+
+        // 拉取歌词（优先逐字），完成后刷新正在播放栏。
+        let client_lyric = self.client.clone();
+        let handle_lyric = self.handle.clone();
+        self.lyrics = Vec::new();
+        cx.spawn(async move |this, cx| {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            handle_lyric.spawn(async move {
+                let lines = siren_core::network::api::lyrics(&client_lyric, song_id)
+                    .await
+                    .unwrap_or_default();
+                let _ = tx.send(lines);
+            });
+            let lines = rx.await.unwrap_or_default();
+            this.update(cx, |this, cx| {
+                this.lyrics = lines;
                 cx.notify();
             })
             .ok();
