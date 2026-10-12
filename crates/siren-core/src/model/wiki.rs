@@ -9,6 +9,16 @@ pub struct CreatorRole {
     pub artists: Vec<String>,
 }
 
+/// 回忆坐标。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct MusicMemory {
+    pub first_listen_date: String,
+    pub season: String,
+    pub period: String,
+    pub play_count: i64,
+    pub play_count_text: String,
+}
+
 /// 歌曲百科/详情。
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SongWiki {
@@ -30,6 +40,8 @@ pub struct SongWiki {
     pub award_total: i64,
     /// 制作人员（按角色）。
     pub creator_roles: Vec<CreatorRole>,
+    /// 回忆坐标。
+    pub music_memory: Option<MusicMemory>,
 }
 
 impl SongWiki {
@@ -43,6 +55,7 @@ impl SongWiki {
             && self.entertainment.is_empty()
             && self.awards.is_empty()
             && self.creator_roles.is_empty()
+            && self.music_memory.is_none()
     }
 }
 
@@ -52,7 +65,14 @@ pub fn parse_song_wiki(wiki: &Value, creators: &Value) -> SongWiki {
 
     if let Some(blocks) = wiki.get("data").and_then(|d| d.get("blocks")).and_then(Value::as_array) {
         for block in blocks {
-            if block.get("code").and_then(Value::as_str) != Some("SONG_PLAY_ABOUT_SONG_BASIC") {
+            let code = block.get("code").and_then(Value::as_str).unwrap_or_default();
+            if code == "SONG_PLAY_ABOUT_MUSIC_MEMORY" {
+                if let Some(memory) = parse_music_memory(block) {
+                    out.music_memory = Some(memory);
+                }
+                continue;
+            }
+            if code != "SONG_PLAY_ABOUT_SONG_BASIC" {
                 continue;
             }
             let Some(creatives) = block.get("creatives").and_then(Value::as_array) else {
@@ -161,6 +181,67 @@ pub fn parse_song_wiki(wiki: &Value, creators: &Value) -> SongWiki {
     }
 
     out
+}
+
+fn parse_music_memory(block: &Value) -> Option<MusicMemory> {
+    let resources: Vec<Value> = block
+        .get("creatives")
+        .and_then(Value::as_array)
+        .map(|creatives| {
+            creatives
+                .iter()
+                .flat_map(|c| {
+                    c.get("resources")
+                        .and_then(Value::as_array)
+                        .cloned()
+                        .unwrap_or_default()
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let first = resources
+        .iter()
+        .find(|r| r.get("resourceType").and_then(Value::as_str) == Some("FIRST_LISTEN"))
+        .and_then(|r| r.get("resourceExt"))
+        .and_then(|e| e.get("musicFirstListenDto"));
+    let total = resources
+        .iter()
+        .find(|r| r.get("resourceType").and_then(Value::as_str) == Some("TOTAL_PLAY"))
+        .and_then(|r| r.get("resourceExt"))
+        .and_then(|e| e.get("musicTotalPlayDto"));
+
+    let date = first
+        .and_then(|d| d.get("date"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let play_count = total
+        .and_then(|t| t.get("playCount"))
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    if date.trim().is_empty() && play_count == 0 {
+        return None;
+    }
+    Some(MusicMemory {
+        first_listen_date: date,
+        season: first
+            .and_then(|d| d.get("season"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        period: first
+            .and_then(|d| d.get("period"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        play_count,
+        play_count_text: total
+            .and_then(|t| t.get("text"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+    })
 }
 
 #[cfg(test)]

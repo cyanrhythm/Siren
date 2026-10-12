@@ -26,6 +26,8 @@ pub struct Song {
     pub duration_ms: i64,
     /// 发行时间戳（毫秒），可能为 0。
     pub publish_time: i64,
+    /// 歌手 ID 列表（用于歌手详情跳转）。
+    pub artist_ids: Vec<i64>,
 }
 
 /// 歌单（列表项）。
@@ -54,6 +56,56 @@ pub struct Artist {
     pub id: i64,
     pub name: String,
     pub cover_url: String,
+}
+
+/// 歌手详情。
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct ArtistDetail {
+    pub id: i64,
+    pub name: String,
+    pub cover_url: String,
+    pub brief_desc: String,
+    pub album_size: i64,
+    pub music_size: i64,
+}
+
+/// 歌手专辑。
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct ArtistAlbum {
+    pub id: i64,
+    pub name: String,
+    pub cover_url: String,
+    pub publish_time: i64,
+    pub size: i64,
+}
+
+/// 评论用户。
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct CommentUser {
+    pub user_id: i64,
+    pub nickname: String,
+    pub avatar_url: String,
+}
+
+/// 单条评论。
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct CommentItem {
+    pub comment_id: i64,
+    pub user: CommentUser,
+    pub content: String,
+    pub time: i64,
+    pub liked_count: i64,
+    pub liked: bool,
+    pub reply_count: i64,
+}
+
+/// 评论分页。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CommentPage {
+    pub comments: Vec<CommentItem>,
+    pub total: i64,
+    pub has_more: bool,
+    pub cursor: String,
 }
 
 /// 歌单详情。
@@ -164,6 +216,87 @@ fn parse_artist(value: &Value) -> Artist {
     }
 }
 
+/// 解析歌手详情（`data.artist`）。
+pub fn parse_artist_detail(value: &Value) -> Option<ArtistDetail> {
+    let a = value.get("data").and_then(|d| d.get("artist"))?;
+    Some(ArtistDetail {
+        id: a.get("id").and_then(Value::as_i64).unwrap_or_default(),
+        name: str_field(a, "name"),
+        cover_url: a
+            .get("cover")
+            .or_else(|| a.get("avatar"))
+            .or_else(|| a.get("picUrl"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        brief_desc: str_field(a, "briefDesc"),
+        album_size: a.get("albumSize").and_then(Value::as_i64).unwrap_or_default(),
+        music_size: a.get("musicSize").and_then(Value::as_i64).unwrap_or_default(),
+    })
+}
+
+/// 解析歌手专辑（`hotAlbums`）。
+pub fn parse_artist_albums(value: &Value) -> Vec<ArtistAlbum> {
+    value
+        .get("hotAlbums")
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .map(|a| ArtistAlbum {
+                    id: a.get("id").and_then(Value::as_i64).unwrap_or_default(),
+                    name: str_field(a, "name"),
+                    cover_url: a.get("picUrl").and_then(Value::as_str).unwrap_or_default().to_string(),
+                    publish_time: a.get("publishTime").and_then(Value::as_i64).unwrap_or_default(),
+                    size: a.get("size").and_then(Value::as_i64).unwrap_or_default(),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// 解析相似歌手（`artists`）。
+pub fn parse_simi_artists(value: &Value) -> Vec<Artist> {
+    value
+        .get("artists")
+        .and_then(Value::as_array)
+        .map(|arr| arr.iter().map(parse_artist).collect())
+        .unwrap_or_default()
+}
+
+/// 解析单条评论。
+pub fn parse_comment_item(value: &Value) -> CommentItem {
+    let user = value.get("user").unwrap_or(&Value::Null);
+    CommentItem {
+        comment_id: value.get("commentId").and_then(Value::as_i64).unwrap_or_default(),
+        user: CommentUser {
+            user_id: user.get("userId").and_then(Value::as_i64).unwrap_or_default(),
+            nickname: str_field(user, "nickname"),
+            avatar_url: str_field(user, "avatarUrl"),
+        },
+        content: str_field(value, "content"),
+        time: value.get("time").and_then(Value::as_i64).unwrap_or_default(),
+        liked_count: value.get("likedCount").and_then(Value::as_i64).unwrap_or_default(),
+        liked: value.get("liked").and_then(Value::as_bool).unwrap_or(false),
+        reply_count: value.get("replyCount").and_then(Value::as_i64).unwrap_or_default(),
+    }
+}
+
+/// 解析评论分页（`/weapi/v2/resource/comments` 的 `data`）。
+pub fn parse_comments_v2(value: &Value) -> CommentPage {
+    let data = value.get("data").unwrap_or(&Value::Null);
+    let comments = data
+        .get("comments")
+        .and_then(Value::as_array)
+        .map(|arr| arr.iter().map(parse_comment_item).collect())
+        .unwrap_or_default();
+    CommentPage {
+        comments,
+        total: data.get("totalCount").and_then(Value::as_i64).unwrap_or_default(),
+        has_more: data.get("hasMore").and_then(Value::as_bool).unwrap_or(false),
+        cursor: str_field(data, "cursor"),
+    }
+}
+
 /// 解析歌单详情（`/weapi/v6/playlist/detail`，`playlist` 对象）。
 pub fn parse_playlist_detail(value: &Value) -> Option<PlaylistDetail> {
     let playlist = value.get("playlist")?;
@@ -208,16 +341,20 @@ pub fn parse_song(value: &Value) -> Song {
         .to_string();
 
     // 兼容经典 search/get（artists/album/duration）与 cloudsearch（ar/al/dt）
-    let artists = value
+    let artist_list = value
         .get("artists")
         .or_else(|| value.get("ar"))
-        .and_then(Value::as_array)
+        .and_then(Value::as_array);
+    let artists = artist_list
         .map(|arr| {
             arr.iter()
                 .filter_map(|a| a.get("name").and_then(Value::as_str))
                 .collect::<Vec<_>>()
                 .join("/")
         })
+        .unwrap_or_default();
+    let artist_ids = artist_list
+        .map(|arr| arr.iter().filter_map(|a| a.get("id").and_then(Value::as_i64)).collect())
         .unwrap_or_default();
 
     let album = value
@@ -252,6 +389,7 @@ pub fn parse_song(value: &Value) -> Song {
         cover_url,
         duration_ms,
         publish_time,
+        artist_ids,
     }
 }
 

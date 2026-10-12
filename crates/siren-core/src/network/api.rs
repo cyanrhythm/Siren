@@ -193,6 +193,111 @@ pub async fn song_wiki(client: &NeteaseClient, id: i64) -> Result<crate::model::
     Ok(crate::model::parse_song_wiki(&wiki, &creators))
 }
 
+/// 歌曲评论的 threadId。
+pub fn comment_thread_id(song_id: i64) -> String {
+    format!("R_SO_4_{song_id}")
+}
+
+/// 评论列表（按 `cursor` 翻页；`0` 为最新）。
+pub async fn comments(
+    client: &NeteaseClient,
+    thread_id: &str,
+    cursor: &str,
+    page_size: u32,
+) -> Result<crate::model::CommentPage> {
+    let body = json!({
+        "threadId": thread_id,
+        "pageNo": 1,
+        "pageSize": page_size,
+        "cursor": cursor,
+        "sortType": 2,
+        "showInner": true
+    });
+    let value = client.weapi_post(path::COMMENTS_V2, &body).await?;
+    validate(&value)?;
+    Ok(crate::model::parse_comments_v2(&value))
+}
+
+/// 评论点赞 / 取消。
+pub async fn comment_like(client: &NeteaseClient, thread_id: &str, comment_id: i64, like: bool) -> Result<()> {
+    let op = if like { "like" } else { "unlike" };
+    let url = format!("{}{op}", path::COMMENT_LIKE);
+    let value = client
+        .weapi_post(&url, &json!({ "threadId": thread_id, "commentId": comment_id }))
+        .await?;
+    validate(&value)?;
+    Ok(())
+}
+
+/// 评论楼层（子回复）。
+pub async fn comment_floor(
+    client: &NeteaseClient,
+    thread_id: &str,
+    parent_id: i64,
+    limit: u32,
+) -> Result<crate::model::CommentPage> {
+    let body = json!({ "parentCommentId": parent_id, "threadId": thread_id, "time": -1, "limit": limit });
+    let value = client.weapi_post(path::COMMENT_FLOOR, &body).await?;
+    validate(&value)?;
+    let data = value.get("data").cloned().unwrap_or(serde_json::Value::Null);
+    Ok(crate::model::parse_comments_v2(&json!({ "data": data })))
+}
+
+/// 歌手详情（EAPI）。
+pub async fn artist_detail(client: &NeteaseClient, id: i64) -> Result<Option<crate::model::ArtistDetail>> {
+    let value = client.eapi_post(path::ARTIST_DETAIL, &json!({ "id": id })).await?;
+    validate(&value)?;
+    Ok(crate::model::parse_artist_detail(&value))
+}
+
+/// 歌手专辑（WEAPI）。
+pub async fn artist_albums(client: &NeteaseClient, id: i64, limit: u32) -> Result<Vec<crate::model::ArtistAlbum>> {
+    let url = format!("{}{id}", path::ARTIST_ALBUMS);
+    let value = client
+        .weapi_post(&url, &json!({ "limit": limit, "offset": 0, "total": true }))
+        .await?;
+    validate(&value)?;
+    Ok(crate::model::parse_artist_albums(&value))
+}
+
+/// 相似歌手（EAPI）。
+pub async fn similar_artists(client: &NeteaseClient, id: i64) -> Result<Vec<crate::model::Artist>> {
+    let value = client.eapi_post(path::ARTIST_SIMI, &json!({ "artistid": id })).await?;
+    validate(&value)?;
+    Ok(crate::model::parse_simi_artists(&value))
+}
+
+/// 歌手关注数 / 是否已关注（WEAPI）→ `(粉丝数, 是否关注)`。
+pub async fn artist_follow_count(client: &NeteaseClient, id: i64) -> Result<(i64, bool)> {
+    let value = client
+        .weapi_post(path::ARTIST_FOLLOW_COUNT, &json!({ "id": id }))
+        .await?;
+    validate(&value)?;
+    let data = value.get("data").unwrap_or(&serde_json::Value::Null);
+    let fans = data
+        .get("fansCnt")
+        .or_else(|| data.get("fansCount"))
+        .or_else(|| data.get("fans"))
+        .and_then(serde_json::Value::as_i64)
+        .unwrap_or_default();
+    let followed = data
+        .get("isFollow")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    Ok((fans, followed))
+}
+
+/// 收藏 / 取消收藏歌手（WEAPI）。
+pub async fn artist_follow(client: &NeteaseClient, id: i64, follow: bool) -> Result<()> {
+    let op = if follow { "sub" } else { "unsub" };
+    let url = format!("{}{op}", path::ARTIST_SUB);
+    let value = client
+        .weapi_post(&url, &json!({ "artistId": id, "artistIds": format!("[{id}]") }))
+        .await?;
+    validate(&value)?;
+    Ok(())
+}
+
 /// 刷新登录态：新 Cookie 经响应头 `Set-Cookie` 下发，成功返回合并后的 Cookie。
 pub async fn refresh_login(client: &NeteaseClient) -> Result<Option<String>> {
     let (value, cookie) = client.weapi_post_with_cookie(path::LOGIN_REFRESH, &json!({})).await?;

@@ -53,4 +53,20 @@ pub mod path {
     pub const SONG_WIKI: &str = "/weapi/song/play/about/block/page";
     /// 歌曲制作人员（WEAPI）。
     pub const SONG_CREATORS: &str = "/weapi/song/creators";
+    /// 评论列表（WEAPI v2）。
+    pub const COMMENTS_V2: &str = "/weapi/v2/resource/comments";
+    /// 评论点赞/取消（WEAPI，`{op}` = like / unlike）。
+    pub const COMMENT_LIKE: &str = "/weapi/v1/comment/";
+    /// 评论楼层（WEAPI）。
+    pub const COMMENT_FLOOR: &str = "/weapi/resource/comment/floor/get";
+    /// 歌手详情（EAPI）。
+    pub const ARTIST_DETAIL: &str = "/eapi/artist/head/info/get";
+    /// 歌手专辑（WEAPI，后接 `{id}`）。
+    pub const ARTIST_ALBUMS: &str = "/weapi/artist/albums/";
+    /// 相似歌手（EAPI）。
+    pub const ARTIST_SIMI: &str = "/eapi/discovery/simiArtist";
+    /// 歌手关注/粉丝数（WEAPI）。
+    pub const ARTIST_FOLLOW_COUNT: &str = "/weapi/artist/follow/count/get";
+    /// 收藏/取消收藏歌手（WEAPI，后接 `sub` / `unsub`）。
+    pub const ARTIST_SUB: &str = "/weapi/artist/";
 }
