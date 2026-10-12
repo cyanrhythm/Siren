@@ -27,7 +27,6 @@ impl Root {
 
         // 账号按钮：已登录显示圆形头像，未登录显示人形占位（对齐 Melodia）。
         // 用 Custom 变体避免 ghost 的 accent(红) hover/active 底，按钮与头像同尺寸的圆形。
-        let covers = self.services.covers.clone();
         let account = self.account.clone();
         let trigger = match &account {
             Some((_, url, _)) => Button::new("account")
@@ -54,26 +53,10 @@ impl Root {
         let account_button = trigger.dropdown_menu(move |menu, _window, _cx| {
             let mut menu = menu;
             match &account {
-                Some((nick, url, uid)) => {
-                    let nick_render = nick.clone();
-                    let url_render = url.clone();
-                    let covers_render = covers.clone();
+                Some((nick, _url, uid)) => {
                     let uid = *uid;
-                    menu = menu.item(PopupMenuItem::element(move |_w, _cx| {
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(8.0))
-                            .px(px(8.0))
-                            .py(px(4.0))
-                            .child(covers_render.image_round(&url_render, 32.0))
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(theme::text_primary())
-                                    .child(nick_render.clone()),
-                            )
-                    }));
+                    // 头部：仅昵称文本，不可点击
+                    menu = menu.label(nick.clone());
                     menu = menu.separator();
                     let weak = weak_account.clone();
                     menu = menu.item(PopupMenuItem::new("个人主页").icon(Icon::new(IconName::User)).on_click(
