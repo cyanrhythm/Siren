@@ -10,6 +10,15 @@ authors.workspace = true
 
 [dependencies]
 siren-core.workspace = true
+playwire.workspace = true
+raw-window-handle.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
+
+[target.'cfg(windows)'.dev-dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_WindowsAndMessaging",
+] }

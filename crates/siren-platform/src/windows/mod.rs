@@ -18,4 +18,5 @@
 //! pub mod accent;     // 注册表
 //! pub mod lyric;      // 窗口样式
 
+pub mod media;
 pub mod native;

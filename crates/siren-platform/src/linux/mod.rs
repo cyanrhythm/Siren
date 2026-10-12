@@ -28,6 +28,7 @@
 //! pub mod accent;     // GTK / KDE 配置
 //! pub mod session;    // XDG_SESSION_TYPE 探测
 
+pub mod media;
 pub mod mpris;
 pub mod native;
 pub mod sni;

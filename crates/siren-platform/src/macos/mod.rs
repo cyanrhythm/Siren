@@ -23,4 +23,5 @@
 //! pub mod accent;     // NSColor
 //! pub mod lyric;      // NSWindow
 
+pub mod media;
 pub mod native;

@@ -69,6 +69,12 @@ libloading = "0.8"
 # ── 平台（siren-platform，libc 仅 unix 使用）────────────────────
 libc = "0.2"
 
+# 系统媒体控制（SMTC / MPRIS / Now Playing 统一 API）
+playwire = "2"
+
+# 原生窗口句柄（GPUI 实现 raw-window-handle，供 SMTC 使用）
+raw-window-handle = "0.6"
+
 # ── UI（siren-app）──────────────────────────────────────────────
 gpui-kit = "0.7"
 

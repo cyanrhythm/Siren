@@ -64,6 +64,26 @@ pub fn prepare_native_environment() {
     PlatformNativeLibrary.prepare();
 }
 
+/// 当前平台的系统媒体控制实现（playwire 后端，跨平台）。
+pub use media_session::PlaywireMediaSession as PlatformMediaSession;
+pub use media_session::{MediaCommand, MediaMetadata, MediaSession, MediaSessionConfig, PlaybackStatus};
+
+#[cfg(target_os = "linux")]
+pub use linux::media::hwnd_from as platform_hwnd_from;
+#[cfg(target_os = "macos")]
+pub use macos::media::hwnd_from as platform_hwnd_from;
+/// 当前平台的窗口句柄解析（Windows SMTC 需要）。
+#[cfg(target_os = "windows")]
+pub use windows::media::hwnd_from as platform_hwnd_from;
+
+/// 从任意实现了 `raw-window-handle` 的窗口解析原生句柄。
+///
+/// 上层（如 GPUI 的 `Window`）无需依赖 `raw-window-handle` 类型即可调用。
+pub fn window_hwnd<W: raw_window_handle::HasWindowHandle + ?Sized>(window: &W) -> Option<u64> {
+    let handle = window.window_handle().ok().map(|handle| handle.as_raw());
+    platform_hwnd_from(handle)
+}
+
 /// 编译期平台断言。
 ///
 /// 若目标平台不在支持列表内，此模块会触发编译错误，

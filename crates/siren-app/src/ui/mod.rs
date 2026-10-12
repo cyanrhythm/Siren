@@ -23,7 +23,10 @@ use gpui_kit::*;
 
 use siren_core::model::Song;
 use siren_core::network::client::NeteaseClient;
-use siren_core::player::{Mpv, PlaybackController, PlaybackState, Player, SilentEngine};
+use siren_core::player::{Mpv, PlayMode, PlaybackController, PlaybackState, Player, SilentEngine};
+use siren_platform::{
+    MediaCommand, MediaMetadata, MediaSession, MediaSessionConfig, PlatformMediaSession, PlaybackStatus,
+};
 
 use crate::theme;
 
@@ -40,6 +43,8 @@ pub struct Root {
     seeking: bool,
     progress_slider: Entity<SliderState>,
     volume_slider: Entity<SliderState>,
+    media: Option<PlatformMediaSession>,
+    media_cmds: std::sync::mpsc::Receiver<MediaCommand>,
     _search_sub: Subscription,
     _progress_sub: Subscription,
     _volume_sub: Subscription,
@@ -55,6 +60,29 @@ impl Root {
             Err(_) => Arc::new(SilentEngine),
         };
         let player = Player::new(engine);
+
+        // 系统媒体控制：从 GPUI 窗口取原生句柄（Windows SMTC 需要）。
+        let hwnd = siren_platform::window_hwnd(window);
+        let (cmd_tx, cmd_rx) = std::sync::mpsc::channel::<MediaCommand>();
+        let cmd_tx = std::sync::Mutex::new(cmd_tx);
+        let media = PlatformMediaSession::new(
+            MediaSessionConfig {
+                identity: "Siren".to_string(),
+                desktop_entry: Some("com.cyanrhythm.Siren".to_string()),
+                app_media_id: Some("com.cyanrhythm.Siren".to_string()),
+                track_id_prefix: Some("/com/cyanrhythm/Siren/track".to_string()),
+                hwnd,
+            },
+            Box::new(move |cmd| {
+                if let Ok(tx) = cmd_tx.lock() {
+                    let _ = tx.send(cmd);
+                }
+            }),
+        )
+        .ok();
+        if media.is_some() {
+            eprintln!("[siren] 系统媒体控制已启用");
+        }
 
         let entity = cx.new(|cx| {
             let search_input = cx.new(|cx| {
@@ -105,6 +133,8 @@ impl Root {
                 seeking: false,
                 progress_slider,
                 volume_slider,
+                media,
+                media_cmds: cmd_rx,
                 _search_sub,
                 _progress_sub,
                 _volume_sub,
@@ -149,6 +179,75 @@ impl Root {
             self.mirrored = state;
             cx.notify();
         }
+
+        while let Ok(command) = self.media_cmds.try_recv() {
+            self.apply_media_command(command, cx);
+        }
+        self.push_media_state();
+    }
+
+    /// 处理系统媒体指令。
+    fn apply_media_command(&mut self, command: MediaCommand, cx: &mut Context<Self>) {
+        match command {
+            MediaCommand::Play => self.player.play(),
+            MediaCommand::Pause | MediaCommand::Stop => self.player.pause(),
+            MediaCommand::Toggle => self.player.toggle(),
+            MediaCommand::Next => {
+                self.next_track(cx);
+                return;
+            }
+            MediaCommand::Previous => {
+                if let Some(song) = self.player.previous_track() {
+                    self.resolve_and_play(song, cx);
+                }
+                return;
+            }
+            MediaCommand::SeekTo(ms) => self.player.seek_ms(ms as i64),
+            MediaCommand::SeekBy(delta) => {
+                let target = self.player.state().position_ms + delta;
+                self.player.seek_ms(target);
+            }
+            MediaCommand::SetVolume(v) => self.player.set_volume(v * 100.0),
+            MediaCommand::SetShuffle(on) => {
+                if on {
+                    self.player.set_mode(PlayMode::Shuffle);
+                }
+            }
+            MediaCommand::SetRepeat(one) => {
+                self.player
+                    .set_mode(if one { PlayMode::SingleLoop } else { PlayMode::ListLoop });
+            }
+        }
+        cx.notify();
+    }
+
+    /// 把当前播放状态推送到系统媒体控制。
+    fn push_media_state(&self) {
+        let Some(media) = &self.media else {
+            return;
+        };
+        let state = self.player.state();
+        let metadata = match &state.song {
+            Some(song) => MediaMetadata {
+                id: song.id.to_string(),
+                title: song.name.clone(),
+                artists: vec![song.artists.clone()],
+                album: song.album.clone(),
+                artwork_url: None,
+                url: None,
+                duration_ms: (state.duration_ms > 0).then_some(state.duration_ms as u64),
+            },
+            None => MediaMetadata::default(),
+        };
+        let status = if state.playing {
+            PlaybackStatus::Playing
+        } else {
+            PlaybackStatus::Paused
+        };
+        media.set_metadata(&metadata);
+        media.set_playback_status(status);
+        media.set_timeline(state.position_ms.max(0) as u64, state.duration_ms.max(0) as u64);
+        media.set_mode(state.mode);
     }
 
     fn start_search(&mut self, cx: &mut Context<Self>) {
