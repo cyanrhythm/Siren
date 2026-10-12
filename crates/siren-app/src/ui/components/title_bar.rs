@@ -3,6 +3,7 @@
 //! 对齐 Melodia 桌面端的 `TitleBar.kt`。
 
 use gpui_kit::assets::IconName;
+use gpui_kit::component::input::Input;
 use gpui_kit::*;
 
 use super::super::{icon, Root, Route};
@@ -99,17 +100,11 @@ impl Root {
                             .px(px(14.0))
                             .rounded(px(22.0))
                             .bg(theme::surface())
-                            .cursor_pointer()
                             .on_click(move |_ev, _window, cx| {
                                 weak_search.update(cx, |root, cx| root.navigate(Route::Search, cx)).ok();
                             })
                             .child(icon(IconName::Search, 18.0, theme::text_gray()))
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(theme::text_gray())
-                                    .child("想播放什么？"),
-                            ),
+                            .child(div().flex_1().child(Input::new(&self.search_input))),
                     ),
             )
             // 右：下载、账户、窗口按钮

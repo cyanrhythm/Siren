@@ -1,64 +1,38 @@
-//! 搜索：搜索框 + 结果列表。
+//! 搜索：结果列表（输入框在标题栏）。
 
 use std::sync::Arc;
 
-use gpui_kit::assets::IconName;
 use gpui_kit::base::StyledExt;
-use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::*;
 
 use siren_core::model::Song;
 
 use super::super::playback::Playback;
 use super::super::services::Services;
-use super::super::{cover_placeholder, icon, page_shell};
+use super::super::{cover_placeholder, page_shell};
 use crate::theme;
 
 pub(crate) struct SearchPage {
     services: Services,
     playback: Entity<Playback>,
-    input: Entity<InputState>,
     songs: Arc<Vec<Song>>,
     selected: Option<usize>,
     status: SharedString,
-    _sub: Subscription,
 }
 
 impl SearchPage {
-    pub(crate) fn new(
-        window: &mut Window,
-        cx: &mut Context<Self>,
-        services: Services,
-        playback: Entity<Playback>,
-    ) -> Self {
-        let input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("搜索歌曲、歌手…")
-                .default_value("周杰伦")
-        });
-        let _sub = cx.subscribe(&input, |this: &mut SearchPage, _i, event: &InputEvent, cx| {
-            if let InputEvent::PressEnter { .. } = event {
-                this.search(cx);
-            }
-        });
-        let mut page = Self {
+    pub(crate) fn new(services: Services, playback: Entity<Playback>) -> Self {
+        Self {
             services,
             playback,
-            input,
             songs: Arc::new(Vec::new()),
             selected: None,
-            status: "回车搜索".into(),
-            _sub,
-        };
-        page.search(cx);
-        page
+            status: "在顶部搜索框输入关键词并回车".into(),
+        }
     }
 
-    fn search(&mut self, cx: &mut Context<Self>) {
-        let keyword = self.input.read(cx).value().trim().to_string();
-        if keyword.is_empty() {
-            return;
-        }
+    /// 由标题栏回车触发。
+    pub(crate) fn search(&mut self, keyword: String, cx: &mut Context<Self>) {
         self.status = format!("搜索中：{keyword}").into();
         cx.notify();
 
@@ -153,29 +127,6 @@ impl Render for SearchPage {
         .w_full()
         .min_w(px(0.0));
 
-        page_shell(
-            format!("搜索 · {}", self.status),
-            div()
-                .v_flex()
-                .flex_1()
-                .min_w(px(0.0))
-                .child(
-                    div().p(px(12.0)).child(
-                        div()
-                            .w(px(420.0))
-                            .h(px(40.0))
-                            .flex()
-                            .items_center()
-                            .gap(px(10.0))
-                            .px(px(14.0))
-                            .rounded(px(20.0))
-                            .bg(theme::surface())
-                            .child(icon(IconName::Search, 18.0, theme::text_gray()))
-                            .child(div().flex_1().child(Input::new(&self.input))),
-                    ),
-                )
-                .child(list)
-                .into_any_element(),
-        )
+        page_shell(format!("搜索 · {}", self.status), list.into_any_element())
     }
 }

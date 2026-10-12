@@ -15,6 +15,7 @@ use std::sync::Arc;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::base::StyledExt;
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::Icon;
 use gpui_kit::*;
 
@@ -46,12 +47,14 @@ pub struct Root {
     _runtime: tokio::runtime::Runtime,
     services: Services,
     playback: Entity<Playback>,
+    search_input: Entity<InputState>,
     nav: Vec<Route>,
     home: Entity<HomePage>,
     library: Entity<LibraryPage>,
     search: Entity<SearchPage>,
     playlist_page: Option<Entity<PlaylistPage>>,
     _subs: Vec<Subscription>,
+    _search_sub: Subscription,
 }
 
 impl Root {
@@ -73,7 +76,14 @@ impl Root {
 
         let home = cx.new(|cx| HomePage::new(cx, services.clone()));
         let library = cx.new(|cx| LibraryPage::new(window, cx, services.clone()));
-        let search = cx.new(|cx| SearchPage::new(window, cx, services.clone(), playback.clone()));
+        let search = cx.new(|_cx| SearchPage::new(services.clone(), playback.clone()));
+
+        // 标题栏搜索输入（回车驱动搜索页）
+        let search_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("想播放什么？")
+                .default_value("周杰伦")
+        });
 
         let initial_route = match std::env::var("SIREN_START").ok().as_deref() {
             Some("library") => Route::Library,
@@ -89,16 +99,23 @@ impl Root {
             subs.push(cx.subscribe(&library, |root: &mut Root, _e, ev: &PageEvent, cx| {
                 root.on_page_event(ev, cx)
             }));
+            let _search_sub = cx.subscribe(&search_input, |root: &mut Root, _i, ev: &InputEvent, cx| {
+                if let InputEvent::PressEnter { .. } = ev {
+                    root.submit_search(cx);
+                }
+            });
             Self {
                 _runtime: runtime,
                 services,
                 playback,
+                search_input,
                 nav: vec![initial_route],
                 home,
                 library,
                 search,
                 playlist_page: None,
                 _subs: subs,
+                _search_sub,
             }
         })
     }
@@ -139,6 +156,18 @@ impl Root {
             self.playlist_page = None;
             cx.notify();
         }
+    }
+
+    /// 标题栏搜索：回车 → 切到搜索页并以其关键字检索。
+    fn submit_search(&mut self, cx: &mut Context<Self>) {
+        let keyword = self.search_input.read(cx).value().trim().to_string();
+        if keyword.is_empty() {
+            return;
+        }
+        if !matches!(self.route(), Route::Search) {
+            self.navigate(Route::Search, cx);
+        }
+        self.search.update(cx, |page, cx| page.search(keyword, cx));
     }
 
     fn page(&self) -> AnyElement {
