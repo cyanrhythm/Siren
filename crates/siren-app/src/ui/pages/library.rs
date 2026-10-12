@@ -1,7 +1,11 @@
-//! 音乐库：登录卡片 / 我的歌单。
+//! 音乐库（常驻侧栏）：头部工具栏 + 歌单列表 / 登录卡片。
+//!
+//! 头部对齐 Melodia 的库面板：标题「音乐库」+ 新建/展开；分栏 歌单/专辑/艺人；
+//! 库内搜索 + 排序。
 
 use std::sync::Arc;
 
+use gpui_kit::assets::IconName;
 use gpui_kit::base::StyledExt;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
@@ -10,7 +14,7 @@ use gpui_kit::*;
 use siren_core::model::Playlist;
 
 use super::super::services::Services;
-use super::super::{page_shell, PageEvent};
+use super::super::{icon, PageEvent};
 use crate::theme;
 
 pub(crate) struct LibraryPage {
@@ -56,7 +60,6 @@ impl LibraryPage {
             return;
         };
         siren_core::auth::save_cookie(&cookie);
-        // 共享客户端：登录态对 Playback / 封面加载器即时生效。
         self.services.client.set_cookie(Some(cookie));
         self.login_status = "登录校验中…".into();
         cx.notify();
@@ -126,16 +129,72 @@ impl LibraryPage {
         })
         .detach();
     }
+
+    fn header(&self) -> impl IntoElement {
+        div()
+            .w_full()
+            .flex()
+            .items_center()
+            .justify_between()
+            .px(px(6.0))
+            .pb(px(10.0))
+            .child(
+                div()
+                    .text_2xl()
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(theme::text_primary())
+                    .child("音乐库"),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.0))
+                    .child(round_button("lib-add", IconName::Plus))
+                    .child(round_button("lib-expand", IconName::Maximize2)),
+            )
+    }
+
+    fn tabs(&self) -> impl IntoElement {
+        div()
+            .w_full()
+            .flex()
+            .items_center()
+            .gap(px(6.0))
+            .pb(px(6.0))
+            .child(lib_tab("歌单", true))
+            .child(lib_tab("专辑", false))
+            .child(lib_tab("艺人", false))
+    }
+
+    fn toolbar(&self) -> impl IntoElement {
+        div()
+            .w_full()
+            .flex()
+            .items_center()
+            .justify_between()
+            .px(px(6.0))
+            .py(px(6.0))
+            .child(icon(IconName::Search, 16.0, theme::text_gray()))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.0))
+                    .child(div().text_xs().text_color(theme::text_gray()).child("默认"))
+                    .child(icon(IconName::List, 16.0, theme::text_gray())),
+            )
+    }
 }
 
 impl Render for LibraryPage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.logged_in {
+        let content: AnyElement = if self.logged_in {
             let playlists = self.my_playlists.clone();
             let count = playlists.len();
             let covers = self.services.covers.clone();
             let weak = cx.weak_entity();
-            let list = uniform_list("lib-playlists", count, move |range, _window, _cx| {
+            uniform_list("lib-playlists", count, move |range, _window, _cx| {
                 range
                     .map(|i| {
                         let pl = &playlists[i];
@@ -146,12 +205,12 @@ impl Render for LibraryPage {
                         div()
                             .id(format!("lib-playlist-{id}"))
                             .w_full()
-                            .h(px(64.0))
-                            .px(px(16.0))
+                            .h(px(56.0))
+                            .px(px(6.0))
                             .flex()
                             .items_center()
-                            .gap(px(14.0))
-                            .rounded(px(8.0))
+                            .gap(px(12.0))
+                            .rounded(px(6.0))
                             .hover(|s| s.bg(theme::card_surface()))
                             .cursor_pointer()
                             .on_click(move |_ev, _window, cx| {
@@ -187,65 +246,98 @@ impl Render for LibraryPage {
             })
             .flex_1()
             .w_full()
-            .min_w(px(0.0));
-
-            page_shell(
-                format!("音乐库 · {} · {}", self.nickname, self.login_status),
-                list.into_any_element(),
-            )
+            .min_w(px(0.0))
+            .into_any_element()
         } else {
             let weak = cx.weak_entity();
-            let card = div()
-                .v_flex()
-                .gap(px(10.0))
-                .w(px(440.0))
-                .p(px(16.0))
-                .rounded(px(10.0))
-                .bg(theme::card_surface())
+            div()
+                .flex_1()
+                .w_full()
+                .flex()
+                .items_center()
+                .justify_center()
                 .child(
                     div()
-                        .text_sm()
-                        .font_weight(FontWeight::BOLD)
-                        .text_color(theme::text_primary())
-                        .child("登录后查看你的歌单"),
-                )
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(theme::text_gray())
-                        .child("粘贴 MUSIC_U 或完整 Cookie（也可用 SIREN_COOKIE 环境变量）"),
-                )
-                .child(Input::new(&self.login_input))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
+                        .v_flex()
+                        .w_full()
                         .gap(px(8.0))
-                        .child(
-                            Button::new("login")
-                                .primary()
-                                .label("登录")
-                                .on_click(move |_ev, _window, cx| {
-                                    weak.update(cx, |this, cx| this.do_login(cx)).ok();
-                                }),
-                        )
+                        .p(px(12.0))
+                        .rounded(px(8.0))
+                        .bg(theme::card_surface())
                         .child(
                             div()
-                                .text_xs()
-                                .text_color(theme::text_gray())
-                                .child(self.login_status.clone()),
+                                .text_sm()
+                                .font_weight(FontWeight::BOLD)
+                                .text_color(theme::text_primary())
+                                .child("登录后查看你的歌单"),
+                        )
+                        .child(Input::new(&self.login_input))
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(8.0))
+                                .child(Button::new("login").primary().label("登录").on_click(
+                                    move |_ev, _window, cx| {
+                                        weak.update(cx, |this, cx| this.do_login(cx)).ok();
+                                    },
+                                ))
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(theme::text_gray())
+                                        .child(self.login_status.clone()),
+                                ),
                         ),
-                );
-            page_shell(
-                "音乐库".to_string(),
-                div()
-                    .flex_1()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(card)
-                    .into_any_element(),
-            )
-        }
+                )
+                .into_any_element()
+        };
+
+        div()
+            .v_flex()
+            .size_full()
+            .rounded(px(8.0))
+            .bg(theme::pane())
+            .p(px(12.0))
+            .gap(px(2.0))
+            .child(self.header())
+            .child(self.tabs())
+            .child(self.toolbar())
+            .child(content)
     }
+}
+
+fn round_button(id: &'static str, name: IconName) -> impl IntoElement {
+    div()
+        .id(id)
+        .size(px(34.0))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_full()
+        .bg(theme::surface())
+        .cursor_pointer()
+        .hover(|s| s.bg(theme::surface_light()))
+        .child(icon(name, 18.0, theme::text_primary()))
+}
+
+fn lib_tab(label: &str, active: bool) -> impl IntoElement {
+    div()
+        .px(px(18.0))
+        .h(px(38.0))
+        .flex()
+        .items_center()
+        .rounded(px(19.0))
+        .cursor_pointer()
+        .bg(if active {
+            theme::surface_light()
+        } else {
+            theme::surface()
+        })
+        .child(
+            div()
+                .text_sm()
+                .text_color(theme::text_primary())
+                .child(label.to_string()),
+        )
 }
