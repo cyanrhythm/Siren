@@ -24,6 +24,10 @@ Thumbs.db
 # 本地凭据（勿入库）
 cookie.txt
 
+# ⚠️ 注意：.opencode/ 纳入版本控制，不要加进忽略列表
+# 其中存放 gpui-kit 的 Agent Skills，团队共享同一套规范
+# 详见 .opencode/skills/README.md
+
 # 构建产物
 /dist/
 *.deb

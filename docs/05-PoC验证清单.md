@@ -149,18 +149,36 @@ flowchart LR
 
 ## P1-1 · 托盘能力
 
+**配置**：
+
+```toml
+tray-icon = { version = "0.26", default-features = false, features = ["ksni"] }
+```
+
 **验证内容**
 
 | # | 项 | 验收标准 |
 |---|---|---|
-| 1 | `tray-icon` 三平台可用 | 图标正常显示 |
-| 2 | **KDE Wayland 下点击有响应** | 左键激活、右键菜单（Melodia 在此踩过坑） |
-| 3 | 图标透明 | 圆角外不填白（XEmbed 会填白） |
-| 4 | 菜单项 | 菜单能正常弹出与响应 |
-| 5 | 主窗口隐藏/恢复 | 关闭时隐藏到托盘 |
+| 1 | **确认无 GTK 依赖** | `cargo tree` 中不含 `libappindicator` / `gtk` |
+| 2 | `tray-icon` 三平台可用 | 图标正常显示 |
+| 3 | **KDE Wayland 下点击有响应** | 左键激活、右键菜单（Melodia 在此踩过坑） |
+| 4 | 图标透明 | 圆角外不填白（XEmbed 会填白） |
+| 5 | 菜单项 | 菜单能正常弹出与响应（验证 DBusMenu 生效） |
+| 6 | 主窗口隐藏/恢复 | 关闭时隐藏到托盘 |
 
-> **重点**：Melodia 发现 Wayland 下 XEmbed **收不到鼠标事件**。
-> `tray-icon` 应走 SNI，但**必须实测确认**。
+**第 1 项最关键** —— 验证方式：
+
+```bash
+cargo tree -p siren-app | grep -iE "gtk|appindicator"
+# 期望：无输出
+```
+
+> **背景**：`tray-icon` 默认 feature 是 `libappindicator`，会拖入 GTK3。
+> 必须显式 `default-features = false, features = ["ksni"]` 才能走纯 D-Bus。
+> 忘记加时**编译照样通过**，只是静默引入了 GTK 依赖——所以必须主动检查。
+
+> **Wayland 注意**：Melodia 发现 XEmbed **收不到鼠标事件**。
+> 走 `ksni` 从源头避开了 XEmbed 回退路径，但仍需实测确认。
 
 ---
 
