@@ -455,9 +455,10 @@ impl Render for Root {
         let weak_comments = cx.weak_entity();
         let login_overlay = self.login_open.then(|| self.login_overlay(weak_login));
         let comments_overlay = self.comments_open.then(|| self.comments_overlay(weak_comments));
-        // 中间列显式分配宽度，规避 gpui `flex_1` 的横向过度伸展
-        let np_w = if self.now_playing_open { 400.0 } else { 44.0 };
-        let page_w = (vw - 300.0 - np_w - 32.0).max(240.0);
+        // 中间列显式分配宽度，规避 gpui `flex_1` 的横向过度伸展。
+        // 右侧栏严格取设置的宽度；空间不足时中间列收缩（不产生横向溢出）。
+        let np_w = if self.now_playing_open { self.np_width } else { 44.0 };
+        let page_w = (vw - 300.0 - np_w - 32.0).max(0.0);
         div()
             .v_flex()
             .size_full()
