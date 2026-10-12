@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::base::StyledExt;
+use gpui_kit::component::menu::{ContextMenuExt, PopupMenuItem};
 use gpui_kit::*;
 
 use siren_core::model::PlaylistDetail;
@@ -159,6 +160,8 @@ impl Render for PlaylistPage {
                             let song = &tracks[i];
                             let cover = covers.image(&song.cover_url, 40.0);
                             let weak = weak.clone();
+                            let weak_ctx = weak.clone();
+                            let sid = song.id;
                             div()
                                 .id(format!("playlist-track-{}", song.id))
                                 .w_full()
@@ -221,6 +224,14 @@ impl Render for PlaylistPage {
                                         .text_color(theme::text_gray())
                                         .child(fmt_time(song.duration_ms)),
                                 )
+                                .context_menu(move |menu, _w, _cx| {
+                                    let weak_ctx = weak_ctx.clone();
+                                    menu.item(PopupMenuItem::new("添加到歌单").on_click(move |_ev, _w, cx| {
+                                        weak_ctx
+                                            .update(cx, |_page, cx| cx.emit(PageEvent::AddToPlaylist { song_id: sid }))
+                                            .ok();
+                                    }))
+                                })
                                 .into_any_element()
                         })
                         .collect::<Vec<_>>()

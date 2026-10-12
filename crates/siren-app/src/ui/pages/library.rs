@@ -170,7 +170,13 @@ impl LibraryPage {
         .detach();
     }
 
-    fn header(&self) -> impl IntoElement {
+    /// 重新拉取我的歌单（新建歌单后调用）。
+    pub(crate) fn reload_playlists(&mut self, cx: &mut Context<Self>) {
+        self.load_my_playlists(cx);
+    }
+
+    fn header(&self, weak: WeakEntity<Self>) -> impl IntoElement {
+        let weak_add = weak;
         div()
             .w_full()
             .flex()
@@ -190,7 +196,22 @@ impl LibraryPage {
                     .flex()
                     .items_center()
                     .gap(px(6.0))
-                    .child(round_button("lib-add", IconName::Plus))
+                    .child(
+                        div()
+                            .id("lib-add")
+                            .size(px(30.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded_full()
+                            .bg(theme::surface())
+                            .cursor_pointer()
+                            .hover(|s| s.bg(theme::surface_light()))
+                            .on_click(move |_ev, _window, cx| {
+                                weak_add.update(cx, |_p, cx| cx.emit(PageEvent::OpenCreate)).ok();
+                            })
+                            .child(icon(IconName::Plus, 18.0, theme::text_gray())),
+                    )
                     .child(round_button("lib-expand", IconName::Maximize2)),
             )
     }
@@ -334,7 +355,7 @@ impl Render for LibraryPage {
             .bg(theme::pane())
             .p(px(12.0))
             .gap(px(2.0))
-            .child(self.header())
+            .child(self.header(cx.weak_entity()))
             .child(self.tabs())
             .child(self.toolbar())
             .child(content)

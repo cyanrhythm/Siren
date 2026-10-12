@@ -22,6 +22,7 @@ use gpui_kit::component::Icon;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+use siren_core::model::Playlist;
 use siren_core::network::client::NeteaseClient;
 
 use crate::theme;
@@ -84,6 +85,12 @@ pub(crate) enum PageEvent {
     OpenRecentPlay,
     /// 打开设置。
     OpenSettings,
+    /// 请求新建歌单。
+    OpenCreate,
+    /// 请求把歌曲加入歌单。
+    AddToPlaylist {
+        song_id: i64,
+    },
 }
 
 /// 正在播放栏的卡片（可配置顺序/显隐）。
@@ -180,6 +187,12 @@ pub struct Root {
     comments_cursor: String,
     comment_floor_open: Option<i64>,
     comment_floor_items: Vec<siren_core::model::CommentItem>,
+    // ── 歌单写操作 ─────────────────────────────────────────────
+    create_open: bool,
+    create_input: Entity<InputState>,
+    /// 待加入歌单的歌曲 id（Some 时显示歌单选择浮层）。
+    picker_song: Option<i64>,
+    picker_playlists: Vec<Playlist>,
     _subs: Vec<Subscription>,
     _search_sub: Subscription,
 }
@@ -221,6 +234,8 @@ impl Root {
 
         // 登录弹窗 Cookie 输入（回车提交）
         let login_input = cx.new(|cx| InputState::new(window, cx).placeholder("粘贴 MUSIC_U 或完整 Cookie"));
+        // 新建歌单名称输入
+        let create_input = cx.new(|cx| InputState::new(window, cx).placeholder("歌单名称"));
 
         let np_width = siren_core::settings::load_np_width();
         let np_width_slider = cx.new(|_| {
@@ -263,6 +278,11 @@ impl Root {
                 }
             });
             subs.push(login_sub);
+            subs.push(cx.subscribe(&create_input, |root: &mut Root, _i, ev: &InputEvent, cx| {
+                if let InputEvent::PressEnter { .. } = ev {
+                    root.submit_create(cx);
+                }
+            }));
             subs.push(
                 cx.subscribe(&np_width_slider, |root: &mut Root, _slider, event: &SliderEvent, cx| {
                     if let SliderEvent::Change(SliderValue::Single(f)) = event {
@@ -310,6 +330,10 @@ impl Root {
                 comments_cursor: "0".to_string(),
                 comment_floor_open: None,
                 comment_floor_items: Vec::new(),
+                create_open: false,
+                create_input,
+                picker_song: None,
+                picker_playlists: Vec::new(),
                 _subs: subs,
                 _search_sub,
             }
@@ -347,6 +371,8 @@ impl Root {
                 self.navigate(Route::RecentPlay, cx);
             }
             PageEvent::OpenSettings => self.navigate(Route::Settings, cx),
+            PageEvent::OpenCreate => self.open_create(cx),
+            PageEvent::AddToPlaylist { song_id } => self.open_picker(*song_id, cx),
         }
     }
 
@@ -486,6 +512,10 @@ impl Render for Root {
         let weak_comments = cx.weak_entity();
         let login_overlay = self.login_open.then(|| self.login_overlay(weak_login));
         let comments_overlay = self.comments_open.then(|| self.comments_overlay(weak_comments));
+        let weak_create = cx.weak_entity();
+        let weak_picker = cx.weak_entity();
+        let create_overlay = self.create_open.then(|| self.create_overlay(weak_create));
+        let picker_overlay = self.picker_song.map(|_| self.picker_overlay(weak_picker));
         // 中间列显式分配宽度，规避 gpui `flex_1` 的横向过度伸展。
         // 右侧栏严格取设置的宽度；空间不足时中间列收缩（不产生横向溢出）。
         let np_w = if self.now_playing_open { self.np_width } else { 44.0 };
@@ -526,6 +556,8 @@ impl Render for Root {
             .child(self.player_bar(weak, vw, cx))
             .when_some(login_overlay, |this, overlay| this.child(overlay))
             .when_some(comments_overlay, |this, overlay| this.child(overlay))
+            .when_some(create_overlay, |this, overlay| this.child(overlay))
+            .when_some(picker_overlay, |this, overlay| this.child(overlay))
     }
 }
 
