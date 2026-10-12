@@ -1,7 +1,8 @@
-//! 封面加载器：按尺寸缓存 + 后台抓取 + 完成后通知重绘。
+//! 封面加载器：按尺寸缓存。
 //!
-//! 当前由列表项渲染时按需触发抓取（命中缓存则直接读）。后续可改为在数据加载
-//! 完成时预取，避免在 render 路径中发起网络请求（见 `docs` 与 coding-guides）。
+//! 抓取由 [`CoverLoader::prefetch`] 在**数据加载完成时**触发；
+//! [`CoverLoader::image`] 仅做只读查询（命中缓存渲染图片，否则占位），
+//! 不在 render 路径中发起网络请求（对齐 coding-guides 的副作用规则）。
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -30,49 +31,64 @@ impl CoverLoader {
         }
     }
 
-    pub(crate) fn image(&self, url: &str, size: f32, weak: &WeakEntity<Root>, cx: &mut App) -> AnyElement {
+    /// 只读：命中缓存则渲染图片，否则返回占位。
+    pub(crate) fn image(&self, url: &str, size: f32) -> AnyElement {
         if url.is_empty() {
             return cover_placeholder(size).into_any_element();
         }
         let key = sized_url(url, size);
         if let Some(image) = self.cache.lock().unwrap().get(&key).cloned() {
-            return img(image).w(px(size)).h(px(size)).rounded(px(6.0)).into_any_element();
+            return img(image)
+                .w(px(size))
+                .h(px(size))
+                .rounded(px(6.0))
+                .into_any_element();
         }
-        self.request(key, weak, cx);
         cover_placeholder(size).into_any_element()
     }
 
-    fn request(&self, key: String, weak: &WeakEntity<Root>, cx: &mut App) {
-        if !self.inflight.lock().unwrap().insert(key.clone()) {
-            return;
-        }
-        let client = self.client.clone();
-        let (tx, rx) = tokio::sync::oneshot::channel::<Option<Arc<Image>>>();
-        let fetch_key = key.clone();
-        self.handle.spawn(async move {
-            let image = match client.get_bytes(&fetch_key).await {
-                Ok(bytes) => guess_format(&bytes).map(|fmt| Arc::new(Image::from_bytes(fmt, bytes))),
-                Err(_) => None,
-            };
-            let _ = tx.send(image);
-        });
+    /// 预取一批封面（数据加载完成后调用）；完成后通知重绘。
+    pub(crate) fn prefetch(
+        &self,
+        urls: impl IntoIterator<Item = String>,
+        size: f32,
+        cx: &mut Context<Root>,
+    ) {
+        for url in urls {
+            if url.is_empty() {
+                continue;
+            }
+            let key = sized_url(&url, size);
+            if self.cache.lock().unwrap().contains_key(&key) {
+                continue;
+            }
+            if !self.inflight.lock().unwrap().insert(key.clone()) {
+                continue;
+            }
 
-        let cache = self.cache.clone();
-        let inflight = self.inflight.clone();
-        let key_for = key;
-        weak.clone()
-            .update(cx, move |_this, cx| {
-                cx.spawn(async move |this, cx| {
-                    let image = rx.await.ok().flatten();
-                    inflight.lock().unwrap().remove(&key_for);
-                    if let Some(image) = image {
-                        cache.lock().unwrap().insert(key_for, image);
-                        this.update(cx, |_this, cx| cx.notify()).ok();
-                    }
-                })
-                .detach();
+            let client = self.client.clone();
+            let (tx, rx) = tokio::sync::oneshot::channel::<Option<Arc<Image>>>();
+            let fetch_key = key.clone();
+            self.handle.spawn(async move {
+                let image = match client.get_bytes(&fetch_key).await {
+                    Ok(bytes) => guess_format(&bytes).map(|fmt| Arc::new(Image::from_bytes(fmt, bytes))),
+                    Err(_) => None,
+                };
+                let _ = tx.send(image);
+            });
+
+            let cache = self.cache.clone();
+            let inflight = self.inflight.clone();
+            cx.spawn(async move |this, cx| {
+                let image = rx.await.ok().flatten();
+                inflight.lock().unwrap().remove(&key);
+                if let Some(image) = image {
+                    cache.lock().unwrap().insert(key, image);
+                    this.update(cx, |_this, cx| cx.notify()).ok();
+                }
             })
-            .ok();
+            .detach();
+        }
     }
 }
 

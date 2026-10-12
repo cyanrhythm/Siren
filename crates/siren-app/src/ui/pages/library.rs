@@ -15,11 +15,11 @@ impl Root {
             let count = playlists.len();
             let covers = self.covers.clone();
             let weak_list = weak;
-            let list = uniform_list("lib-playlists", count, move |range, _window, cx| {
+            let list = uniform_list("lib-playlists", count, move |range, _window, _cx| {
                 range
                     .map(|i| {
                         let pl = &playlists[i];
-                        let cover = covers.image(&pl.cover_url, 48.0, &weak_list, cx);
+                        let cover = covers.image(&pl.cover_url, 48.0);
                         let weak = weak_list.clone();
                         let id = pl.id;
                         let name = pl.name.clone();

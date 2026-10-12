@@ -188,7 +188,9 @@ impl Root {
             let list = rx.await.unwrap_or_default();
             this.update(cx, |this, cx| {
                 this.playlists_status = format!("推荐歌单 {} 个", list.len()).into();
+                let urls: Vec<String> = list.iter().map(|p| p.cover_url.clone()).collect();
                 this.playlists = Arc::new(list);
+                this.covers.prefetch(urls, 48.0, cx);
                 cx.notify();
             })
             .ok();
@@ -265,7 +267,9 @@ impl Root {
             let list = rx.await.unwrap_or_default();
             this.update(cx, |this, cx| {
                 this.login_status = format!("我的歌单 {} 个", list.len()).into();
+                let urls: Vec<String> = list.iter().map(|p| p.cover_url.clone()).collect();
                 this.my_playlists = Arc::new(list);
+                this.covers.prefetch(urls, 48.0, cx);
                 cx.notify();
             })
             .ok();
