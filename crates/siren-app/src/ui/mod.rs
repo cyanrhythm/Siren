@@ -7,6 +7,7 @@
 
 pub mod components;
 pub mod covers;
+pub mod login_dialog;
 pub mod pages;
 mod playback;
 mod services;
@@ -17,6 +18,7 @@ use gpui_kit::assets::IconName;
 use gpui_kit::base::StyledExt;
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::Icon;
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use siren_core::network::client::NeteaseClient;
@@ -32,7 +34,18 @@ use services::Services;
 pub(crate) enum Route {
     Home,
     Search,
-    Playlist { id: i64, name: String },
+    Playlist {
+        id: i64,
+        name: String,
+    },
+    /// 个人主页。
+    Profile {
+        uid: i64,
+    },
+    /// 最近播放。
+    RecentPlay,
+    /// 设置。
+    Settings,
 }
 
 /// 页面回传给外壳的导航事件。
@@ -42,13 +55,24 @@ pub(crate) enum PageEvent {
         name: String,
     },
     Back,
-    /// 登录成功：上报昵称与头像，供标题栏账号区展示。
+    /// 登录成功：上报 uid、昵称与头像，供标题栏账号区展示。
     Account {
+        uid: i64,
         nickname: String,
         avatar_url: String,
     },
     /// 未登录 / 已退出登录。
     LoggedOut,
+    /// 请求打开登录弹窗。
+    OpenLogin,
+    /// 打开个人主页。
+    OpenProfile {
+        uid: i64,
+    },
+    /// 打开最近播放。
+    OpenRecentPlay,
+    /// 打开设置。
+    OpenSettings,
 }
 
 /// 主窗口根组件：导航与外壳。
@@ -63,8 +87,16 @@ pub struct Root {
     search: Entity<SearchPage>,
     playlist_page: Option<Entity<PlaylistPage>>,
     now_playing_open: bool,
-    /// 登录后的账号信息（昵称、头像 URL）；未登录为 None。
-    account: Option<(SharedString, String)>,
+    /// 登录后的账号信息（昵称、头像 URL、uid）；未登录为 None。
+    account: Option<(SharedString, String, i64)>,
+    // ── 登录弹窗状态 ───────────────────────────────────────────
+    login_open: bool,
+    login_tab: login_dialog::LoginTab,
+    /// 二维码轮询的“代”计数：自增即可使旧任务失效。
+    login_gen: u64,
+    qr_image: Option<Arc<Image>>,
+    login_status: SharedString,
+    login_input: Entity<InputState>,
     _subs: Vec<Subscription>,
     _search_sub: Subscription,
 }
@@ -97,6 +129,9 @@ impl Root {
                 .default_value("周杰伦")
         });
 
+        // 登录弹窗 Cookie 输入（回车提交）
+        let login_input = cx.new(|cx| InputState::new(window, cx).placeholder("粘贴 MUSIC_U 或完整 Cookie"));
+
         let initial_route = match std::env::var("SIREN_START").ok().as_deref() {
             Some("search") => Route::Search,
             _ => Route::Home,
@@ -115,6 +150,12 @@ impl Root {
                     root.submit_search(cx);
                 }
             });
+            let login_sub = cx.subscribe(&login_input, |root: &mut Root, _i, ev: &InputEvent, cx| {
+                if let InputEvent::PressEnter { .. } = ev {
+                    root.submit_cookie_login(cx);
+                }
+            });
+            subs.push(login_sub);
             Self {
                 _runtime: runtime,
                 services,
@@ -127,6 +168,12 @@ impl Root {
                 playlist_page: None,
                 now_playing_open: true,
                 account: None,
+                login_open: false,
+                login_tab: login_dialog::LoginTab::Scan,
+                login_gen: 0,
+                qr_image: None,
+                login_status: SharedString::default(),
+                login_input,
                 _subs: subs,
                 _search_sub,
             }
@@ -149,19 +196,25 @@ impl Root {
         match event {
             PageEvent::OpenPlaylist { id, name } => self.open_playlist(*id, name.clone(), cx),
             PageEvent::Back => self.back(cx),
-            PageEvent::Account { nickname, avatar_url } => {
-                self.set_account(Some((nickname.clone(), avatar_url.clone())), cx)
-            }
+            PageEvent::Account {
+                uid,
+                nickname,
+                avatar_url,
+            } => self.set_account(Some((*uid, nickname.clone(), avatar_url.clone())), cx),
             PageEvent::LoggedOut => self.set_account(None, cx),
+            PageEvent::OpenLogin => self.open_login(cx),
+            PageEvent::OpenProfile { uid } => self.navigate(Route::Profile { uid: *uid }, cx),
+            PageEvent::OpenRecentPlay => self.navigate(Route::RecentPlay, cx),
+            PageEvent::OpenSettings => self.navigate(Route::Settings, cx),
         }
     }
 
     /// 更新标题栏账号区（登录成功 / 退出登录）。
-    fn set_account(&mut self, account: Option<(String, String)>, cx: &mut Context<Self>) {
-        if let Some((_, url)) = &account {
+    fn set_account(&mut self, account: Option<(i64, String, String)>, cx: &mut Context<Self>) {
+        if let Some((_, _, url)) = &account {
             self.services.covers.prefetch([url.clone()], 36.0, cx);
         }
-        self.account = account.map(|(nick, url)| (nick.into(), url));
+        self.account = account.map(|(uid, nick, url)| (nick.into(), url, uid));
         cx.notify();
     }
 
@@ -217,6 +270,10 @@ impl Root {
                 .as_ref()
                 .map(|p| p.clone().into_any_element())
                 .unwrap_or_else(|| div().into_any_element()),
+            // 以下页面先接路由占位，后续逐个补齐
+            Route::Profile { .. } => placeholder_page("个人主页", "个人主页（待实现）"),
+            Route::RecentPlay => placeholder_page("最近播放", "最近播放（待实现）"),
+            Route::Settings => placeholder_page("设置", "设置（待实现）"),
         }
     }
 }
@@ -225,6 +282,8 @@ impl Render for Root {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let vw = f32::from(window.viewport_size().width);
         let weak = cx.weak_entity();
+        let weak_login = cx.weak_entity();
+        let login_overlay = self.login_open.then(|| self.login_overlay(weak_login));
         // 中间列显式分配宽度，规避 gpui `flex_1` 的横向过度伸展
         let np_w = if self.now_playing_open { 340.0 } else { 44.0 };
         let page_w = (vw - 300.0 - np_w - 32.0).max(240.0);
@@ -262,7 +321,23 @@ impl Render for Root {
                     .child(self.now_playing(weak.clone(), cx)),
             )
             .child(self.player_bar(weak, vw, cx))
+            .when_some(login_overlay, |this, overlay| this.child(overlay))
     }
+}
+
+/// 占位页面（路由已接，内容待补）。
+fn placeholder_page(title: &str, hint: &str) -> AnyElement {
+    page_shell(
+        title.to_string(),
+        div()
+            .flex_1()
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(div().text_sm().text_color(theme::text_gray()).child(hint.to_string()))
+            .into_any_element(),
+    )
+    .into_any_element()
 }
 
 // ---------- 共享小部件 ----------

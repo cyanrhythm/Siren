@@ -93,6 +93,37 @@ pub fn account_avatar(value: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
+/// 二维码登录：申请 unikey。
+pub async fn login_qr_key(client: &NeteaseClient) -> Result<String> {
+    let value = client.weapi_post(path::QR_UNIKEY, &json!({ "type": 1 })).await?;
+    Ok(value
+        .get("unikey")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string())
+}
+
+/// 二维码内容（供生成二维码图片）。
+pub fn qr_login_url(key: &str) -> String {
+    format!("https://music.163.com/login?codekey={key}")
+}
+
+/// 二维码扫码状态：`(code, set_cookie, message)`。
+///
+/// `code`：800 过期 / 801 待扫 / 802 待确认 / 803 成功（Cookie 在响应头）。
+pub async fn login_qr_check(client: &NeteaseClient, key: &str) -> Result<(i64, Option<String>, String)> {
+    let (value, cookie) = client
+        .weapi_post_with_cookie(path::QR_CHECK, &json!({ "key": key, "type": 1 }))
+        .await?;
+    let code = value.get("code").and_then(Value::as_i64).unwrap_or_default();
+    let message = value
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    Ok((code, cookie, message))
+}
+
 /// 从播放地址返回体取第一条的 url。
 fn extract_url(value: &Value) -> Option<String> {
     value

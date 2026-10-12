@@ -85,6 +85,35 @@ impl NeteaseClient {
         Self::parse_json(response).await
     }
 
+    /// WEAPI POST，并额外返回响应头的 `Set-Cookie`（登录态请求用）。
+    pub async fn weapi_post_with_cookie(&self, path: &str, body: &Value) -> Result<(Value, Option<String>)> {
+        let cookie = self.cookie();
+        let text = interceptor::weapi_payload(body, cookie.as_deref());
+        let encrypted = crypto::weapi(&text);
+
+        let url = format!("{}{path}", endpoints::WEB_BASE_URL);
+        let mut request = self
+            .http
+            .post(url)
+            .header("User-Agent", interceptor::PC_USER_AGENT)
+            .header("Referer", endpoints::WEB_BASE_URL)
+            .header("Cookie", interceptor::weapi_cookie(cookie.as_deref()));
+        if let Some(ip) = &self.real_ip {
+            request = request.header("X-Real-IP", ip).header("X-Forwarded-For", ip);
+        }
+
+        let response = request
+            .form(&[
+                ("params", encrypted.params.as_str()),
+                ("encSecKey", encrypted.enc_sec_key.as_str()),
+            ])
+            .send()
+            .await?;
+        let set_cookie = collect_set_cookie(&response);
+        let value = Self::parse_json(response).await?;
+        Ok((value, set_cookie))
+    }
+
     /// EAPI POST：伪装 Android，仅提交 `params`。
     pub async fn eapi_post(&self, path: &str, body: &Value) -> Result<Value> {
         let api_path = path.replacen("/eapi/", "/api/", 1);
@@ -118,5 +147,22 @@ impl NeteaseClient {
             .await?;
         let bytes = response.bytes().await?;
         Ok(bytes.to_vec())
+    }
+}
+
+/// 汇总响应头的 `Set-Cookie` 为一条 Cookie 串（仅取 `name=value`）。
+fn collect_set_cookie(response: &reqwest::Response) -> Option<String> {
+    let mut pairs = Vec::new();
+    for value in response.headers().get_all(reqwest::header::SET_COOKIE) {
+        if let Ok(text) = value.to_str() {
+            if let Some(pair) = text.split(';').next().map(str::trim).filter(|s| !s.is_empty()) {
+                pairs.push(pair.to_string());
+            }
+        }
+    }
+    if pairs.is_empty() {
+        None
+    } else {
+        Some(pairs.join("; "))
     }
 }

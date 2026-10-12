@@ -1,0 +1,381 @@
+//! 登录弹窗：扫码 / 网页 / Cookie 三种方式。
+//!
+//! 对齐 Melodia 桌面端 `LoginDialog.kt`。二维码由 siren-core 生成 PNG，经 gpui 解码渲染。
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::input::Input;
+use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::*;
+
+use super::Root;
+use crate::theme;
+
+/// 登录方式标签。
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LoginTab {
+    Scan,
+    Web,
+    Cookie,
+}
+
+impl LoginTab {
+    fn label(self) -> &'static str {
+        match self {
+            LoginTab::Scan => "扫码",
+            LoginTab::Web => "网页",
+            LoginTab::Cookie => "Cookie",
+        }
+    }
+}
+
+impl Root {
+    /// 打开登录弹窗（默认停在扫码）。
+    pub(crate) fn open_login(&mut self, cx: &mut Context<Self>) {
+        self.login_open = true;
+        self.set_login_tab(LoginTab::Scan, cx);
+    }
+
+    /// 关闭登录弹窗并使进行中的二维码轮询失效。
+    pub(crate) fn close_login(&mut self, cx: &mut Context<Self>) {
+        self.login_open = false;
+        self.login_gen = self.login_gen.wrapping_add(1);
+        cx.notify();
+    }
+
+    fn set_login_tab(&mut self, tab: LoginTab, cx: &mut Context<Self>) {
+        self.login_tab = tab;
+        self.login_gen = self.login_gen.wrapping_add(1);
+        self.qr_image = None;
+        if tab == LoginTab::Scan {
+            self.login_status = "正在生成二维码…".into();
+            self.start_qr(cx);
+        } else {
+            self.login_status = SharedString::default();
+        }
+        cx.notify();
+    }
+
+    /// Cookie 登录：校验并提交。
+    pub(crate) fn submit_cookie_login(&mut self, cx: &mut Context<Self>) {
+        let raw = self.login_input.read(cx).value().trim().to_string();
+        let Some(cookie) = siren_core::auth::normalize_cookie(&raw) else {
+            self.login_status = "请输入 MUSIC_U 或完整 Cookie".into();
+            cx.notify();
+            return;
+        };
+        self.finish_login(cookie, cx);
+    }
+
+    /// 登录成功：写入会话并让音乐库刷新账号（进而上报头像/昵称）。
+    fn finish_login(&mut self, cookie: String, cx: &mut Context<Self>) {
+        self.services.client.set_cookie(Some(cookie.clone()));
+        siren_core::auth::save_cookie(&cookie);
+        self.login_open = false;
+        self.login_gen = self.login_gen.wrapping_add(1);
+        cx.notify();
+        self.library.update(cx, |page, cx| page.refresh_account(cx));
+    }
+
+    /// 生成二维码并轮询扫码状态。
+    fn start_qr(&mut self, cx: &mut Context<Self>) {
+        let gen = self.login_gen;
+        let client = self.services.client.clone();
+        let handle = self.services.handle.clone();
+        cx.spawn(async move |this, cx| {
+            // 取 unikey
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            let client_key = client.clone();
+            handle.spawn(async move {
+                let key = siren_core::network::api::login_qr_key(&client_key)
+                    .await
+                    .ok()
+                    .filter(|k| !k.is_empty());
+                let _ = tx.send(key);
+            });
+            let Some(key) = rx.await.ok().flatten() else {
+                this.update(cx, |this, cx| {
+                    if this.login_gen == gen {
+                        this.login_status = "二维码生成失败，请重试".into();
+                        cx.notify();
+                    }
+                })
+                .ok();
+                return;
+            };
+            if this.update(cx, |this, _| this.login_gen != gen).unwrap_or(true) {
+                return;
+            }
+
+            // 生成二维码图片（CPU 任务）
+            let url = siren_core::network::api::qr_login_url(&key);
+            let png = cx
+                .background_executor()
+                .spawn(async move { siren_core::auth::qr::qr_png(&url, 6, 2) })
+                .await;
+            let image = png.map(|bytes| Arc::new(Image::from_bytes(ImageFormat::Png, bytes)));
+            this.update(cx, |this, cx| {
+                if this.login_gen != gen {
+                    return;
+                }
+                this.qr_image = image;
+                this.login_status = "请使用网易云音乐 App 扫码".into();
+                cx.notify();
+            })
+            .ok();
+
+            // 轮询扫码状态
+            let mut failures = 0u32;
+            loop {
+                cx.background_executor().timer(Duration::from_millis(2500)).await;
+                if this.update(cx, |this, _| this.login_gen != gen).unwrap_or(true) {
+                    return;
+                }
+
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                let client = client.clone();
+                let key = key.clone();
+                handle.spawn(async move {
+                    let result = siren_core::network::api::login_qr_check(&client, &key).await;
+                    let _ = tx.send(result);
+                });
+                let Some((code, cookie, message)) = rx.await.ok().and_then(|r| r.ok()) else {
+                    failures += 1;
+                    if failures >= 5 {
+                        this.update(cx, |this, cx| {
+                            if this.login_gen == gen {
+                                this.login_status = "网络异常，请重试".into();
+                                cx.notify();
+                            }
+                        })
+                        .ok();
+                        return;
+                    }
+                    continue;
+                };
+                failures = 0;
+
+                match code {
+                    800 => {
+                        this.update(cx, |this, cx| {
+                            if this.login_gen == gen {
+                                this.login_status = "二维码已过期，请刷新".into();
+                                cx.notify();
+                            }
+                        })
+                        .ok();
+                        return;
+                    }
+                    801 => self_status(&this, cx, gen, "等待扫码"),
+                    802 => self_status(&this, cx, gen, "已扫码，请在手机上确认"),
+                    803 => {
+                        match cookie.filter(|c| !c.is_empty()) {
+                            Some(cookie) => {
+                                this.update(cx, |this, cx| this.finish_login(cookie, cx)).ok();
+                            }
+                            None => self_status(&this, cx, gen, "登录成功但未获取到会话，请重试"),
+                        }
+                        return;
+                    }
+                    _ => {
+                        let message = if message.is_empty() {
+                            format!("扫码异常({code})")
+                        } else {
+                            message
+                        };
+                        this.update(cx, |this, cx| {
+                            if this.login_gen == gen {
+                                this.login_status = message.into();
+                                cx.notify();
+                            }
+                        })
+                        .ok();
+                        return;
+                    }
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// 登录弹窗浮层。
+    pub(crate) fn login_overlay(&self, weak: WeakEntity<Self>) -> AnyElement {
+        let tabs = div()
+            .flex()
+            .items_center()
+            .gap(px(8.0))
+            .child(tab_button(LoginTab::Scan, self.login_tab, weak.clone()))
+            .child(tab_button(LoginTab::Web, self.login_tab, weak.clone()))
+            .child(tab_button(LoginTab::Cookie, self.login_tab, weak.clone()));
+
+        let weak_cancel = weak.clone();
+        let content: AnyElement = match self.login_tab {
+            LoginTab::Scan => {
+                let qr: AnyElement = match &self.qr_image {
+                    Some(image) => img(image.clone()).w(px(210.0)).h(px(210.0)).into_any_element(),
+                    None => div()
+                        .text_sm()
+                        .text_color(theme::text_gray())
+                        .child("生成中…")
+                        .into_any_element(),
+                };
+                let weak_retry = weak.clone();
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap(px(12.0))
+                    .child(
+                        div()
+                            .size(px(226.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(px(12.0))
+                            .bg(rgba(0xffffffff))
+                            .child(qr),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(theme::text_gray())
+                            .child(self.login_status.clone()),
+                    )
+                    .child(
+                        Button::new("qr-retry")
+                            .label("刷新二维码")
+                            .on_click(move |_ev, _window, cx| {
+                                weak_retry
+                                    .update(cx, |root, cx| root.set_login_tab(LoginTab::Scan, cx))
+                                    .ok();
+                            }),
+                    )
+                    .into_any_element()
+            }
+            LoginTab::Web => {
+                let weak_open = weak.clone();
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap(px(12.0))
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(theme::text_gray())
+                            .child("在浏览器中完成网易云登录后，切到 Cookie 标签粘贴 Cookie"),
+                    )
+                    .child(Button::new("web-open").primary().label("打开官方登录页").on_click(
+                        move |_ev, _window, _cx| {
+                            siren_platform::open_url("https://music.163.com/#/login");
+                            let _ = &weak_open;
+                        },
+                    ))
+                    .into_any_element()
+            }
+            LoginTab::Cookie => {
+                let weak_login = weak.clone();
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap(px(12.0))
+                    .child(div().w(px(320.0)).child(Input::new(&self.login_input)))
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(theme::text_gray())
+                            .child(self.login_status.clone()),
+                    )
+                    .child(
+                        Button::new("cookie-login")
+                            .primary()
+                            .label("登录")
+                            .on_click(move |_ev, _window, cx| {
+                                weak_login.update(cx, |root, cx| root.submit_cookie_login(cx)).ok();
+                            }),
+                    )
+                    .into_any_element()
+            }
+        };
+
+        div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .w_full()
+            .h_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(rgba(0x00000088))
+            .child(
+                div()
+                    .w(px(380.0))
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap(px(14.0))
+                    .rounded(px(12.0))
+                    .bg(theme::surface())
+                    .p(px(24.0))
+                    .child(
+                        div()
+                            .text_lg()
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(theme::text_primary())
+                            .child("登录"),
+                    )
+                    .child(tabs)
+                    .child(content)
+                    .child(
+                        Button::new("login-cancel")
+                            .label("取消")
+                            .on_click(move |_ev, _window, cx| {
+                                weak_cancel.update(cx, |root, cx| root.close_login(cx)).ok();
+                            }),
+                    ),
+            )
+            .into_any_element()
+    }
+}
+
+/// 更新扫码状态文案（仅当代数未变）。
+fn self_status(this: &WeakEntity<Root>, cx: &mut AsyncApp, gen: u64, text: &str) {
+    let text = text.to_string();
+    this.update(cx, |this, cx| {
+        if this.login_gen == gen {
+            this.login_status = text.into();
+            cx.notify();
+        }
+    })
+    .ok();
+}
+
+/// 登录方式标签按钮。
+fn tab_button(tab: LoginTab, current: LoginTab, weak: WeakEntity<Root>) -> impl IntoElement {
+    let active = tab == current;
+    div()
+        .id(("login-tab", tab as usize))
+        .px(px(14.0))
+        .py(px(6.0))
+        .rounded_full()
+        .cursor_pointer()
+        .bg(if active { theme::accent() } else { theme::pane() })
+        .when(!active, |s| s.hover(|s| s.bg(theme::card_surface())))
+        .on_click(move |_ev, _window, cx| {
+            weak.update(cx, |root, cx| root.set_login_tab(tab, cx)).ok();
+        })
+        .child(
+            div()
+                .text_sm()
+                .text_color(if active {
+                    theme::text_primary()
+                } else {
+                    theme::text_gray()
+                })
+                .child(tab.label()),
+        )
+}

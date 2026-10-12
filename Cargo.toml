@@ -63,6 +63,10 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
 directories = "6"
 
+# ── 二维码登录（siren-core）────────────────────────────────────
+qrcode = { version = "0.14", default-features = false }
+png = "0.17"
+
 # ── 音频（siren-core，运行时动态加载 libmpv）────────────────────
 libloading = "0.8"
 

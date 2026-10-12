@@ -3,6 +3,8 @@
 //! 对应 Melodia 的 `core/auth/`。当前落地 Cookie 登录与会话持久化；
 //! 扫码登录待后续补充。
 
+pub mod qr;
+
 use std::path::PathBuf;
 
 use crate::network::api;

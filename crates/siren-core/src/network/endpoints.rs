@@ -29,4 +29,8 @@ pub mod path {
     pub const PLAYLIST_DETAIL: &str = "/weapi/v6/playlist/detail";
     /// 用户歌单。
     pub const USER_PLAYLIST: &str = "/weapi/user/playlist";
+    /// 二维码登录：申请 unikey。
+    pub const QR_UNIKEY: &str = "/weapi/login/qrcode/unikey";
+    /// 二维码登录：轮询扫码状态。
+    pub const QR_CHECK: &str = "/weapi/login/qrcode/client/login";
 }

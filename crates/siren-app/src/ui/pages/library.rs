@@ -8,7 +8,7 @@ use std::sync::Arc;
 use gpui_kit::assets::IconName;
 use gpui_kit::base::StyledExt;
 use gpui_kit::component::button::{Button, ButtonVariants};
-use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::*;
 
 use siren_core::model::Playlist;
@@ -82,7 +82,7 @@ impl LibraryPage {
         cx.notify();
     }
 
-    fn refresh_account(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn refresh_account(&mut self, cx: &mut Context<Self>) {
         let client = self.services.client.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.services.handle.spawn(async move {
@@ -110,6 +110,7 @@ impl LibraryPage {
                         this.login_status = format!("已登录：{}", this.nickname).into();
                         eprintln!("[siren] 已登录：{} (uid={uid})", this.nickname);
                         cx.emit(PageEvent::Account {
+                            uid,
                             nickname: this.nickname.to_string(),
                             avatar_url: avatar,
                         });
@@ -216,109 +217,103 @@ impl LibraryPage {
 
 impl Render for LibraryPage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let content: AnyElement = if self.logged_in {
-            let playlists = self.my_playlists.clone();
-            let count = playlists.len();
-            let covers = self.services.covers.clone();
-            let weak = cx.weak_entity();
-            uniform_list("lib-playlists", count, move |range, _window, _cx| {
-                range
-                    .map(|i| {
-                        let pl = &playlists[i];
-                        let cover = covers.image(&pl.cover_url, 48.0);
-                        let weak = weak.clone();
-                        let id = pl.id;
-                        let name = pl.name.clone();
-                        div()
-                            .id(format!("lib-playlist-{id}"))
-                            .w_full()
-                            .h(px(56.0))
-                            .px(px(6.0))
-                            .flex()
-                            .items_center()
-                            .gap(px(12.0))
-                            .rounded(px(6.0))
-                            .hover(|s| s.bg(theme::card_surface()))
-                            .cursor_pointer()
-                            .on_click(move |_ev, _window, cx| {
-                                weak.update(cx, |_page, cx| {
-                                    cx.emit(PageEvent::OpenPlaylist { id, name: name.clone() });
-                                })
-                                .ok();
-                            })
-                            .child(cover)
-                            .child(
-                                div()
-                                    .v_flex()
-                                    .flex_1()
-                                    .min_w(px(0.0))
-                                    .overflow_hidden()
-                                    .child(
-                                        div()
-                                            .text_sm()
-                                            .text_color(theme::text_primary())
-                                            .truncate()
-                                            .child(pl.name.clone()),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(theme::text_gray())
-                                            .child(format!("{} 首", pl.track_count)),
-                                    ),
-                            )
-                            .into_any_element()
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .flex_1()
-            .w_full()
-            .min_w(px(0.0))
-            .into_any_element()
-        } else {
-            let weak = cx.weak_entity();
-            div()
-                .flex_1()
-                .w_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(
-                    div()
-                        .v_flex()
-                        .w_full()
-                        .gap(px(8.0))
-                        .p(px(12.0))
-                        .rounded(px(8.0))
-                        .bg(theme::card_surface())
-                        .child(
+        let content: AnyElement =
+            if self.logged_in {
+                let playlists = self.my_playlists.clone();
+                let count = playlists.len();
+                let covers = self.services.covers.clone();
+                let weak = cx.weak_entity();
+                uniform_list("lib-playlists", count, move |range, _window, _cx| {
+                    range
+                        .map(|i| {
+                            let pl = &playlists[i];
+                            let cover = covers.image(&pl.cover_url, 48.0);
+                            let weak = weak.clone();
+                            let id = pl.id;
+                            let name = pl.name.clone();
                             div()
-                                .text_sm()
-                                .font_weight(FontWeight::BOLD)
-                                .text_color(theme::text_primary())
-                                .child("登录后查看你的歌单"),
-                        )
-                        .child(Input::new(&self.login_input))
-                        .child(
-                            div()
+                                .id(format!("lib-playlist-{id}"))
+                                .w_full()
+                                .h(px(56.0))
+                                .px(px(6.0))
                                 .flex()
                                 .items_center()
-                                .gap(px(8.0))
-                                .child(Button::new("login").primary().label("登录").on_click(
-                                    move |_ev, _window, cx| {
-                                        weak.update(cx, |this, cx| this.do_login(cx)).ok();
-                                    },
-                                ))
+                                .gap(px(12.0))
+                                .rounded(px(6.0))
+                                .hover(|s| s.bg(theme::card_surface()))
+                                .cursor_pointer()
+                                .on_click(move |_ev, _window, cx| {
+                                    weak.update(cx, |_page, cx| {
+                                        cx.emit(PageEvent::OpenPlaylist { id, name: name.clone() });
+                                    })
+                                    .ok();
+                                })
+                                .child(cover)
                                 .child(
                                     div()
-                                        .text_xs()
-                                        .text_color(theme::text_gray())
-                                        .child(self.login_status.clone()),
-                                ),
-                        ),
-                )
+                                        .v_flex()
+                                        .flex_1()
+                                        .min_w(px(0.0))
+                                        .overflow_hidden()
+                                        .child(
+                                            div()
+                                                .text_sm()
+                                                .text_color(theme::text_primary())
+                                                .truncate()
+                                                .child(pl.name.clone()),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(theme::text_gray())
+                                                .child(format!("{} 首", pl.track_count)),
+                                        ),
+                                )
+                                .into_any_element()
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .flex_1()
+                .w_full()
+                .min_w(px(0.0))
                 .into_any_element()
-        };
+            } else {
+                let weak = cx.weak_entity();
+                div()
+                    .flex_1()
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        div()
+                            .v_flex()
+                            .w_full()
+                            .gap(px(8.0))
+                            .p(px(12.0))
+                            .rounded(px(8.0))
+                            .bg(theme::card_surface())
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(FontWeight::BOLD)
+                                    .text_color(theme::text_primary())
+                                    .child("登录后查看你的歌单"),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme::text_gray())
+                                    .child(self.login_status.clone()),
+                            )
+                            .child(Button::new("lib-login").primary().label("登录").on_click(
+                                move |_ev, _window, cx| {
+                                    weak.update(cx, |_page, cx| cx.emit(PageEvent::OpenLogin)).ok();
+                                },
+                            )),
+                    )
+                    .into_any_element()
+            };
 
         div()
             .v_flex()

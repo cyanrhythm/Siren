@@ -90,6 +90,23 @@ pub use windows::appmodel::set_app_user_model_id;
 #[cfg(not(target_os = "windows"))]
 pub fn set_app_user_model_id(_id: &str) {}
 
+/// 用系统默认程序打开 URL（如网页登录）。
+#[cfg(target_os = "windows")]
+pub fn open_url(url: &str) {
+    // `start` 的首个带引号参数会被当作窗口标题，故传入空标题占位。
+    let _ = std::process::Command::new("cmd").args(["/C", "start", "", url]).spawn();
+}
+#[cfg(target_os = "linux")]
+pub fn open_url(url: &str) {
+    let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+}
+#[cfg(target_os = "macos")]
+pub fn open_url(url: &str) {
+    let _ = std::process::Command::new("open").arg(url).spawn();
+}
+#[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+pub fn open_url(_url: &str) {}
+
 /// 编译期平台断言。
 ///
 /// 若目标平台不在支持列表内，此模块会触发编译错误，

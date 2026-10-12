@@ -10,9 +10,10 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::Input;
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
+use gpui_kit::component::Icon;
 use gpui_kit::*;
 
-use super::super::{icon, Root, Route};
+use super::super::{icon, PageEvent, Root, Route};
 use crate::theme;
 
 impl Root {
@@ -24,24 +25,27 @@ impl Root {
         let weak_account = weak.clone();
         let weak_search = weak;
 
-        // 账号按钮：登录后显示用户头像，未登录显示占位图标；点击弹出账号菜单。
+        // 账号按钮：已登录显示圆形头像，未登录显示人形占位（对齐 Melodia）。
         let covers = self.services.covers.clone();
         let account = self.account.clone();
         let trigger = match &account {
-            Some((_, url)) => Button::new("account")
-                .ghost()
-                .child(self.services.covers.image(url, 28.0)),
-            None => Button::new("account").ghost().icon(IconName::CircleUser),
+            Some((_, url, _)) => Button::new("account").ghost().child(
+                div()
+                    .size(px(28.0))
+                    .rounded_full()
+                    .overflow_hidden()
+                    .child(self.services.covers.image(url, 28.0)),
+            ),
+            None => Button::new("account").ghost().icon(IconName::User),
         };
-        let account_for_menu = account;
-        let covers_for_menu = covers;
         let account_button = trigger.dropdown_menu(move |menu, _window, _cx| {
             let mut menu = menu;
-            match &account_for_menu {
-                Some((nick, url)) => {
+            match &account {
+                Some((nick, url, uid)) => {
                     let nick_render = nick.clone();
                     let url_render = url.clone();
-                    let covers_render = covers_for_menu.clone();
+                    let covers_render = covers.clone();
+                    let uid = *uid;
                     menu = menu.item(PopupMenuItem::element(move |_w, _cx| {
                         div()
                             .flex()
@@ -49,7 +53,7 @@ impl Root {
                             .gap(px(8.0))
                             .px(px(8.0))
                             .py(px(4.0))
-                            .child(covers_render.image(&url_render, 36.0))
+                            .child(covers_render.image(&url_render, 32.0))
                             .child(
                                 div()
                                     .text_sm()
@@ -58,16 +62,55 @@ impl Root {
                             )
                     }));
                     menu = menu.separator();
+                    let weak = weak_account.clone();
+                    menu = menu.item(PopupMenuItem::new("个人主页").icon(Icon::new(IconName::User)).on_click(
+                        move |_ev, _window, cx| {
+                            weak.update(cx, |root, cx| root.on_page_event(&PageEvent::OpenProfile { uid }, cx))
+                                .ok();
+                        },
+                    ));
+                    let weak = weak_account.clone();
+                    menu = menu.item(
+                        PopupMenuItem::new("最近播放")
+                            .icon(Icon::new(IconName::Clock))
+                            .on_click(move |_ev, _window, cx| {
+                                weak.update(cx, |root, cx| root.on_page_event(&PageEvent::OpenRecentPlay, cx))
+                                    .ok();
+                            }),
+                    );
+                    let weak = weak_account.clone();
+                    menu = menu.item(PopupMenuItem::new("设置").icon(Icon::new(IconName::Settings)).on_click(
+                        move |_ev, _window, cx| {
+                            weak.update(cx, |root, cx| root.on_page_event(&PageEvent::OpenSettings, cx))
+                                .ok();
+                        },
+                    ));
+                    let weak = weak_account.clone();
+                    menu.item(
+                        PopupMenuItem::new("退出登录")
+                            .icon(Icon::new(IconName::LogOut))
+                            .on_click(move |_ev, _window, cx| {
+                                weak.update(cx, |root, cx| root.logout(cx)).ok();
+                            }),
+                    )
                 }
                 None => {
-                    menu = menu.label("未登录");
-                    menu = menu.separator();
+                    let weak = weak_account.clone();
+                    menu = menu.item(PopupMenuItem::new("登录").icon(Icon::new(IconName::LogIn)).on_click(
+                        move |_ev, _window, cx| {
+                            weak.update(cx, |root, cx| root.on_page_event(&PageEvent::OpenLogin, cx))
+                                .ok();
+                        },
+                    ));
+                    let weak = weak_account.clone();
+                    menu.item(PopupMenuItem::new("设置").icon(Icon::new(IconName::Settings)).on_click(
+                        move |_ev, _window, cx| {
+                            weak.update(cx, |root, cx| root.on_page_event(&PageEvent::OpenSettings, cx))
+                                .ok();
+                        },
+                    ))
                 }
             }
-            let weak = weak_account.clone();
-            menu.item(PopupMenuItem::new("退出登录").on_click(move |_ev, _window, cx| {
-                weak.update(cx, |root, cx| root.logout(cx)).ok();
-            }))
         });
 
         // 左：前进 / 后退
