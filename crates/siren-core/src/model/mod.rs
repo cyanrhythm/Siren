@@ -119,6 +119,8 @@ pub struct PlaylistDetail {
     pub track_ids: Vec<i64>,
     /// 当前用户是否已收藏。
     pub subscribed: bool,
+    /// 创建者 uid（用于判断是否本人创建）。
+    pub creator_id: i64,
     /// 创建者昵称。
     pub creator_nickname: String,
     /// 创建者头像。
@@ -346,6 +348,11 @@ pub fn parse_playlist_detail(value: &Value) -> Option<PlaylistDetail> {
         track_ids,
         subscribed: playlist.get("subscribed").and_then(Value::as_bool).unwrap_or(false),
         track_count: playlist.get("trackCount").and_then(Value::as_i64).unwrap_or_default(),
+        creator_id: playlist
+            .get("creator")
+            .and_then(|c| c.get("userId"))
+            .and_then(Value::as_i64)
+            .unwrap_or_default(),
         creator_nickname: playlist
             .get("creator")
             .and_then(|c| c.get("nickname"))

@@ -69,6 +69,8 @@ pub(crate) struct PlaylistPage {
     query_input: Entity<InputState>,
     query: String,
     sort: SortOrder,
+    /// 当前登录用户 uid（用于判断是否本人创建）。
+    my_uid: Option<i64>,
     /// 封面裁剪浮层状态。
     crop: Option<CropState>,
     _filter_sub: Subscription,
@@ -84,6 +86,7 @@ impl PlaylistPage {
         id: i64,
         name: String,
         query_input: Entity<InputState>,
+        my_uid: Option<i64>,
     ) -> Self {
         let _filter_sub = cx.subscribe(&query_input, |this: &mut PlaylistPage, _i, ev: &InputEvent, cx| {
             if let InputEvent::Change = ev {
@@ -101,6 +104,7 @@ impl PlaylistPage {
             query_input,
             query: String::new(),
             sort: SortOrder::Custom,
+            my_uid,
             crop: None,
             _filter_sub,
         };
@@ -455,6 +459,26 @@ impl PlaylistPage {
             .into_any_element()
     }
 
+    /// 是否本人创建（可编辑）。
+    fn owned(&self) -> bool {
+        match (&self.detail, self.my_uid) {
+            (Some(d), Some(uid)) => d.creator_id != 0 && d.creator_id == uid,
+            _ => false,
+        }
+    }
+
+    /// 移除歌单（非本人创建时=取消收藏）。
+    fn remove_playlist(&mut self, cx: &mut Context<Self>) {
+        let client = self.services.client.clone();
+        let id = self.id;
+        self.subscribed = false;
+        cx.notify();
+        cx.emit(PageEvent::PlaylistChanged);
+        self.services.handle.spawn(async move {
+            let _ = siren_core::network::api::playlist_subscribe(&client, id, false).await;
+        });
+    }
+
     /// 当前展示（过滤 + 排序后）的曲目。
     fn shown(&self) -> Vec<Song> {
         let Some(detail) = &self.detail else {
@@ -481,6 +505,7 @@ impl Render for PlaylistPage {
         let weak_back = cx.weak_entity();
         let weak_star = cx.weak_entity();
         let weak_menu = cx.weak_entity();
+        let owned = self.owned();
         let weak_play = cx.weak_entity();
         let weak_shuffle = cx.weak_entity();
         let weak_sort = cx.weak_entity();
@@ -520,22 +545,36 @@ impl Render for PlaylistPage {
                     .ghost()
                     .icon(IconName::Ellipsis)
                     .dropdown_menu(move |menu, _w, _cx| {
-                        let weak_edit = weak.clone();
-                        let weak_cover = weak.clone();
-                        let weak_del = weak.clone();
-                        menu.item(PopupMenuItem::new("编辑简介").on_click(move |_ev, _w, cx| {
-                            weak_edit
-                                .update(cx, |_p, cx| cx.emit(PageEvent::EditPlaylistDesc { id: pid }))
-                                .ok();
-                        }))
-                        .item(PopupMenuItem::new("更换封面").on_click(move |_ev, _w, cx| {
-                            weak_cover.update(cx, |page, cx| page.change_cover(cx)).ok();
-                        }))
-                        .item(PopupMenuItem::new("删除歌单").on_click(move |_ev, _w, cx| {
-                            weak_del
-                                .update(cx, |_p, cx| cx.emit(PageEvent::DeletePlaylist { id: pid }))
-                                .ok();
-                        }))
+                        if owned {
+                            let weak_edit = weak.clone();
+                            let weak_cover = weak.clone();
+                            let weak_rename = weak.clone();
+                            let weak_del = weak.clone();
+                            menu.item(PopupMenuItem::new("编辑简介").on_click(move |_ev, _w, cx| {
+                                weak_edit
+                                    .update(cx, |_p, cx| cx.emit(PageEvent::EditPlaylistDesc { id: pid }))
+                                    .ok();
+                            }))
+                            .item(PopupMenuItem::new("更换封面").on_click(move |_ev, _w, cx| {
+                                weak_cover.update(cx, |page, cx| page.change_cover(cx)).ok();
+                            }))
+                            .item(PopupMenuItem::new("重命名").on_click(move |_ev, _w, cx| {
+                                weak_rename
+                                    .update(cx, |_p, cx| cx.emit(PageEvent::RenamePlaylist { id: pid }))
+                                    .ok();
+                            }))
+                            .item(PopupMenuItem::new("删除歌单").on_click(move |_ev, _w, cx| {
+                                weak_del
+                                    .update(cx, |_p, cx| cx.emit(PageEvent::DeletePlaylist { id: pid }))
+                                    .ok();
+                            }))
+                        } else {
+                            // 非本人创建：只能移除（取消收藏），不能编辑
+                            let weak_rm = weak.clone();
+                            menu.item(PopupMenuItem::new("移除歌单").on_click(move |_ev, _w, cx| {
+                                weak_rm.update(cx, |page, cx| page.remove_playlist(cx)).ok();
+                            }))
+                        }
                     })
             });
 

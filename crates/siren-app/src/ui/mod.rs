@@ -473,7 +473,18 @@ impl Root {
     fn open_playlist(&mut self, id: i64, name: String, cx: &mut Context<Self>) {
         self.nav.push(Route::Playlist { id, name: name.clone() });
         let filter = self.pl_filter_input.clone();
-        let page = cx.new(|cx| PlaylistPage::new(cx, self.services.clone(), self.playback.clone(), id, name, filter));
+        let my_uid = self.account.as_ref().map(|(_, _, uid)| *uid);
+        let page = cx.new(|cx| {
+            PlaylistPage::new(
+                cx,
+                self.services.clone(),
+                self.playback.clone(),
+                id,
+                name,
+                filter,
+                my_uid,
+            )
+        });
         let sub = cx.subscribe(&page, |root: &mut Root, _e, ev: &PageEvent, cx| {
             root.on_page_event(ev, cx)
         });
