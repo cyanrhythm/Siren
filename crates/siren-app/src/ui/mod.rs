@@ -142,6 +142,9 @@ pub struct Root {
     now_playing_open: bool,
     /// 正在播放卡片顺序。
     np_cards: Vec<NpCard>,
+    /// 歌手专辑 / 相似歌手卡片的当前页码。
+    np_album_page: usize,
+    np_simi_page: usize,
     /// 登录后的账号信息（昵称、头像 URL、uid）；未登录为 None。
     account: Option<(SharedString, String, i64)>,
     /// 已为哪首歌预取过播放封面（避免重复预取）。
@@ -256,6 +259,8 @@ impl Root {
                     .iter()
                     .filter_map(|c| NpCard::from_code(c))
                     .collect(),
+                np_album_page: 0,
+                np_simi_page: 0,
                 account: None,
                 cover_song: None,
                 login_open: false,
@@ -317,7 +322,7 @@ impl Root {
             self.cover_song = id;
             if let Some(song) = &song {
                 self.services.covers.prefetch([song.cover_url.clone()], 56.0, cx);
-                self.services.covers.prefetch([song.cover_url.clone()], 220.0, cx);
+                self.services.covers.prefetch([song.cover_url.clone()], 280.0, cx);
             }
         }
         cx.notify();
@@ -408,7 +413,7 @@ impl Render for Root {
         let login_overlay = self.login_open.then(|| self.login_overlay(weak_login));
         let comments_overlay = self.comments_open.then(|| self.comments_overlay(weak_comments));
         // 中间列显式分配宽度，规避 gpui `flex_1` 的横向过度伸展
-        let np_w = if self.now_playing_open { 340.0 } else { 44.0 };
+        let np_w = if self.now_playing_open { 384.0 } else { 44.0 };
         let page_w = (vw - 300.0 - np_w - 32.0).max(240.0);
         div()
             .v_flex()

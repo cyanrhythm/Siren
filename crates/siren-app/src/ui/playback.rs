@@ -602,9 +602,9 @@ impl Playback {
                     let simi_covers: Vec<String> = simi.iter().map(|a| a.cover_url.clone()).collect();
                     let artist_cover: Vec<String> =
                         detail.as_ref().map(|d| vec![d.cover_url.clone()]).unwrap_or_default();
-                    this.covers.prefetch(album_covers, 48.0, cx);
-                    this.covers.prefetch(simi_covers, 48.0, cx);
-                    this.covers.prefetch(artist_cover, 96.0, cx);
+                    this.covers.prefetch(album_covers, 108.0, cx);
+                    this.covers.prefetch(simi_covers, 64.0, cx);
+                    this.covers.prefetch(artist_cover, 48.0, cx);
                     this.artist = detail;
                     this.artist_albums = albums;
                     this.similar_artists = simi;

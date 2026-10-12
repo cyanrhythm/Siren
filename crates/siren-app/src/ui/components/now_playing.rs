@@ -8,6 +8,7 @@ use gpui_kit::base::StyledExt;
 use gpui_kit::component::button::{Button, ButtonCustomVariant, ButtonVariants};
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_kit::component::Icon;
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use siren_core::model::{Song, SongWiki};
@@ -103,14 +104,26 @@ impl Root {
                     if albums.is_empty() {
                         None
                     } else {
-                        Some(artist_albums_card(&albums, &self.services.covers))
+                        let name = artist.as_ref().map(|a| a.name.clone()).unwrap_or_default();
+                        Some(artist_albums_card(
+                            &albums,
+                            &name,
+                            self.np_album_page,
+                            &self.services.covers,
+                            weak.clone(),
+                        ))
                     }
                 }
                 NpCard::SimilarArtists => {
                     if simi.is_empty() {
                         None
                     } else {
-                        Some(similar_artists_card(&simi, &self.services.covers))
+                        Some(similar_artists_card(
+                            &simi,
+                            self.np_simi_page,
+                            &self.services.covers,
+                            weak.clone(),
+                        ))
                     }
                 }
             };
@@ -121,8 +134,8 @@ impl Root {
 
         div()
             .v_flex()
-            .w(px(340.0))
-            .min_w(px(340.0))
+            .w(px(384.0))
+            .min_w(px(384.0))
             .h_full()
             .flex_none()
             .flex_shrink_0()
@@ -386,52 +399,180 @@ fn about_artist_card(
 /// 歌手专辑卡（横向列表）。
 fn artist_albums_card(
     albums: &[siren_core::model::ArtistAlbum],
+    artist_name: &str,
+    page: usize,
     covers: &super::super::covers::CoverLoader,
+    weak: WeakEntity<Root>,
 ) -> AnyElement {
+    const PER: usize = 3;
+    let pages = albums.len().div_ceil(PER).max(1);
+    let p = page.min(pages - 1);
+    let slice = &albums[(p * PER).min(albums.len())..((p + 1) * PER).min(albums.len())];
     let mut row = div().flex().gap(px(10.0)).w_full();
-    for album in albums.iter().take(6) {
+    for album in slice {
         row = row.child(
             div()
                 .v_flex()
-                .w(px(84.0))
-                .gap(px(4.0))
-                .child(covers.image(&album.cover_url, 84.0))
+                .w(px(108.0))
+                .gap(px(6.0))
+                .child(covers.image(&album.cover_url, 108.0))
                 .child(
                     div()
-                        .text_xs()
+                        .text_sm()
                         .text_color(theme::text_primary())
                         .truncate()
                         .child(album.name.clone()),
                 ),
         );
     }
-    info_card("歌手专辑", row.into_any_element())
+    let title = if artist_name.is_empty() {
+        "更多专辑".to_string()
+    } else {
+        format!("{artist_name}的更多专辑")
+    };
+    paged_card(
+        title,
+        p,
+        pages,
+        |root, cx| root.set_np_page(true, root.np_album_page.wrapping_sub(1), cx),
+        |root, cx| root.set_np_page(true, root.np_album_page + 1, cx),
+        row.into_any_element(),
+        weak,
+    )
 }
 
-/// 相似歌手卡（横向头像列表）。
+/// 相似歌手卡（横向分页，左右按钮切换）。
 fn similar_artists_card(
     artists: &[siren_core::model::Artist],
+    page: usize,
     covers: &super::super::covers::CoverLoader,
+    weak: WeakEntity<Root>,
 ) -> AnyElement {
+    const PER: usize = 4;
+    let pages = artists.len().div_ceil(PER).max(1);
+    let p = page.min(pages - 1);
+    let slice = &artists[(p * PER).min(artists.len())..((p + 1) * PER).min(artists.len())];
     let mut row = div().flex().gap(px(10.0)).w_full();
-    for artist in artists.iter().take(6) {
+    for artist in slice {
         row = row.child(
             div()
                 .v_flex()
-                .w(px(64.0))
+                .w(px(72.0))
                 .items_center()
-                .gap(px(4.0))
-                .child(covers.image_round(&artist.cover_url, 56.0))
+                .gap(px(6.0))
+                .child(covers.image_round(&artist.cover_url, 64.0))
                 .child(
                     div()
-                        .text_xs()
-                        .text_color(theme::text_gray())
+                        .w_full()
                         .truncate()
+                        .text_xs()
+                        .text_color(theme::text_primary())
                         .child(artist.name.clone()),
                 ),
         );
     }
-    info_card("相似歌手", row.into_any_element())
+    paged_card(
+        "探索类似艺人".to_string(),
+        p,
+        pages,
+        |root, cx| root.set_np_page(false, root.np_simi_page.wrapping_sub(1), cx),
+        |root, cx| root.set_np_page(false, root.np_simi_page + 1, cx),
+        row.into_any_element(),
+        weak,
+    )
+}
+
+/// 分页信息卡：标题 + 右侧左右翻页箭头 + 内容。
+fn paged_card(
+    title: String,
+    page: usize,
+    page_count: usize,
+    left_action: impl Fn(&mut Root, &mut Context<Root>) + 'static,
+    right_action: impl Fn(&mut Root, &mut Context<Root>) + 'static,
+    content: AnyElement,
+    weak: WeakEntity<Root>,
+) -> AnyElement {
+    let weak_left = weak.clone();
+    let weak_right = weak;
+    let header = div()
+        .w_full()
+        .flex()
+        .items_center()
+        .justify_between()
+        .child(
+            div()
+                .text_sm()
+                .font_weight(FontWeight::BOLD)
+                .text_color(theme::text_primary())
+                .child(title),
+        )
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(6.0))
+                .child(page_arrow(IconName::ChevronLeft, page > 0, left_action, weak_left))
+                .child(page_arrow(
+                    IconName::ChevronRight,
+                    page + 1 < page_count,
+                    right_action,
+                    weak_right,
+                )),
+        );
+    div()
+        .v_flex()
+        .w_full()
+        .gap(px(10.0))
+        .p(px(14.0))
+        .rounded(px(8.0))
+        .bg(theme::card_surface())
+        .child(header)
+        .child(content)
+        .into_any_element()
+}
+
+fn page_arrow(
+    name: IconName,
+    enabled: bool,
+    action: impl Fn(&mut Root, &mut Context<Root>) + 'static,
+    weak: WeakEntity<Root>,
+) -> AnyElement {
+    div()
+        .id(("np-arrow", name as usize))
+        .size(px(22.0))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_full()
+        .bg(theme::surface())
+        .when(enabled, |s| s.cursor_pointer())
+        .child(icon(
+            name,
+            14.0,
+            if enabled {
+                theme::text_primary()
+            } else {
+                theme::text_gray()
+            },
+        ))
+        .when(enabled, |s| {
+            s.on_click(move |_ev, _window, cx| {
+                weak.update(cx, |root, cx| action(root, cx)).ok();
+            })
+        })
+        .into_any_element()
+}
+
+impl Root {
+    /// 设置歌手专辑 / 相似歌手卡片页码。
+    pub(crate) fn set_np_page(&mut self, album: bool, page: usize, cx: &mut Context<Self>) {
+        if album {
+            self.np_album_page = page;
+        } else {
+            self.np_simi_page = page;
+        }
+        cx.notify();
+    }
 }
 
 fn short(text: &str, max: usize) -> String {
