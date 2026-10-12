@@ -89,6 +89,8 @@ pub struct Root {
     now_playing_open: bool,
     /// 登录后的账号信息（昵称、头像 URL、uid）；未登录为 None。
     account: Option<(SharedString, String, i64)>,
+    /// 已为哪首歌预取过播放封面（避免重复预取）。
+    cover_song: Option<i64>,
     // ── 登录弹窗状态 ───────────────────────────────────────────
     login_open: bool,
     login_tab: login_dialog::LoginTab,
@@ -156,6 +158,10 @@ impl Root {
                 }
             });
             subs.push(login_sub);
+            // 观察播放状态：切歌时预取封面，并驱动外壳（播放条/正在播放栏）重绘
+            subs.push(cx.observe(&playback, |root: &mut Root, playback, cx| {
+                root.on_playback(playback, cx)
+            }));
             Self {
                 _runtime: runtime,
                 services,
@@ -168,6 +174,7 @@ impl Root {
                 playlist_page: None,
                 now_playing_open: true,
                 account: None,
+                cover_song: None,
                 login_open: false,
                 login_tab: login_dialog::LoginTab::Scan,
                 login_gen: 0,
@@ -207,6 +214,20 @@ impl Root {
             PageEvent::OpenRecentPlay => self.navigate(Route::RecentPlay, cx),
             PageEvent::OpenSettings => self.navigate(Route::Settings, cx),
         }
+    }
+
+    /// 播放状态变化：切歌时预取其封面（播放条 56 / 正在播放栏 220），并重绘外壳。
+    fn on_playback(&mut self, playback: Entity<Playback>, cx: &mut Context<Self>) {
+        let song = playback.read(cx).state().song;
+        let id = song.as_ref().map(|s| s.id);
+        if id != self.cover_song {
+            self.cover_song = id;
+            if let Some(song) = &song {
+                self.services.covers.prefetch([song.cover_url.clone()], 56.0, cx);
+                self.services.covers.prefetch([song.cover_url.clone()], 220.0, cx);
+            }
+        }
+        cx.notify();
     }
 
     /// 更新标题栏账号区（登录成功 / 退出登录）。

@@ -15,6 +15,10 @@ impl Root {
                 Some(song) => (song.name.clone(), song.artists.clone()),
                 None => ("未在播放".to_string(), String::new()),
             };
+            let cover: AnyElement = match &state.song {
+                Some(song) => self.services.covers.image(&song.cover_url, 220.0),
+                None => cover_placeholder(220.0).into_any_element(),
+            };
             let weak_toggle = weak;
             div()
                 .v_flex()
@@ -32,7 +36,7 @@ impl Root {
                     IconName::ChevronRight,
                     weak_toggle,
                 )))
-                .child(div().w_full().flex().justify_center().child(cover_placeholder(220.0)))
+                .child(div().w_full().flex().justify_center().child(cover))
                 .child(
                     div()
                         .v_flex()

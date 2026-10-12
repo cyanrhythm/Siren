@@ -24,6 +24,10 @@ impl Root {
         let pos_label = fmt_time(state.position_ms);
         let dur_label = fmt_time(state.duration_ms);
         let progress_w = (vw - 210.0 - 300.0 - 240.0 - 64.0).max(160.0);
+        let cover: AnyElement = match &state.song {
+            Some(song) => self.services.covers.image(&song.cover_url, 56.0),
+            None => cover_placeholder(56.0).into_any_element(),
+        };
 
         let weak_play = weak.clone();
         let weak_prev = weak.clone();
@@ -46,7 +50,7 @@ impl Root {
                     .flex()
                     .items_center()
                     .gap(px(12.0))
-                    .child(cover_placeholder(56.0))
+                    .child(cover)
                     .child(
                         div()
                             .v_flex()
