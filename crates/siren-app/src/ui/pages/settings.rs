@@ -4,6 +4,7 @@
 
 use gpui_kit::assets::IconName;
 use gpui_kit::base::StyledExt;
+use gpui_kit::component::slider::Slider;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -57,6 +58,7 @@ impl Root {
                 quality_row(current, weak.clone()),
             ))
             .child(section("系统", "系统媒体控制（媒体键与系统播放卡片）", media_control))
+            .child(section("右侧栏", "正在播放栏宽度（300–800）", self.width_control()))
             .child(section(
                 "正在播放卡片",
                 "右侧面板卡片的顺序与显隐",
@@ -148,6 +150,23 @@ impl Root {
         let codes: Vec<String> = self.np_cards.iter().map(|c| c.code().to_string()).collect();
         siren_core::settings::save_card_layout(&codes);
         cx.notify();
+    }
+
+    /// 右侧栏宽度滑块。
+    fn width_control(&self) -> AnyElement {
+        div()
+            .w_full()
+            .flex()
+            .items_center()
+            .gap(px(12.0))
+            .child(div().w(px(240.0)).child(Slider::new(self.np_width_slider())))
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(theme::text_primary())
+                    .child(format!("{} px", self.np_width() as i32)),
+            )
+            .into_any_element()
     }
 }
 

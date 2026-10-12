@@ -21,7 +21,14 @@ struct Settings {
     media_keys: Option<bool>,
     /// 正在播放卡片顺序（代码列表，见 [`DEFAULT_CARDS`]）。
     cards: Option<Vec<String>>,
+    /// 右侧栏宽度（像素）。
+    np_width: Option<f32>,
 }
+
+/// 右侧栏宽度范围与默认值。
+pub const NP_WIDTH_MIN: f32 = 300.0;
+pub const NP_WIDTH_MAX: f32 = 800.0;
+pub const NP_WIDTH_DEFAULT: f32 = 384.0;
 
 /// 正在播放面板卡片的默认顺序。
 pub const DEFAULT_CARDS: [&str; 7] = [
@@ -48,6 +55,21 @@ pub fn load_card_layout() -> Vec<String> {
 pub fn save_card_layout(cards: &[String]) {
     let mut settings = read();
     settings.cards = Some(cards.to_vec());
+    write(&settings);
+}
+
+/// 读取右侧栏宽度（夹在 [`NP_WIDTH_MIN`]..[`NP_WIDTH_MAX`]，缺省 [`NP_WIDTH_DEFAULT`]）。
+pub fn load_np_width() -> f32 {
+    read()
+        .np_width
+        .unwrap_or(NP_WIDTH_DEFAULT)
+        .clamp(NP_WIDTH_MIN, NP_WIDTH_MAX)
+}
+
+/// 保存右侧栏宽度。
+pub fn save_np_width(width: f32) {
+    let mut settings = read();
+    settings.np_width = Some(width.clamp(NP_WIDTH_MIN, NP_WIDTH_MAX));
     write(&settings);
 }
 

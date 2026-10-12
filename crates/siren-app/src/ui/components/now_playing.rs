@@ -134,8 +134,8 @@ impl Root {
 
         div()
             .v_flex()
-            .w(px(384.0))
-            .min_w(px(384.0))
+            .w(px(400.0))
+            .min_w(px(400.0))
             .h_full()
             .flex_none()
             .flex_shrink_0()

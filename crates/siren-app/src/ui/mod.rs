@@ -17,6 +17,7 @@ use std::sync::Arc;
 use gpui_kit::assets::IconName;
 use gpui_kit::base::StyledExt;
 use gpui_kit::component::input::{InputEvent, InputState};
+use gpui_kit::component::slider::{SliderEvent, SliderState, SliderValue};
 use gpui_kit::component::Icon;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -140,6 +141,9 @@ pub struct Root {
     recent: Entity<RecentPage>,
     playlist_page: Option<Entity<PlaylistPage>>,
     now_playing_open: bool,
+    /// 右侧栏宽度（像素）。
+    np_width: f32,
+    np_width_slider: Entity<SliderState>,
     /// 正在播放卡片顺序。
     np_cards: Vec<NpCard>,
     /// 歌手专辑 / 相似歌手卡片的当前页码。
@@ -207,6 +211,15 @@ impl Root {
         // 登录弹窗 Cookie 输入（回车提交）
         let login_input = cx.new(|cx| InputState::new(window, cx).placeholder("粘贴 MUSIC_U 或完整 Cookie"));
 
+        let np_width = siren_core::settings::load_np_width();
+        let np_width_slider = cx.new(|_| {
+            SliderState::new()
+                .max(siren_core::settings::NP_WIDTH_MAX)
+                .min(siren_core::settings::NP_WIDTH_MIN)
+                .step(1.0)
+                .default_value(np_width)
+        });
+
         let initial_route = match std::env::var("SIREN_START").ok().as_deref() {
             Some("search") => Route::Search,
             Some("settings") => Route::Settings,
@@ -239,6 +252,13 @@ impl Root {
                 }
             });
             subs.push(login_sub);
+            subs.push(
+                cx.subscribe(&np_width_slider, |root: &mut Root, _slider, event: &SliderEvent, cx| {
+                    if let SliderEvent::Change(SliderValue::Single(f)) = event {
+                        root.set_np_width(*f, cx);
+                    }
+                }),
+            );
             // 观察播放状态：切歌时预取封面，并驱动外壳（播放条/正在播放栏）重绘
             subs.push(cx.observe(&playback, |root: &mut Root, playback, cx| {
                 root.on_playback(playback, cx)
@@ -255,6 +275,8 @@ impl Root {
                 recent,
                 playlist_page: None,
                 now_playing_open: true,
+                np_width,
+                np_width_slider,
                 np_cards: siren_core::settings::load_card_layout()
                     .iter()
                     .filter_map(|c| NpCard::from_code(c))
@@ -326,6 +348,27 @@ impl Root {
             }
         }
         cx.notify();
+    }
+
+    /// 设置右侧栏宽度（夹在 300..800）。
+    fn set_np_width(&mut self, width: f32, cx: &mut Context<Self>) {
+        let w = width.clamp(siren_core::settings::NP_WIDTH_MIN, siren_core::settings::NP_WIDTH_MAX);
+        if (w - self.np_width).abs() < 0.5 {
+            return;
+        }
+        self.np_width = w;
+        siren_core::settings::save_np_width(w);
+        cx.notify();
+    }
+
+    /// 设置右侧栏宽度（从设置页调用）。
+    pub(crate) fn np_width_slider(&self) -> &Entity<SliderState> {
+        &self.np_width_slider
+    }
+
+    /// 当前右侧栏宽度。
+    pub(crate) fn np_width(&self) -> f32 {
+        self.np_width
     }
 
     /// 更新标题栏账号区（登录成功 / 退出登录）。
@@ -413,7 +456,7 @@ impl Render for Root {
         let login_overlay = self.login_open.then(|| self.login_overlay(weak_login));
         let comments_overlay = self.comments_open.then(|| self.comments_overlay(weak_comments));
         // 中间列显式分配宽度，规避 gpui `flex_1` 的横向过度伸展
-        let np_w = if self.now_playing_open { 384.0 } else { 44.0 };
+        let np_w = if self.now_playing_open { 400.0 } else { 44.0 };
         let page_w = (vw - 300.0 - np_w - 32.0).max(240.0);
         div()
             .v_flex()
