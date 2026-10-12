@@ -18,7 +18,7 @@ Siren 是一个原生（native-first）的跨平台桌面音乐客户端，设�
 
 与 JVM/Compose 路线相比，本项目选择 Rust + 平台原生库的组合，以换取更小的体积、更低的启动与内存开销，以及对 Linux 桌面生态（XDG / MPRIS / StatusNotifierItem）更直接的支持。
 
-> 本项目的**架构设计与平台能力规格**继承自同作者的 Android/Compose 桌面端探索项目
+> 本项目的**架构设计与平台能力规格**继承自 rinchao0721 的 Android/Compose 桌面端探索项目
 > [Melodia](https://github.com/rinchao0721/Melodia)，并将其沉淀的经验用于 Rust 实现。
 
 ---
