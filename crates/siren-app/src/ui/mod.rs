@@ -52,6 +52,7 @@ pub struct Root {
     library: Entity<LibraryPage>,
     search: Entity<SearchPage>,
     playlist_page: Option<Entity<PlaylistPage>>,
+    now_playing_open: bool,
     _subs: Vec<Subscription>,
     _search_sub: Subscription,
 }
@@ -112,6 +113,7 @@ impl Root {
                 library,
                 search,
                 playlist_page: None,
+                now_playing_open: true,
                 _subs: subs,
                 _search_sub,
             }
@@ -156,6 +158,12 @@ impl Root {
         }
     }
 
+    /// 收起 / 展开正在播放栏。
+    fn toggle_now_playing(&mut self, cx: &mut Context<Self>) {
+        self.now_playing_open = !self.now_playing_open;
+        cx.notify();
+    }
+
     /// 标题栏搜索：回车 → 切到搜索页并以其关键字检索。
     fn submit_search(&mut self, cx: &mut Context<Self>) {
         let keyword = self.search_input.read(cx).value().trim().to_string();
@@ -186,7 +194,8 @@ impl Render for Root {
         let vw = f32::from(window.viewport_size().width);
         let weak = cx.weak_entity();
         // 中间列显式分配宽度，规避 gpui `flex_1` 的横向过度伸展
-        let page_w = (vw - 300.0 - 340.0 - 32.0).max(240.0);
+        let np_w = if self.now_playing_open { 340.0 } else { 44.0 };
+        let page_w = (vw - 300.0 - np_w - 32.0).max(240.0);
         div()
             .v_flex()
             .size_full()
@@ -218,7 +227,7 @@ impl Render for Root {
                             .overflow_hidden()
                             .child(self.page()),
                     )
-                    .child(self.now_playing(cx)),
+                    .child(self.now_playing(weak.clone(), cx)),
             )
             .child(self.player_bar(weak, vw, cx))
     }
