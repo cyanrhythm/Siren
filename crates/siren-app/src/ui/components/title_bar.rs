@@ -139,13 +139,21 @@ impl Root {
                             .rounded_full()
                             .bg(theme::surface())
                             .child(icon(IconName::CircleUser, 20.0, theme::text_gray())),
-                    ),
+                    )
+                    .child(window_button("win-min", IconName::Minus, false, |w, _cx| {
+                        w.minimize_window();
+                    }))
+                    .child(window_button("win-max", IconName::Square, false, |w, _cx| {
+                        w.zoom_window();
+                    }))
+                    .child(window_button("win-close", IconName::X, true, |w, _cx| {
+                        w.remove_window();
+                    })),
             )
     }
 }
 
-/// 窗口控制按钮：最小化 / 最大化 / 关闭（当前窗口用系统装饰，暂未启用自绘按钮）。
-#[allow(dead_code)]
+/// 窗口控制按钮：最小化 / 最大化 / 关闭。
 fn window_button(id: &'static str, name: IconName, close: bool, action: fn(&mut Window, &mut App)) -> impl IntoElement {
     let hover = if close { theme::accent() } else { theme::surface() };
     div()

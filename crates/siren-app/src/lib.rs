@@ -35,8 +35,10 @@ pub fn run() {
                         origin: point(px(ox), px(oy)),
                         size: size(px(w), px(h)),
                     })),
+                    // 无边框：Windows 后端据 appears_transparent 隐藏系统标题栏
                     titlebar: Some(TitlebarOptions {
                         title: Some("Siren".into()),
+                        appears_transparent: true,
                         ..Default::default()
                     }),
                     ..Default::default()
