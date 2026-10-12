@@ -31,6 +31,20 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      # gpui 在 Linux 上依赖 X11 / Wayland / xkbcommon / fontconfig 等系统库
+      - name: 安装 Linux 构建依赖
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config \
+            libxkbcommon-dev libxkbcommon-x11-dev \
+            libwayland-dev \
+            libx11-xcb-dev libxcb1-dev \
+            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libfontconfig1-dev libfreetype-dev \
+            libasound2-dev
+
       - name: 缓存依赖
         uses: Swatinem/rust-cache@v2
 
