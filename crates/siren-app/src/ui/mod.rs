@@ -75,14 +75,6 @@ pub(crate) enum PageEvent {
     OpenSettings,
 }
 
-/// 正在播放栏的标签页。
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum NpTab {
-    Song,
-    Lyrics,
-    Comments,
-}
-
 /// 主窗口根组件：导航与外壳。
 pub struct Root {
     _runtime: tokio::runtime::Runtime,
@@ -96,8 +88,6 @@ pub struct Root {
     recent: Entity<RecentPage>,
     playlist_page: Option<Entity<PlaylistPage>>,
     now_playing_open: bool,
-    /// 正在播放栏当前标签页。
-    np_tab: NpTab,
     /// 登录后的账号信息（昵称、头像 URL、uid）；未登录为 None。
     account: Option<(SharedString, String, i64)>,
     /// 已为哪首歌预取过播放封面（避免重复预取）。
@@ -194,7 +184,6 @@ impl Root {
                 recent,
                 playlist_page: None,
                 now_playing_open: true,
-                np_tab: NpTab::Song,
                 account: None,
                 cover_song: None,
                 login_open: false,
