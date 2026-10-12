@@ -27,11 +27,10 @@ use pages::{HomePage, LibraryPage, PlaylistPage, SearchPage};
 use playback::Playback;
 use services::Services;
 
-/// 当前页面。
+/// 当前页面（音乐库为常驻侧栏，不在此列）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Route {
     Home,
-    Library,
     Search,
     Playlist { id: i64, name: String },
 }
@@ -86,7 +85,6 @@ impl Root {
         });
 
         let initial_route = match std::env::var("SIREN_START").ok().as_deref() {
-            Some("library") => Route::Library,
             Some("search") => Route::Search,
             _ => Route::Home,
         };
@@ -173,7 +171,6 @@ impl Root {
     fn page(&self) -> AnyElement {
         match self.route() {
             Route::Home => self.home.clone().into_any_element(),
-            Route::Library => self.library.clone().into_any_element(),
             Route::Search => self.search.clone().into_any_element(),
             Route::Playlist { .. } => self
                 .playlist_page
@@ -189,7 +186,7 @@ impl Render for Root {
         let vw = f32::from(window.viewport_size().width);
         let weak = cx.weak_entity();
         // 中间列显式分配宽度，规避 gpui `flex_1` 的横向过度伸展
-        let page_w = (vw - 210.0 - 340.0 - 32.0).max(240.0);
+        let page_w = (vw - 300.0 - 340.0 - 32.0).max(240.0);
         div()
             .v_flex()
             .size_full()
@@ -203,7 +200,16 @@ impl Render for Root {
                     .gap(px(8.0))
                     .px(px(8.0))
                     .overflow_hidden()
-                    .child(self.sidebar(weak.clone(), cx))
+                    .child(
+                        div()
+                            .w(px(300.0))
+                            .min_w(px(300.0))
+                            .h_full()
+                            .flex_none()
+                            .flex_shrink_0()
+                            .overflow_hidden()
+                            .child(self.library.clone()),
+                    )
                     .child(
                         div()
                             .w(px(page_w))

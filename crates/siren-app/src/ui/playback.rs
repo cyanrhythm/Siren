@@ -116,10 +116,6 @@ impl Playback {
         self.player.state()
     }
 
-    pub(crate) fn status(&self) -> &SharedString {
-        &self.status
-    }
-
     pub(crate) fn progress_slider(&self) -> &Entity<SliderState> {
         &self.progress_slider
     }

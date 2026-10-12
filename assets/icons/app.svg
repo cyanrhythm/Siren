@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <clipPath id="sq">
+      <rect width="1024" height="1024" rx="224"/>
+    </clipPath>
+
+    <radialGradient id="glow">
+      <stop offset="0"   stop-color="#26E6F0" stop-opacity=".45"/>
+      <stop offset=".32" stop-color="#26E6F0" stop-opacity=".16"/>
+      <stop offset=".68" stop-color="#26E6F0" stop-opacity=".04"/>
+      <stop offset="1"   stop-color="#26E6F0" stop-opacity="0"/>
+    </radialGradient>
+
+    <linearGradient id="bar" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#26E6F0" stop-opacity=".85"/>
+      <stop offset="1" stop-color="#26E6F0" stop-opacity=".18"/>
+    </linearGradient>
+
+    <linearGradient id="spec" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0"   stop-color="#FFF" stop-opacity=".055"/>
+      <stop offset=".35" stop-color="#FFF" stop-opacity=".015"/>
+      <stop offset=".65" stop-color="#000" stop-opacity=".015"/>
+      <stop offset="1"   stop-color="#000" stop-opacity=".10"/>
+    </linearGradient>
+  </defs>
+
+  <g clip-path="url(#sq)">
+    <!-- tile body -->
+    <rect width="1024" height="1024" fill="#04060B"/>
+    <!-- inner stage -->
+    <rect x="80" y="80" width="864" height="864" rx="152" fill="#0A121C"/>
+
+    <!-- ===== Siren mark · tilted −10° ===== -->
+    <g transform="rotate(-10 512 512)">
+
+      <!-- baseline -->
+      <line x1="10" y1="642" x2="1090" y2="642"
+            stroke="#26E6F0" stroke-width="3" stroke-opacity=".12"
+            stroke-linecap="round"/>
+
+      <!-- 7 pulse bars · bell-curve heights -->
+      <rect x="270" y="594" width="28" height="48"  rx="3" fill="url(#bar)" opacity=".30"/>
+      <rect x="346" y="546" width="28" height="96"  rx="3" fill="url(#bar)" opacity=".50"/>
+      <rect x="422" y="466" width="28" height="176" rx="3" fill="url(#bar)" opacity=".65"/>
+      <rect x="498" y="362" width="28" height="280" rx="3" fill="url(#bar)" opacity=".85"/>
+      <rect x="574" y="466" width="28" height="176" rx="3" fill="url(#bar)" opacity=".65"/>
+      <rect x="650" y="546" width="28" height="96"  rx="3" fill="url(#bar)" opacity=".50"/>
+      <rect x="726" y="594" width="28" height="48"  rx="3" fill="url(#bar)" opacity=".30"/>
+
+      <!-- the siren curve · one continuous sweep -->
+      <path d="M-40 780 C120 780 320 362 512 362 C704 362 960 770 1280 810"
+            fill="none" stroke="#26E6F0" stroke-width="12"
+            stroke-linecap="round" stroke-linejoin="round"/>
+
+      <!-- apex node -->
+      <circle cx="512" cy="362" r="80" fill="url(#glow)"/>
+      <circle cx="512" cy="362" r="38" fill="none" stroke="#26E6F0"
+              stroke-width="2" stroke-opacity=".07"/>
+      <circle cx="512" cy="362" r="28" fill="none" stroke="#26E6F0"
+              stroke-width="2" stroke-opacity=".15"/>
+      <circle cx="512" cy="362" r="20" fill="none" stroke="#26E6F0"
+              stroke-width="2" stroke-opacity=".25"/>
+      <circle cx="512" cy="362" r="16" fill="#EAF4FF"/>
+    </g>
+
+    <!-- specular overlay -->
+    <rect width="1024" height="1024" fill="url(#spec)"/>
+  </g>
+</svg>
