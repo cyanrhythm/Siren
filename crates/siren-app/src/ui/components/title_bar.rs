@@ -20,19 +20,14 @@ impl Root {
         let middle_w = (vw - 80.0 - 216.0 - 24.0).max(300.0);
 
         div()
+            .id("title-bar")
+            // 拖动区：Windows 走 WM_NCHITTEST→HTCAPTION；双击由 OS 处理最大化
+            .window_control_area(WindowControlArea::Drag)
             .w_full()
             .h(px(64.0))
             .flex()
             .items_center()
             .px(px(12.0))
-            // 拖动区：按住标题栏空白处移动窗口；双击最大化/还原
-            .on_mouse_down(MouseButton::Left, |ev, window, _cx| {
-                if ev.click_count == 2 {
-                    window.titlebar_double_click();
-                } else {
-                    window.start_window_move();
-                }
-            })
             // 左：前进 / 后退
             .child(
                 div()
@@ -140,24 +135,19 @@ impl Root {
                             .bg(theme::surface())
                             .child(icon(IconName::CircleUser, 20.0, theme::text_gray())),
                     )
-                    .child(window_button("win-min", IconName::Minus, false, |w, _cx| {
-                        w.minimize_window();
-                    }))
-                    .child(window_button("win-max", IconName::Square, false, |w, _cx| {
-                        w.zoom_window();
-                    }))
-                    .child(window_button("win-close", IconName::X, true, |w, _cx| {
-                        w.remove_window();
-                    })),
+                    .child(window_button("win-min", IconName::Minus, false, WindowControlArea::Min))
+                    .child(window_button("win-max", IconName::Square, false, WindowControlArea::Max))
+                    .child(window_button("win-close", IconName::X, true, WindowControlArea::Close)),
             )
     }
 }
 
 /// 窗口控制按钮：最小化 / 最大化 / 关闭。
-fn window_button(id: &'static str, name: IconName, close: bool, action: fn(&mut Window, &mut App)) -> impl IntoElement {
+fn window_button(id: &'static str, name: IconName, close: bool, area: WindowControlArea) -> impl IntoElement {
     let hover = if close { theme::accent() } else { theme::surface() };
     div()
         .id(id)
+        .window_control_area(area)
         .w(px(46.0))
         .h(px(64.0))
         .flex()
@@ -165,6 +155,5 @@ fn window_button(id: &'static str, name: IconName, close: bool, action: fn(&mut 
         .justify_center()
         .cursor_pointer()
         .hover(move |s| s.bg(hover))
-        .on_click(move |_ev, window, cx| action(window, cx))
         .child(icon(name, 16.0, theme::text_primary()))
 }
