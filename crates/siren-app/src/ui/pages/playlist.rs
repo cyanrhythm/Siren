@@ -58,7 +58,7 @@ impl Root {
                                     weak.update(cx, |this, cx| {
                                         let items =
                                             this.playlist.as_ref().map(|d| d.tracks.clone()).unwrap_or_default();
-                                        this.play_from(items, i, cx);
+                                        this.playback.update(cx, |pb, cx| pb.play_from(items, i, cx));
                                     })
                                     .ok();
                                 })

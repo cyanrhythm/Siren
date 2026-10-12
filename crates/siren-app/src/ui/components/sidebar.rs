@@ -8,7 +8,7 @@ use super::super::{icon, Root, Route};
 use crate::theme;
 
 impl Root {
-    pub(crate) fn sidebar(&self, weak: WeakEntity<Self>) -> impl IntoElement {
+    pub(crate) fn sidebar(&self, weak: WeakEntity<Self>, cx: &App) -> impl IntoElement {
         let current = self.route();
         let nav_item =
             |id: &'static str, icon_name: IconName, label: &'static str, route: Route, weak: WeakEntity<Self>| {
@@ -86,7 +86,7 @@ impl Root {
                     .px(px(8.0))
                     .text_xs()
                     .text_color(theme::text_gray())
-                    .child(self.status.clone()),
+                    .child(self.playback.read(cx).status().clone()),
             )
     }
 }

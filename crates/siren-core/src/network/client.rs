@@ -8,16 +8,17 @@
 
 use reqwest::Client;
 use serde_json::Value;
+use std::sync::{Arc, RwLock};
 
 use crate::crypto;
 use crate::error::Result;
 use crate::network::{endpoints, interceptor};
 
-/// 网易云客户端。`cookie` 为登录态（含 `MUSIC_U` 等）。
+/// 网易云客户端。`cookie` 为登录态（含 `MUSIC_U` 等），可在多份共享引用间更新。
 #[derive(Debug, Clone)]
 pub struct NeteaseClient {
     http: Client,
-    pub cookie: Option<String>,
+    cookie: Arc<RwLock<Option<String>>>,
     /// 真实 IP 伪装（对齐设置项 `useRealIp`）。
     pub real_ip: Option<String>,
 }
@@ -32,19 +33,35 @@ impl NeteaseClient {
     pub fn new() -> Self {
         Self {
             http: Client::new(),
-            cookie: None,
+            cookie: Arc::new(RwLock::new(None)),
             real_ip: None,
         }
     }
 
     /// 构造带登录态的客户端。
     pub fn with_cookie(cookie: Option<String>) -> Self {
-        Self { cookie, ..Self::new() }
+        Self {
+            cookie: Arc::new(RwLock::new(cookie)),
+            ..Self::new()
+        }
+    }
+
+    /// 写入登录态（对共享的克隆可见）。
+    pub fn set_cookie(&self, cookie: Option<String>) {
+        if let Ok(mut guard) = self.cookie.write() {
+            *guard = cookie;
+        }
+    }
+
+    /// 读取登录态。
+    pub fn cookie(&self) -> Option<String> {
+        self.cookie.read().ok().and_then(|guard| guard.clone())
     }
 
     /// WEAPI POST：加密后以表单提交，返回解析后的 JSON。
     pub async fn weapi_post(&self, path: &str, body: &Value) -> Result<Value> {
-        let text = interceptor::weapi_payload(body, self.cookie.as_deref());
+        let cookie = self.cookie();
+        let text = interceptor::weapi_payload(body, cookie.as_deref());
         let encrypted = crypto::weapi(&text);
 
         let url = format!("{}{path}", endpoints::WEB_BASE_URL);
@@ -53,7 +70,7 @@ impl NeteaseClient {
             .post(url)
             .header("User-Agent", interceptor::PC_USER_AGENT)
             .header("Referer", endpoints::WEB_BASE_URL)
-            .header("Cookie", interceptor::weapi_cookie(self.cookie.as_deref()));
+            .header("Cookie", interceptor::weapi_cookie(cookie.as_deref()));
         if let Some(ip) = &self.real_ip {
             request = request.header("X-Real-IP", ip).header("X-Forwarded-For", ip);
         }
@@ -79,7 +96,7 @@ impl NeteaseClient {
             .http
             .post(url)
             .header("User-Agent", crate::network::device::eapi_user_agent())
-            .header("Cookie", interceptor::eapi_cookie(self.cookie.as_deref()))
+            .header("Cookie", interceptor::eapi_cookie(self.cookie().as_deref()))
             .form(&[("params", params.as_str())])
             .send()
             .await?;

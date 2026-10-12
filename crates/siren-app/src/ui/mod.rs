@@ -1,39 +1,35 @@
 //! GPUI 界面。
 //!
-//! 多页面骨架：侧栏导航 + 首页（推荐歌单）/ 音乐库 / 搜索 / 歌单详情 + 播放条，
-//! 串起 `siren-core` 的异步网络层与 [`siren_core::player::Player`]。
+//! 多页面骨架：侧栏导航 + 首页（推荐歌单）/ 音乐库 / 搜索 / 歌单详情 + 播放条。
 //!
-//! ## 模块组织（按能力）
+//! ## 模块组织
 //!
 //! - [`pages`]：页面级视图（首页、音乐库、搜索、歌单详情）
 //! - [`components`]：可复用组件（侧栏、播放条）
 //! - [`covers`]：封面加载器
+//! - [`playback`]：共享播放服务（`Entity<Playback>`）
 //!
-//! 视图方法以 `impl Root` 分文件承载，状态集中在 [`Root`]。
+//! `Root` 只负责导航、页面数据与外壳编排；播放逻辑集中在 [`Playback`]。
 
 pub mod components;
 pub mod covers;
 pub mod pages;
+mod playback;
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::base::StyledExt;
 use gpui_kit::component::input::{InputEvent, InputState};
-use gpui_kit::component::slider::{SliderEvent, SliderState, SliderValue};
 use gpui_kit::component::Icon;
 use gpui_kit::*;
 
 use siren_core::model::{Playlist, PlaylistDetail, Song};
 use siren_core::network::client::NeteaseClient;
-use siren_core::player::{Mpv, PlayMode, PlaybackController, PlaybackState, Player, SilentEngine};
-use siren_platform::{
-    MediaCommand, MediaMetadata, MediaSession, MediaSessionConfig, PlatformMediaSession, PlaybackStatus,
-};
 
 use crate::theme;
 use covers::CoverLoader;
+use playback::Playback;
 
 /// 当前页面。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,11 +40,12 @@ enum Route {
     Playlist { id: i64, name: String },
 }
 
-/// 主窗口根组件。
+/// 主窗口根组件：导航、页面数据与外壳。
 pub struct Root {
     runtime: tokio::runtime::Runtime,
     client: Arc<NeteaseClient>,
-    player: Player,
+    covers: CoverLoader,
+    playback: Entity<Playback>,
     nav: Vec<Route>,
 
     // 首页/音乐库
@@ -72,19 +69,7 @@ pub struct Root {
     my_playlists: Arc<Vec<Playlist>>,
     uid: Option<i64>,
 
-    // 播放
-    status: SharedString,
-    mirrored: PlaybackState,
-    seeking: bool,
-    progress_slider: Entity<SliderState>,
-    volume_slider: Entity<SliderState>,
-    covers: CoverLoader,
-    media: Option<PlatformMediaSession>,
-    media_cmds: std::sync::mpsc::Receiver<MediaCommand>,
-
     _search_sub: Subscription,
-    _progress_sub: Subscription,
-    _volume_sub: Subscription,
     _login_sub: Subscription,
 }
 
@@ -99,34 +84,7 @@ impl Root {
         let has_cookie = cookie.is_some();
         let client = Arc::new(NeteaseClient::with_cookie(cookie));
         let covers = CoverLoader::new(client.clone(), runtime.handle().clone());
-        let engine: Arc<dyn PlaybackController> = match Mpv::load(&siren_platform::mpv_library_candidates()) {
-            Ok(mpv) => Arc::new(mpv),
-            Err(_) => Arc::new(SilentEngine),
-        };
-        let player = Player::new(engine);
-
-        // 系统媒体控制：从 GPUI 窗口取原生句柄（Windows SMTC 需要）。
-        let hwnd = siren_platform::window_hwnd(window);
-        let (cmd_tx, cmd_rx) = std::sync::mpsc::channel::<MediaCommand>();
-        let cmd_tx = std::sync::Mutex::new(cmd_tx);
-        let media = PlatformMediaSession::new(
-            MediaSessionConfig {
-                identity: "Siren".to_string(),
-                desktop_entry: Some("com.cyanrhythm.Siren".to_string()),
-                app_media_id: Some("com.cyanrhythm.Siren".to_string()),
-                track_id_prefix: Some("/com/cyanrhythm/Siren/track".to_string()),
-                hwnd,
-            },
-            Box::new(move |cmd| {
-                if let Ok(tx) = cmd_tx.lock() {
-                    let _ = tx.send(cmd);
-                }
-            }),
-        )
-        .ok();
-        if media.is_some() {
-            eprintln!("[siren] 系统媒体控制已启用");
-        }
+        let playback = Playback::new(window, cx, client.clone(), runtime.handle().clone());
 
         let initial_route = match std::env::var("SIREN_START").ok().as_deref() {
             Some("library") => Route::Library,
@@ -153,35 +111,11 @@ impl Root {
                 }
             });
 
-            let progress_slider = cx.new(|_| SliderState::new().min(0.0).max(1.0).step(0.001).default_value(0.0));
-            let _progress_sub =
-                cx.subscribe(
-                    &progress_slider,
-                    |this: &mut Root, _slider, event: &SliderEvent, cx| match event {
-                        SliderEvent::Change(SliderValue::Single(f)) => {
-                            this.seeking = true;
-                            this.seek_fraction(*f, cx);
-                        }
-                        SliderEvent::Release(SliderValue::Single(f)) => {
-                            this.seek_fraction(*f, cx);
-                            this.seeking = false;
-                        }
-                        _ => {}
-                    },
-                );
-
-            let volume_slider = cx.new(|_| SliderState::new().min(0.0).max(1.0).step(0.01).default_value(0.8));
-            let _volume_sub = cx.subscribe(&volume_slider, |this: &mut Root, _slider, event: &SliderEvent, cx| {
-                if let SliderEvent::Change(SliderValue::Single(f)) = event {
-                    this.player.set_volume(*f as f64 * 100.0);
-                    cx.notify();
-                }
-            });
-
             Self {
                 runtime,
                 client,
-                player,
+                covers,
+                playback,
                 nav: vec![initial_route],
                 playlists: Arc::new(Vec::new()),
                 playlists_status: "加载中…".into(),
@@ -200,23 +134,12 @@ impl Root {
                 },
                 my_playlists: Arc::new(Vec::new()),
                 uid: None,
-                status: "就绪".into(),
-                mirrored: PlaybackState::default(),
-                seeking: false,
-                progress_slider,
-                volume_slider,
-                covers,
-                media,
-                media_cmds: cmd_rx,
                 _search_sub,
-                _progress_sub,
-                _volume_sub,
                 _login_sub,
             }
         });
 
         entity.update(cx, |this, cx| {
-            this.start_tick_timer(window, cx);
             this.load_playlists(cx);
             if has_cookie {
                 this.refresh_account(cx);
@@ -246,40 +169,6 @@ impl Root {
             self.nav.pop();
             cx.notify();
         }
-    }
-
-    fn start_tick_timer(&mut self, window: &Window, cx: &mut Context<Self>) {
-        cx.spawn_in(window, async move |this, cx| loop {
-            cx.background_executor().timer(Duration::from_millis(500)).await;
-            if this.update_in(cx, |this, window, cx| this.tick(window, cx)).is_err() {
-                break;
-            }
-        })
-        .detach();
-    }
-
-    fn tick(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(song) = self.player.tick() {
-            self.resolve_and_play(song, cx);
-        }
-        let state = self.player.state();
-        if !self.seeking {
-            let frac = if state.duration_ms > 0 {
-                state.position_ms as f32 / state.duration_ms as f32
-            } else {
-                0.0
-            };
-            self.progress_slider
-                .update(cx, |s, cx| s.set_value(frac.clamp(0.0, 1.0), window, cx));
-        }
-        if state != self.mirrored {
-            self.mirrored = state;
-            cx.notify();
-        }
-        while let Ok(command) = self.media_cmds.try_recv() {
-            self.apply_media_command(command, cx);
-        }
-        self.push_media_state();
     }
 
     // ---------- 数据加载 ----------
@@ -315,7 +204,8 @@ impl Root {
             return;
         };
         siren_core::auth::save_cookie(&cookie);
-        self.client = Arc::new(NeteaseClient::with_cookie(Some(cookie)));
+        // 共享客户端：Playback 与封面加载器持有同一份引用，登录态即时生效。
+        self.client.set_cookie(Some(cookie));
         self.login_status = "登录校验中…".into();
         cx.notify();
         self.refresh_account(cx);
@@ -437,134 +327,6 @@ impl Root {
         .detach();
     }
 
-    /// 用给定的歌曲列表建立队列并播放指定下标。
-    fn play_from(&mut self, items: Vec<Song>, index: usize, cx: &mut Context<Self>) {
-        self.selected = Some(index);
-        if let Some(song) = self.player.set_queue(items) {
-            let target = if index == 0 {
-                song
-            } else if let Some(s) = self.player.play_at(index) {
-                s
-            } else {
-                song
-            };
-            self.resolve_and_play(target, cx);
-        }
-    }
-
-    fn resolve_and_play(&mut self, song: Song, cx: &mut Context<Self>) {
-        let client = self.client.clone();
-        let id = song.id;
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        self.runtime.handle().spawn(async move {
-            let url = match siren_core::network::api::song_url_eapi(&client, id, "exhigh")
-                .await
-                .ok()
-                .flatten()
-            {
-                Some(url) => Some(url),
-                None => siren_core::network::api::song_url(&client, id).await.ok().flatten(),
-            };
-            let _ = tx.send(url);
-        });
-
-        self.status = format!("解析播放地址：{}", song.name).into();
-        cx.notify();
-        cx.spawn(async move |this, cx| {
-            let url = rx.await.ok().flatten();
-            this.update(cx, |this, cx| {
-                match url {
-                    Some(url) => {
-                        this.player.play_url(&url);
-                        this.status = format!("播放中：{}", song.name).into();
-                    }
-                    None => this.status = "无可用播放地址（需登录/会员）".into(),
-                }
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
-    }
-
-    fn seek_fraction(&mut self, fraction: f32, cx: &mut Context<Self>) {
-        let state = self.player.state();
-        if state.duration_ms <= 0 {
-            return;
-        }
-        let ms = (fraction.clamp(0.0, 1.0) as f64 * state.duration_ms as f64) as i64;
-        self.player.seek_ms(ms);
-        cx.notify();
-    }
-
-    fn next_track(&mut self, cx: &mut Context<Self>) {
-        if let Some(song) = self.player.next_track() {
-            self.resolve_and_play(song, cx);
-        }
-    }
-
-    fn apply_media_command(&mut self, command: MediaCommand, cx: &mut Context<Self>) {
-        match command {
-            MediaCommand::Play => self.player.play(),
-            MediaCommand::Pause | MediaCommand::Stop => self.player.pause(),
-            MediaCommand::Toggle => self.player.toggle(),
-            MediaCommand::Next => {
-                self.next_track(cx);
-                return;
-            }
-            MediaCommand::Previous => {
-                if let Some(song) = self.player.previous_track() {
-                    self.resolve_and_play(song, cx);
-                }
-                return;
-            }
-            MediaCommand::SeekTo(ms) => self.player.seek_ms(ms as i64),
-            MediaCommand::SeekBy(delta) => {
-                let target = self.player.state().position_ms + delta;
-                self.player.seek_ms(target);
-            }
-            MediaCommand::SetVolume(v) => self.player.set_volume(v * 100.0),
-            MediaCommand::SetShuffle(on) => {
-                if on {
-                    self.player.set_mode(PlayMode::Shuffle);
-                }
-            }
-            MediaCommand::SetRepeat(one) => {
-                self.player
-                    .set_mode(if one { PlayMode::SingleLoop } else { PlayMode::ListLoop });
-            }
-        }
-        cx.notify();
-    }
-
-    fn push_media_state(&self) {
-        let Some(media) = &self.media else {
-            return;
-        };
-        let state = self.player.state();
-        let metadata = match &state.song {
-            Some(song) => MediaMetadata {
-                id: song.id.to_string(),
-                title: song.name.clone(),
-                artists: vec![song.artists.clone()],
-                album: song.album.clone(),
-                artwork_url: None,
-                url: None,
-                duration_ms: (state.duration_ms > 0).then_some(state.duration_ms as u64),
-            },
-            None => MediaMetadata::default(),
-        };
-        let status = if state.playing {
-            PlaybackStatus::Playing
-        } else {
-            PlaybackStatus::Paused
-        };
-        media.set_metadata(&metadata);
-        media.set_playback_status(status);
-        media.set_timeline(state.position_ms.max(0) as u64, state.duration_ms.max(0) as u64);
-        media.set_mode(state.mode);
-    }
-
     // ---------- 渲染 ----------
 
     fn page(&self, weak: WeakEntity<Self>) -> impl IntoElement {
@@ -591,10 +353,10 @@ impl Render for Root {
                     .w_full()
                     .flex()
                     .overflow_hidden()
-                    .child(self.sidebar(weak.clone()))
+                    .child(self.sidebar(weak.clone(), cx))
                     .child(self.page(weak.clone())),
             )
-            .child(self.player_bar(weak, vw))
+            .child(self.player_bar(weak, vw, cx))
     }
 }
 

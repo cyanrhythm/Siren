@@ -34,7 +34,7 @@ impl Root {
                         .on_click(move |_ev, _window, cx| {
                             weak.update(cx, |this, cx| {
                                 let items = this.songs.as_ref().clone();
-                                this.play_from(items, i, cx);
+                                this.playback.update(cx, |pb, cx| pb.play_from(items, i, cx));
                             })
                             .ok();
                         })

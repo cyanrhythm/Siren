@@ -9,8 +9,9 @@ use super::super::{cover_placeholder, fmt_time, icon, Root};
 use crate::theme;
 
 impl Root {
-    pub(crate) fn player_bar(&self, weak: WeakEntity<Self>, vw: f32) -> impl IntoElement {
-        let state = self.player.state();
+    pub(crate) fn player_bar(&self, weak: WeakEntity<Self>, vw: f32, cx: &App) -> impl IntoElement {
+        let pb = self.playback.read(cx);
+        let state = pb.state();
         let playing = state.playing;
         let title = state
             .song
@@ -81,8 +82,7 @@ impl Root {
                                     .on_click(move |_ev, _window, cx| {
                                         weak_play
                                             .update(cx, |this, cx| {
-                                                this.player.toggle();
-                                                cx.notify();
+                                                this.playback.update(cx, |pb, cx| pb.toggle(cx));
                                             })
                                             .ok();
                                     })
@@ -97,7 +97,11 @@ impl Root {
                                     .id("next")
                                     .cursor_pointer()
                                     .on_click(move |_ev, _window, cx| {
-                                        weak_next.update(cx, |this, cx| this.next_track(cx)).ok();
+                                        weak_next
+                                            .update(cx, |this, cx| {
+                                                this.playback.update(cx, |pb, cx| pb.next_track(cx));
+                                            })
+                                            .ok();
                                     })
                                     .child(icon(IconName::SkipForward, 22.0, theme::text_primary())),
                             ),
@@ -115,7 +119,7 @@ impl Root {
                                     .text_color(theme::text_gray())
                                     .child(pos_label),
                             )
-                            .child(div().w(px(progress_w)).child(Slider::new(&self.progress_slider)))
+                            .child(div().w(px(progress_w)).child(Slider::new(pb.progress_slider())))
                             .child(
                                 div()
                                     .w(px(40.0))
@@ -134,7 +138,7 @@ impl Root {
                     .justify_end()
                     .gap(px(8.0))
                     .child(icon(IconName::Volume2, 18.0, theme::text_gray()))
-                    .child(div().w(px(120.0)).child(Slider::new(&self.volume_slider))),
+                    .child(div().w(px(120.0)).child(Slider::new(pb.volume_slider()))),
             )
     }
 }
