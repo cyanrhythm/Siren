@@ -31,10 +31,10 @@ impl Root {
         let trigger = match &account {
             Some((_, url, _)) => Button::new("account").ghost().child(
                 div()
-                    .size(px(28.0))
+                    .size(px(32.0))
                     .rounded_full()
                     .overflow_hidden()
-                    .child(self.services.covers.image(url, 28.0)),
+                    .child(self.services.covers.image(url, 32.0)),
             ),
             None => Button::new("account").ghost().icon(IconName::User),
         };

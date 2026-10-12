@@ -212,7 +212,7 @@ impl Root {
     /// 更新标题栏账号区（登录成功 / 退出登录）。
     fn set_account(&mut self, account: Option<(i64, String, String)>, cx: &mut Context<Self>) {
         if let Some((_, _, url)) = &account {
-            self.services.covers.prefetch([url.clone()], 36.0, cx);
+            self.services.covers.prefetch([url.clone()], 32.0, cx);
         }
         self.account = account.map(|(uid, nick, url)| (nick.into(), url, uid));
         cx.notify();
