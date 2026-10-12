@@ -1,8 +1,11 @@
-//! 封面加载器：按尺寸缓存。
+//! 封面加载器：按尺寸分桶缓存。
 //!
 //! 抓取由 [`CoverLoader::prefetch`] 在**数据加载完成时**触发；
 //! [`CoverLoader::image`] 仅做只读查询（命中缓存渲染图片，否则占位），
 //! 不在 render 路径中发起网络请求（对齐 coding-guides 的副作用规则）。
+//!
+//! 缓存键使用 [`bucket`] 归一后的尺寸：请求尺寸先向上取到 64/128/256/512 档，
+//! 使 28/32/36 等相近尺寸共用同一张图，避免“预取与渲染尺寸不一致导致缓存永不命中”。
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -12,6 +15,16 @@ use gpui_kit::*;
 use siren_core::network::client::NeteaseClient;
 
 use super::cover_placeholder;
+
+/// 尺寸分档：向上取到最近的档位（≥ 请求尺寸）。
+fn bucket(size: f32) -> u32 {
+    const BUCKETS: [u32; 4] = [64, 128, 256, 512];
+    let size = size.max(1.0) as u32;
+    *BUCKETS
+        .iter()
+        .find(|&&b| b >= size)
+        .unwrap_or(&BUCKETS[BUCKETS.len() - 1])
+}
 
 #[derive(Clone)]
 pub(crate) struct CoverLoader {
@@ -36,7 +49,7 @@ impl CoverLoader {
         if url.is_empty() {
             return cover_placeholder(size).into_any_element();
         }
-        let key = sized_url(url, size);
+        let key = sized_url(url, bucket(size));
         if let Some(image) = self.cache.lock().unwrap().get(&key).cloned() {
             return img(image).w(px(size)).h(px(size)).rounded(px(6.0)).into_any_element();
         }
@@ -45,6 +58,7 @@ impl CoverLoader {
 
     /// 预取一批封面（数据加载完成后调用）；完成后通知重绘。
     pub(crate) fn prefetch<T: 'static>(&self, urls: impl IntoIterator<Item = String>, size: f32, cx: &mut Context<T>) {
+        let size = bucket(size);
         for url in urls {
             if url.is_empty() {
                 continue;
@@ -84,9 +98,9 @@ impl CoverLoader {
 }
 
 /// 网易云封面支持 `?param=WxH` 生成指定尺寸，减少下载量。
-fn sized_url(url: &str, size: f32) -> String {
+fn sized_url(url: &str, size: u32) -> String {
     if url.contains("126.net") && !url.contains("param=") {
-        format!("{url}?param={}y{}", size as u32, size as u32)
+        format!("{url}?param={size}y{size}")
     } else {
         url.to_string()
     }
@@ -104,5 +118,22 @@ fn guess_format(bytes: &[u8]) -> Option<ImageFormat> {
         Some(ImageFormat::Webp)
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn bucket_groups_nearby_sizes() {
+        assert_eq!(super::bucket(28.0), 64);
+        assert_eq!(super::bucket(32.0), 64);
+        assert_eq!(super::bucket(36.0), 64);
+        assert_eq!(super::bucket(40.0), 64);
+        assert_eq!(super::bucket(48.0), 64);
+        assert_eq!(super::bucket(64.0), 64);
+        assert_eq!(super::bucket(65.0), 128);
+        assert_eq!(super::bucket(120.0), 128);
+        assert_eq!(super::bucket(220.0), 256);
+        assert_eq!(super::bucket(9999.0), 512);
     }
 }
