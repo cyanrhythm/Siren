@@ -41,4 +41,6 @@ pub mod path {
     pub const CLOUD_SEARCH: &str = "/eapi/cloudsearch/pc";
     /// 最近播放歌曲（WEAPI，需登录）。
     pub const RECENT_SONGS: &str = "/weapi/play-record/song/list";
+    /// 打卡上报（EAPI）。
+    pub const WEBLOG: &str = "/eapi/feedback/weblog";
 }

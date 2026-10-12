@@ -132,6 +132,24 @@ impl NeteaseClient {
         Self::parse_json(response).await
     }
 
+    /// 打卡上报专用 EAPI POST：Cookie 强制 `os=osx`（见 [`interceptor::eapi_cookie_weblog`]）。
+    pub async fn eabi_post_weblog(&self, path: &str, body: &Value) -> Result<Value> {
+        let api_path = path.replacen("/eapi/", "/api/", 1);
+        let text = interceptor::eapi_payload(body);
+        let params = crypto::eapi(&api_path, &text);
+
+        let url = format!("{}{path}", endpoints::EAPI_BASE_URL);
+        let response = self
+            .http
+            .post(url)
+            .header("User-Agent", crate::network::device::eapi_user_agent())
+            .header("Cookie", interceptor::eapi_cookie_weblog(self.cookie().as_deref()))
+            .form(&[("params", params.as_str())])
+            .send()
+            .await?;
+        Self::parse_json(response).await
+    }
+
     async fn parse_json(response: reqwest::Response) -> Result<Value> {
         let text = response.text().await?;
         Ok(serde_json::from_str(&text)?)

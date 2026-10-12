@@ -54,19 +54,30 @@ pub fn weapi_cookie(stored: Option<&str>) -> String {
 
 /// EAPI Cookie：剔除历史 `os=` 后追加 Android 身份。
 pub fn eapi_cookie(stored: Option<&str>) -> String {
+    let os = format!(
+        "os=android; appver={}; osver={}",
+        device::EAPI_APPVER,
+        device::OS_RELEASE
+    );
+    eapi_cookie_with_os(stored, &os)
+}
+
+/// 打卡上报（weblog）专用 Cookie：强制 `os=osx`。
+///
+/// 参考 Melodia `HeaderInterceptor`：否则「最近播放 / 听歌排行」聚合层疑似只认桌面端来源。
+pub fn eapi_cookie_weblog(stored: Option<&str>) -> String {
+    eapi_cookie_with_os(stored, "os=osx")
+}
+
+fn eapi_cookie_with_os(stored: Option<&str>, os: &str) -> String {
     let filtered = stored
         .unwrap_or("")
         .split("; ")
         .filter(|p| !p.trim().is_empty() && !p.trim().starts_with("os="))
         .collect::<Vec<_>>()
         .join("; ");
-    let os = format!(
-        "os=android; appver={}; osver={}",
-        device::EAPI_APPVER,
-        device::OS_RELEASE
-    );
     if filtered.is_empty() {
-        os
+        os.to_string()
     } else {
         format!("{filtered}; {os}")
     }

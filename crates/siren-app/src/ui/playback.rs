@@ -4,7 +4,7 @@
 
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gpui_kit::component::slider::{SliderEvent, SliderState, SliderValue};
 use gpui_kit::*;
@@ -28,6 +28,9 @@ pub(crate) struct Playback {
     quality: AudioQuality,
     /// 已喜欢的歌曲 ID 集合。
     liked: HashSet<i64>,
+    /// 正在播放的歌曲与起始时刻（用于打卡上报时长）。
+    playing_id: Option<i64>,
+    playing_at: Option<Instant>,
     progress_slider: Entity<SliderState>,
     volume_slider: Entity<SliderState>,
     media: Option<PlatformMediaSession>,
@@ -107,6 +110,8 @@ impl Playback {
                 seeking: false,
                 quality: siren_core::settings::load_quality(),
                 liked: HashSet::new(),
+                playing_id: None,
+                playing_at: None,
                 progress_slider,
                 volume_slider,
                 media,
@@ -308,7 +313,28 @@ impl Playback {
         cx.notify();
     }
 
+    /// 打卡上报上一首的实际播放时长（切歌时）。
+    fn finish_previous(&mut self) {
+        if let (Some(prev), Some(at)) = (self.playing_id, self.playing_at) {
+            let seconds = at.elapsed().as_secs() as i64;
+            let client = self.client.clone();
+            self.handle.spawn(async move {
+                let _ = siren_core::network::api::report_play_end(&client, prev, prev, seconds).await;
+            });
+        }
+    }
+
     fn resolve_and_play(&mut self, song: Song, cx: &mut Context<Self>) {
+        // 打卡上报：结束上一首（按实际播放时长），并开始新一首。
+        self.finish_previous();
+        let client_report = self.client.clone();
+        let song_id = song.id;
+        self.playing_id = Some(song_id);
+        self.playing_at = Some(Instant::now());
+        self.handle.spawn(async move {
+            let _ = siren_core::network::api::report_start_play(&client_report, song_id, song_id).await;
+        });
+
         let client = self.client.clone();
         let id = song.id;
         let level = self.quality.code();

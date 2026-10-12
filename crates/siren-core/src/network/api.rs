@@ -172,6 +172,52 @@ pub fn parse_recent_songs(value: &Value) -> Vec<Song> {
         .unwrap_or_default()
 }
 
+/// 打卡上报：开始播放（`action=startplay`），使歌曲进入「最近播放」。
+pub async fn report_start_play(client: &NeteaseClient, song_id: i64, container_id: i64) -> Result<()> {
+    let logs = json!([
+        {
+            "action": "startplay",
+            "json": {
+                "id": song_id,
+                "type": "song",
+                "mainsite": "1",
+                "mainsiteWeb": "1",
+                "content": format!("id={container_id}")
+            }
+        }
+    ])
+    .to_string();
+    let value = client.eabi_post_weblog(path::WEBLOG, &json!({ "logs": logs })).await?;
+    validate(&value)?;
+    Ok(())
+}
+
+/// 打卡上报：播放结束（`action=play`，`time` 为实际播放秒数），涨「听歌排行」计数。
+pub async fn report_play_end(client: &NeteaseClient, song_id: i64, container_id: i64, seconds: i64) -> Result<()> {
+    let logs = json!([
+        {
+            "action": "play",
+            "json": {
+                "download": 0,
+                "end": "playend",
+                "id": song_id,
+                "sourceId": container_id,
+                "time": seconds,
+                "type": "song",
+                "wifi": 0,
+                "source": "list",
+                "mainsite": "1",
+                "mainsiteWeb": "1",
+                "content": format!("id={container_id}")
+            }
+        }
+    ])
+    .to_string();
+    let value = client.eabi_post_weblog(path::WEBLOG, &json!({ "logs": logs })).await?;
+    validate(&value)?;
+    Ok(())
+}
+
 /// 二维码登录：申请 unikey。
 pub async fn login_qr_key(client: &NeteaseClient) -> Result<String> {
     let value = client.weapi_post(path::QR_UNIKEY, &json!({ "type": 1 })).await?;
