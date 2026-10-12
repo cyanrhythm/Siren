@@ -66,6 +66,18 @@ impl LibraryPage {
         self.refresh_account(cx);
     }
 
+    /// 退出登录：清除 Cookie 并回到未登录态。
+    pub(crate) fn logout(&mut self, cx: &mut Context<Self>) {
+        siren_core::auth::clear_cookie();
+        self.services.client.set_cookie(None);
+        self.logged_in = false;
+        self.uid = None;
+        self.nickname = "未登录".into();
+        self.login_status = "未登录".into();
+        self.my_playlists = Arc::new(Vec::new());
+        cx.notify();
+    }
+
     fn refresh_account(&mut self, cx: &mut Context<Self>) {
         let client = self.services.client.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();

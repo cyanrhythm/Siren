@@ -158,6 +158,12 @@ impl Root {
         }
     }
 
+    /// 退出登录（标题栏头像菜单）：清除 Cookie 并让音乐库回到未登录态。
+    fn logout(&mut self, cx: &mut Context<Self>) {
+        self.library.update(cx, |page, cx| page.logout(cx));
+        cx.notify();
+    }
+
     /// 收起 / 展开正在播放栏。
     fn toggle_now_playing(&mut self, cx: &mut Context<Self>) {
         self.now_playing_open = !self.now_playing_open;
@@ -274,5 +280,5 @@ pub(crate) fn cover_placeholder(size: f32) -> impl IntoElement {
         .justify_center()
         .rounded(px(6.0))
         .bg(theme::cover_placeholder())
-        .child(icon(IconName::Music, size * 0.36, theme::text_gray()))
+        .child(icon(IconName::Music, size * 0.5, theme::text_gray()))
 }

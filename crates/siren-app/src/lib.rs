@@ -17,6 +17,9 @@ use ui::Root;
 
 /// 应用入口：初始化 tokio 运行时与 GPUI 主循环。
 pub fn run() {
+    // 注册 AppUserModelID：让系统媒体浮层显示应用名而非“未知应用”
+    siren_platform::set_app_user_model_id("com.cyanrhythm.Siren");
+
     let runtime = tokio::runtime::Runtime::new().expect("创建 tokio 运行时失败");
     let ox = env_f32("SIREN_X", 80.0);
     let oy = env_f32("SIREN_Y", 80.0);

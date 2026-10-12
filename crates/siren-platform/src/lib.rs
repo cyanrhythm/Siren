@@ -84,6 +84,12 @@ pub fn window_hwnd<W: raw_window_handle::HasWindowHandle + ?Sized>(window: &W) -
     platform_hwnd_from(handle)
 }
 
+/// 注册进程级 AppUserModelID（Windows 用于媒体浮层显示应用名；其他平台无操作）。
+#[cfg(target_os = "windows")]
+pub use windows::appmodel::set_app_user_model_id;
+#[cfg(not(target_os = "windows"))]
+pub fn set_app_user_model_id(_id: &str) {}
+
 /// 编译期平台断言。
 ///
 /// 若目标平台不在支持列表内，此模块会触发编译错误，
