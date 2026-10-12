@@ -99,6 +99,10 @@ pub(crate) enum PageEvent {
     DeletePlaylist {
         id: i64,
     },
+    /// 请求编辑歌单简介。
+    EditPlaylistDesc {
+        id: i64,
+    },
 }
 
 /// 正在播放栏的卡片（可配置顺序/显隐）。
@@ -204,6 +208,8 @@ pub struct Root {
     rename_pid: Option<i64>,
     rename_input: Entity<InputState>,
     delete_pid: Option<i64>,
+    desc_pid: Option<i64>,
+    desc_input: Entity<InputState>,
     _subs: Vec<Subscription>,
     _search_sub: Subscription,
 }
@@ -248,6 +254,7 @@ impl Root {
         // 新建歌单名称输入
         let create_input = cx.new(|cx| InputState::new(window, cx).placeholder("歌单名称"));
         let rename_input = cx.new(|cx| InputState::new(window, cx).placeholder("新名称"));
+        let desc_input = cx.new(|cx| InputState::new(window, cx).placeholder("歌单简介"));
 
         let np_width = siren_core::settings::load_np_width();
         let np_width_slider = cx.new(|_| {
@@ -298,6 +305,11 @@ impl Root {
             subs.push(cx.subscribe(&rename_input, |root: &mut Root, _i, ev: &InputEvent, cx| {
                 if let InputEvent::PressEnter { .. } = ev {
                     root.submit_rename(cx);
+                }
+            }));
+            subs.push(cx.subscribe(&desc_input, |root: &mut Root, _i, ev: &InputEvent, cx| {
+                if let InputEvent::PressEnter { .. } = ev {
+                    root.submit_desc(cx);
                 }
             }));
             subs.push(
@@ -354,6 +366,8 @@ impl Root {
                 rename_pid: None,
                 rename_input,
                 delete_pid: None,
+                desc_pid: None,
+                desc_input,
                 _subs: subs,
                 _search_sub,
             }
@@ -395,6 +409,7 @@ impl Root {
             PageEvent::AddToPlaylist { song_id } => self.open_picker(*song_id, cx),
             PageEvent::RenamePlaylist { id } => self.open_rename(*id, cx),
             PageEvent::DeletePlaylist { id } => self.open_delete(*id, cx),
+            PageEvent::EditPlaylistDesc { id } => self.open_desc(*id, cx),
         }
     }
 
@@ -542,6 +557,8 @@ impl Render for Root {
         let weak_delete = cx.weak_entity();
         let rename_overlay = self.rename_pid.map(|_| self.rename_overlay(weak_rename));
         let delete_overlay = self.delete_pid.map(|_| self.delete_overlay(weak_delete));
+        let weak_desc = cx.weak_entity();
+        let desc_overlay = self.desc_pid.map(|_| self.desc_overlay(weak_desc));
         // 中间列显式分配宽度，规避 gpui `flex_1` 的横向过度伸展。
         // 右侧栏严格取设置的宽度；空间不足时中间列收缩（不产生横向溢出）。
         let np_w = if self.now_playing_open { self.np_width } else { 44.0 };
@@ -586,6 +603,7 @@ impl Render for Root {
             .when_some(picker_overlay, |this, overlay| this.child(overlay))
             .when_some(rename_overlay, |this, overlay| this.child(overlay))
             .when_some(delete_overlay, |this, overlay| this.child(overlay))
+            .when_some(desc_overlay, |this, overlay| this.child(overlay))
     }
 }
 

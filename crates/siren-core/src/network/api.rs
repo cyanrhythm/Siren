@@ -172,6 +172,27 @@ pub fn parse_recent_songs(value: &Value) -> Vec<Song> {
         .unwrap_or_default()
 }
 
+/// 批量歌曲详情（EAPI）：`ids` 一次不宜过多，调用方应分批。
+pub async fn song_details(client: &NeteaseClient, ids: &[i64]) -> Result<Vec<Song>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let c = format!(
+        "[{}]",
+        ids.iter()
+            .map(|id| format!("{{\"id\":{id}}}"))
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    let value = client.eapi_post(path::SONG_DETAIL_V3, &json!({ "c": c })).await?;
+    validate(&value)?;
+    Ok(value
+        .get("songs")
+        .and_then(Value::as_array)
+        .map(|arr| arr.iter().map(crate::model::parse_song).collect())
+        .unwrap_or_default())
+}
+
 /// 歌曲详情（EAPI `/eapi/v3/song/detail`）。
 pub async fn song_detail(client: &NeteaseClient, id: i64) -> Result<Option<Song>> {
     let c = format!("[{{\"id\":{id}}}]");
@@ -241,6 +262,15 @@ pub async fn playlist_rename(client: &NeteaseClient, id: i64, name: &str) -> Res
 pub async fn playlist_delete(client: &NeteaseClient, id: i64) -> Result<()> {
     let value = client
         .weapi_post(path::PLAYLIST_REMOVE, &json!({ "ids": format!("[{id}]") }))
+        .await?;
+    validate(&value)?;
+    Ok(())
+}
+
+/// 更新歌单简介（EAPI）。
+pub async fn playlist_update_desc(client: &NeteaseClient, id: i64, desc: &str) -> Result<()> {
+    let value = client
+        .eapi_post(path::PLAYLIST_UPDATE_DESC, &json!({ "id": id, "desc": desc }))
         .await?;
     validate(&value)?;
     Ok(())

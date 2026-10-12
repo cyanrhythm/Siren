@@ -4,7 +4,8 @@ use std::sync::Arc;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::base::StyledExt;
-use gpui_kit::component::menu::{ContextMenuExt, PopupMenuItem};
+use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::menu::{ContextMenuExt, DropdownMenu, PopupMenuItem};
 use gpui_kit::*;
 
 use siren_core::model::PlaylistDetail;
@@ -50,10 +51,24 @@ impl PlaylistPage {
         let id = self.id;
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.services.handle.spawn(async move {
-            let detail = siren_core::network::api::playlist_detail(&client, id)
+            let mut detail = siren_core::network::api::playlist_detail(&client, id)
                 .await
                 .ok()
                 .flatten();
+            // 曲目被截断时，按 trackIds 分批补全（对齐 Melodia PlaylistTrackPaging）
+            if let Some(d) = &mut detail {
+                if !d.track_ids.is_empty() && d.track_ids.len() > d.tracks.len() {
+                    let mut all = Vec::new();
+                    for chunk in d.track_ids.chunks(500) {
+                        if let Ok(mut songs) = siren_core::network::api::song_details(&client, chunk).await {
+                            all.append(&mut songs);
+                        }
+                    }
+                    let mut map: std::collections::HashMap<i64, siren_core::model::Song> =
+                        all.into_iter().map(|s| (s.id, s)).collect();
+                    d.tracks = d.track_ids.iter().filter_map(|id| map.remove(id)).collect();
+                }
+            }
             let _ = tx.send(detail);
         });
         cx.notify();
@@ -114,6 +129,7 @@ impl Render for PlaylistPage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let weak_back = cx.weak_entity();
         let weak_star = cx.weak_entity();
+        let weak_star2 = cx.weak_entity();
         let header = div()
             .flex()
             .items_center()
@@ -169,7 +185,21 @@ impl Render for PlaylistPage {
                             theme::text_gray()
                         },
                     )),
-            );
+            )
+            .child({
+                let weak_menu = weak_star2;
+                let pid = self.id;
+                Button::new("pl-more")
+                    .ghost()
+                    .icon(IconName::Ellipsis)
+                    .dropdown_menu(move |menu, _w, _cx| {
+                        let weak = weak_menu.clone();
+                        menu.item(PopupMenuItem::new("编辑简介").on_click(move |_ev, _w, cx| {
+                            weak.update(cx, |_p, cx| cx.emit(PageEvent::EditPlaylistDesc { id: pid }))
+                                .ok();
+                        }))
+                    })
+            });
 
         let body: AnyElement = match &self.detail {
             Some(detail) => {

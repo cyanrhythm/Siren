@@ -87,4 +87,8 @@ pub mod path {
     pub const PLAYLIST_REMOVE: &str = "/weapi/playlist/remove";
     /// 新建歌单（EAPI）。
     pub const PLAYLIST_CREATE: &str = "/eapi/playlist/create";
+    /// 更新歌单简介（EAPI）。
+    pub const PLAYLIST_UPDATE_DESC: &str = "/eapi/playlist/desc/update";
+    /// 歌曲详情（EAPI 批量，`c=[{"id":..}]`）。
+    pub const SONG_DETAIL_V3: &str = "/eapi/v3/song/detail";
 }

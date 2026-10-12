@@ -453,4 +453,96 @@ impl Root {
             )
             .into_any_element()
     }
+
+    /// 打开编辑简介浮层。
+    pub(crate) fn open_desc(&mut self, id: i64, cx: &mut Context<Self>) {
+        self.desc_pid = Some(id);
+        cx.notify();
+    }
+
+    pub(crate) fn close_desc(&mut self, cx: &mut Context<Self>) {
+        self.desc_pid = None;
+        cx.notify();
+    }
+
+    /// 提交编辑简介。
+    pub(crate) fn submit_desc(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.desc_pid else { return };
+        let desc = self.desc_input.read(cx).value().to_string();
+        let client = self.services.client.clone();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.services.handle.spawn(async move {
+            let ok = siren_core::network::api::playlist_update_desc(&client, id, &desc)
+                .await
+                .is_ok();
+            let _ = tx.send(ok);
+        });
+        self.desc_pid = None;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let ok = rx.await.unwrap_or(false);
+            this.update(cx, |this, cx| {
+                if ok {
+                    this.library.update(cx, |page, cx| page.reload_playlists(cx));
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// 编辑简介浮层。
+    pub(crate) fn desc_overlay(&self, weak: WeakEntity<Self>) -> AnyElement {
+        let weak_cancel = weak.clone();
+        let weak_ok = weak;
+        div()
+            .id("desc-overlay")
+            .occlude()
+            .absolute()
+            .top_0()
+            .left_0()
+            .w_full()
+            .h_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(rgba(0x00000088))
+            .child(
+                div()
+                    .v_flex()
+                    .w(px(420.0))
+                    .gap(px(14.0))
+                    .rounded(px(12.0))
+                    .bg(theme::surface())
+                    .p(px(20.0))
+                    .child(
+                        div()
+                            .text_lg()
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(theme::text_primary())
+                            .child("编辑简介"),
+                    )
+                    .child(Input::new(&self.desc_input))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_end()
+                            .gap(px(8.0))
+                            .child(Button::new("desc-cancel").label("取消").on_click(move |_ev, _w, cx| {
+                                weak_cancel.update(cx, |root, cx| root.close_desc(cx)).ok();
+                            }))
+                            .child(
+                                Button::new("desc-ok")
+                                    .primary()
+                                    .label("保存")
+                                    .on_click(move |_ev, _w, cx| {
+                                        weak_ok.update(cx, |root, cx| root.submit_desc(cx)).ok();
+                                    }),
+                            ),
+                    ),
+            )
+            .into_any_element()
+    }
 }

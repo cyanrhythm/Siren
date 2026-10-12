@@ -115,6 +115,8 @@ pub struct PlaylistDetail {
     pub name: String,
     pub cover_url: String,
     pub tracks: Vec<Song>,
+    /// 完整曲目 ID 顺序（详情 `tracks` 可能被截断，超出部分需据此补全）。
+    pub track_ids: Vec<i64>,
     /// 当前用户是否已收藏。
     pub subscribed: bool,
     /// 曲目总数（详情可能截断，供展示）。
@@ -321,6 +323,11 @@ pub fn parse_playlist_detail(value: &Value) -> Option<PlaylistDetail> {
         .and_then(Value::as_array)
         .map(|items| items.iter().map(parse_song).collect())
         .unwrap_or_default();
+    let track_ids = playlist
+        .get("trackIds")
+        .and_then(Value::as_array)
+        .map(|arr| arr.iter().filter_map(|t| t.get("id").and_then(Value::as_i64)).collect())
+        .unwrap_or_default();
     Some(PlaylistDetail {
         id: playlist.get("id").and_then(Value::as_i64).unwrap_or_default(),
         name: str_field(playlist, "name"),
@@ -330,6 +337,7 @@ pub fn parse_playlist_detail(value: &Value) -> Option<PlaylistDetail> {
             .unwrap_or_default()
             .to_string(),
         tracks,
+        track_ids,
         subscribed: playlist.get("subscribed").and_then(Value::as_bool).unwrap_or(false),
         track_count: playlist.get("trackCount").and_then(Value::as_i64).unwrap_or_default(),
     })
