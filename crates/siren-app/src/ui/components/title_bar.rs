@@ -25,6 +25,14 @@ impl Root {
             .flex()
             .items_center()
             .px(px(12.0))
+            // 拖动区：按住标题栏空白处移动窗口；双击最大化/还原
+            .on_mouse_down(MouseButton::Left, |ev, window, _cx| {
+                if ev.click_count == 2 {
+                    window.titlebar_double_click();
+                } else {
+                    window.start_window_move();
+                }
+            })
             // 左：前进 / 后退
             .child(
                 div()
@@ -131,23 +139,24 @@ impl Root {
                             .rounded_full()
                             .bg(theme::surface())
                             .child(icon(IconName::CircleUser, 20.0, theme::text_gray())),
-                    )
-                    .child(window_button(IconName::Minus, false))
-                    .child(window_button(IconName::Square, false))
-                    .child(window_button(IconName::X, true)),
+                    ),
             )
     }
 }
 
-/// 窗口控制按钮（仅视觉；窗口操作交由系统标题栏）。
-fn window_button(name: IconName, close: bool) -> impl IntoElement {
+/// 窗口控制按钮：最小化 / 最大化 / 关闭（当前窗口用系统装饰，暂未启用自绘按钮）。
+#[allow(dead_code)]
+fn window_button(id: &'static str, name: IconName, close: bool, action: fn(&mut Window, &mut App)) -> impl IntoElement {
     let hover = if close { theme::accent() } else { theme::surface() };
     div()
+        .id(id)
         .w(px(46.0))
         .h(px(64.0))
         .flex()
         .items_center()
         .justify_center()
+        .cursor_pointer()
         .hover(move |s| s.bg(hover))
+        .on_click(move |_ev, window, cx| action(window, cx))
         .child(icon(name, 16.0, theme::text_primary()))
 }
