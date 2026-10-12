@@ -19,6 +19,7 @@ pub(crate) struct PlaylistPage {
     id: i64,
     name: String,
     detail: Option<Arc<PlaylistDetail>>,
+    subscribed: bool,
 }
 
 impl EventEmitter<PageEvent> for PlaylistPage {}
@@ -37,6 +38,7 @@ impl PlaylistPage {
             id,
             name,
             detail: None,
+            subscribed: false,
         };
         page.load(cx);
         page
@@ -57,6 +59,9 @@ impl PlaylistPage {
         cx.spawn(async move |this, cx| {
             let detail = rx.await.ok().flatten();
             this.update(cx, |this, cx| {
+                if let Some(d) = &detail {
+                    this.subscribed = d.subscribed;
+                }
                 this.detail = detail.map(Arc::new);
                 if let Some(d) = &this.detail {
                     let urls: Vec<String> = d.tracks.iter().map(|t| t.cover_url.clone()).collect();
@@ -68,11 +73,23 @@ impl PlaylistPage {
         })
         .detach();
     }
+
+    fn toggle_subscribe(&mut self, cx: &mut Context<Self>) {
+        let subscribe = !self.subscribed;
+        self.subscribed = subscribe;
+        cx.notify();
+        let client = self.services.client.clone();
+        let id = self.id;
+        self.services.handle.spawn(async move {
+            let _ = siren_core::network::api::playlist_subscribe(&client, id, subscribe).await;
+        });
+    }
 }
 
 impl Render for PlaylistPage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let weak_back = cx.weak_entity();
+        let weak_star = cx.weak_entity();
         let header = div()
             .flex()
             .items_center()
@@ -94,9 +111,40 @@ impl Render for PlaylistPage {
             )
             .child(
                 div()
+                    .flex_1()
                     .text_lg()
                     .text_color(theme::text_primary())
                     .child(self.name.clone()),
+            )
+            .child(
+                div()
+                    .id("playlist-subscribe")
+                    .size(px(30.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_full()
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme::surface()))
+                    .on_click({
+                        let weak_star = weak_star;
+                        move |_ev, _window, cx| {
+                            weak_star.update(cx, |p, cx| p.toggle_subscribe(cx)).ok();
+                        }
+                    })
+                    .child(icon(
+                        if self.subscribed {
+                            IconName::Star
+                        } else {
+                            IconName::StarOff
+                        },
+                        18.0,
+                        if self.subscribed {
+                            theme::accent()
+                        } else {
+                            theme::text_gray()
+                        },
+                    )),
             );
 
         let body: AnyElement = match &self.detail {

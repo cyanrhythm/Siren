@@ -273,11 +273,15 @@ impl SearchPage {
         let items = self.albums.clone();
         let count = items.len();
         let covers = self.services.covers.clone();
+        let weak = cx.weak_entity();
         let render = uniform_list("search-albums", count, move |range, _window, _cx| {
             range
                 .map(|i| {
                     let album = &items[i];
                     let cover = covers.image(&album.cover_url, 48.0);
+                    let weak = weak.clone();
+                    let id = album.id;
+                    let name = album.name.clone();
                     div()
                         .id(format!("search-album-{}", album.id))
                         .w_full()
@@ -288,6 +292,13 @@ impl SearchPage {
                         .gap(px(12.0))
                         .rounded(px(6.0))
                         .hover(|s| s.bg(theme::card_surface()))
+                        .cursor_pointer()
+                        .on_click(move |_ev, _window, cx| {
+                            weak.update(cx, |_page, cx| {
+                                cx.emit(PageEvent::OpenAlbum { id, name: name.clone() });
+                            })
+                            .ok();
+                        })
                         .child(cover)
                         .child(
                             div()
@@ -317,11 +328,10 @@ impl SearchPage {
         .flex_1()
         .w_full()
         .min_w(px(0.0));
-        let _ = cx;
         render.into_any_element()
     }
 
-    fn artist_list(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn artist_list(&self, _cx: &mut Context<Self>) -> AnyElement {
         let items = self.artists.clone();
         let count = items.len();
         let covers = self.services.covers.clone();
@@ -355,7 +365,6 @@ impl SearchPage {
         .flex_1()
         .w_full()
         .min_w(px(0.0));
-        let _ = cx;
         render.into_any_element()
     }
 

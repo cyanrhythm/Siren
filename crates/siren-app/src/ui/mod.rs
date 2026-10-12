@@ -26,7 +26,7 @@ use siren_core::network::client::NeteaseClient;
 
 use crate::theme;
 use covers::CoverLoader;
-use pages::{HomePage, LibraryPage, PlaylistPage, RecentPage, SearchPage};
+use pages::{AlbumPage, HomePage, LibraryPage, PlaylistPage, RecentPage, SearchPage};
 use playback::Playback;
 use services::Services;
 
@@ -36,6 +36,11 @@ pub(crate) enum Route {
     Home,
     Search,
     Playlist {
+        id: i64,
+        name: String,
+    },
+    /// 专辑详情。
+    Album {
         id: i64,
         name: String,
     },
@@ -52,6 +57,11 @@ pub(crate) enum Route {
 /// 页面回传给外壳的导航事件。
 pub(crate) enum PageEvent {
     OpenPlaylist {
+        id: i64,
+        name: String,
+    },
+    /// 打开专辑详情。
+    OpenAlbum {
         id: i64,
         name: String,
     },
@@ -140,6 +150,7 @@ pub struct Root {
     search: Entity<SearchPage>,
     recent: Entity<RecentPage>,
     playlist_page: Option<Entity<PlaylistPage>>,
+    album_page: Option<Entity<AlbumPage>>,
     now_playing_open: bool,
     /// 右侧栏宽度（像素）。
     np_width: f32,
@@ -274,6 +285,7 @@ impl Root {
                 search,
                 recent,
                 playlist_page: None,
+                album_page: None,
                 now_playing_open: true,
                 np_width,
                 np_width_slider,
@@ -313,12 +325,14 @@ impl Root {
         self.nav.clear();
         self.nav.push(route);
         self.playlist_page = None;
+        self.album_page = None;
         cx.notify();
     }
 
     fn on_page_event(&mut self, event: &PageEvent, cx: &mut Context<Self>) {
         match event {
             PageEvent::OpenPlaylist { id, name } => self.open_playlist(*id, name.clone(), cx),
+            PageEvent::OpenAlbum { id, name } => self.open_album(*id, name.clone(), cx),
             PageEvent::Back => self.back(cx),
             PageEvent::Account {
                 uid,
@@ -397,10 +411,22 @@ impl Root {
         cx.notify();
     }
 
+    fn open_album(&mut self, id: i64, name: String, cx: &mut Context<Self>) {
+        self.nav.push(Route::Album { id, name: name.clone() });
+        let page = cx.new(|cx| AlbumPage::new(cx, self.services.clone(), self.playback.clone(), id, name));
+        let sub = cx.subscribe(&page, |root: &mut Root, _e, ev: &PageEvent, cx| {
+            root.on_page_event(ev, cx)
+        });
+        self._subs.push(sub);
+        self.album_page = Some(page);
+        cx.notify();
+    }
+
     fn back(&mut self, cx: &mut Context<Self>) {
         if self.nav.len() > 1 {
             self.nav.pop();
             self.playlist_page = None;
+            self.album_page = None;
             cx.notify();
         }
     }
@@ -435,6 +461,11 @@ impl Root {
             Route::Search => self.search.clone().into_any_element(),
             Route::Playlist { .. } => self
                 .playlist_page
+                .as_ref()
+                .map(|p| p.clone().into_any_element())
+                .unwrap_or_else(|| div().into_any_element()),
+            Route::Album { .. } => self
+                .album_page
                 .as_ref()
                 .map(|p| p.clone().into_any_element())
                 .unwrap_or_else(|| div().into_any_element()),
