@@ -86,7 +86,19 @@ impl LibraryPage {
         let client = self.services.client.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.services.handle.spawn(async move {
-            let account = siren_core::network::api::account(&client).await.ok();
+            let mut account = siren_core::network::api::account(&client).await.ok();
+            // 账号校验失败（未登录/会话过期）时尝试续期一次
+            if account
+                .as_ref()
+                .and_then(siren_core::network::api::account_uid)
+                .is_none()
+            {
+                if let Ok(Some(cookie)) = siren_core::network::api::refresh_login(&client).await {
+                    client.set_cookie(Some(cookie.clone()));
+                    siren_core::auth::save_cookie(&cookie);
+                    account = siren_core::network::api::account(&client).await.ok();
+                }
+            }
             let _ = tx.send(account);
         });
         cx.notify();

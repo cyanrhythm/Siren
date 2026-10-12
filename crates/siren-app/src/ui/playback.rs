@@ -33,6 +33,8 @@ pub(crate) struct Playback {
     detail: Option<Song>,
     /// 当前歌曲歌词。
     lyrics: Vec<LyricLine>,
+    /// 是否启用系统媒体控制（SMTC / MPRIS）。
+    media_keys_enabled: bool,
     /// 正在播放的歌曲与起始时刻（用于打卡上报时长）。
     playing_id: Option<i64>,
     playing_at: Option<Instant>,
@@ -117,6 +119,7 @@ impl Playback {
                 liked: HashSet::new(),
                 detail: None,
                 lyrics: Vec::new(),
+                media_keys_enabled: siren_core::settings::load_media_keys(),
                 playing_id: None,
                 playing_at: None,
                 progress_slider,
@@ -155,6 +158,24 @@ impl Playback {
     /// 当前歌曲歌词。
     pub(crate) fn current_lyrics(&self) -> &[LyricLine] {
         &self.lyrics
+    }
+
+    /// 是否启用系统媒体控制。
+    pub(crate) fn media_keys_enabled(&self) -> bool {
+        self.media_keys_enabled
+    }
+
+    /// 设置系统媒体控制开关（持久化）；关闭时清空系统卡片。
+    pub(crate) fn set_media_keys(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.media_keys_enabled = enabled;
+        siren_core::settings::save_media_keys(enabled);
+        if !enabled {
+            if let Some(media) = &self.media {
+                media.set_metadata(&MediaMetadata::default());
+                media.set_playback_status(PlaybackStatus::Stopped);
+            }
+        }
+        cx.notify();
     }
 
     /// 当前歌曲是否已喜欢。
@@ -473,6 +494,9 @@ impl Playback {
     }
 
     fn push_media_state(&self) {
+        if !self.media_keys_enabled {
+            return;
+        }
         let Some(media) = &self.media else {
             return;
         };

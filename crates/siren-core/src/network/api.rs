@@ -184,6 +184,13 @@ pub async fn song_detail(client: &NeteaseClient, id: i64) -> Result<Option<Song>
         .map(crate::model::parse_song))
 }
 
+/// 刷新登录态：新 Cookie 经响应头 `Set-Cookie` 下发，成功返回合并后的 Cookie。
+pub async fn refresh_login(client: &NeteaseClient) -> Result<Option<String>> {
+    let (value, cookie) = client.weapi_post_with_cookie(path::LOGIN_REFRESH, &json!({})).await?;
+    validate(&value)?;
+    Ok(cookie.filter(|c| c.contains("MUSIC_U=")))
+}
+
 /// 歌词（EAPI `/eapi/song/lyric/v1`）：优先逐字（yrc），合并译文（tlyric）。
 pub async fn lyrics(client: &NeteaseClient, id: i64) -> Result<Vec<crate::lyrics::LyricLine>> {
     let body = json!({

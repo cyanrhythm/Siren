@@ -17,20 +17,33 @@ fn settings_path() -> Option<PathBuf> {
 struct Settings {
     /// 音质档位代码（如 `exhigh`）。
     quality: Option<String>,
+    /// 是否启用系统媒体控制（SMTC / MPRIS），默认开启。
+    media_keys: Option<bool>,
+}
+
+fn read() -> Settings {
+    let Some(path) = settings_path() else {
+        return Settings::default();
+    };
+    std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+fn write(settings: &Settings) {
+    let Some(path) = settings_path() else {
+        return;
+    };
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(&path, serde_json::to_string_pretty(settings).unwrap_or_default());
 }
 
 /// 读取已保存的音质档位（缺省为默认档）。
 pub fn load_quality() -> AudioQuality {
-    let Some(path) = settings_path() else {
-        return AudioQuality::default();
-    };
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        return AudioQuality::default();
-    };
-    let Ok(settings) = serde_json::from_str::<Settings>(&text) else {
-        return AudioQuality::default();
-    };
-    settings
+    read()
         .quality
         .map(|code| AudioQuality::from_code(&code))
         .unwrap_or_default()
@@ -38,14 +51,19 @@ pub fn load_quality() -> AudioQuality {
 
 /// 保存音质档位。
 pub fn save_quality(quality: AudioQuality) {
-    let Some(path) = settings_path() else {
-        return;
-    };
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    let settings = Settings {
-        quality: Some(quality.code().to_string()),
-    };
-    let _ = std::fs::write(&path, serde_json::to_string_pretty(&settings).unwrap_or_default());
+    let mut settings = read();
+    settings.quality = Some(quality.code().to_string());
+    write(&settings);
+}
+
+/// 是否启用系统媒体控制（默认开启）。
+pub fn load_media_keys() -> bool {
+    read().media_keys.unwrap_or(true)
+}
+
+/// 保存系统媒体控制开关。
+pub fn save_media_keys(enabled: bool) {
+    let mut settings = read();
+    settings.media_keys = Some(enabled);
+    write(&settings);
 }

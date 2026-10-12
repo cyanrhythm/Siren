@@ -15,6 +15,34 @@ use crate::theme;
 impl Root {
     pub(crate) fn settings_page(&self, weak: WeakEntity<Self>, cx: &App) -> AnyElement {
         let current = self.playback.read(cx).quality();
+        let media_on = self.playback.read(cx).media_keys_enabled();
+
+        let weak_media = weak.clone();
+        let media_control = div()
+            .id("media-keys")
+            .w(px(56.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .px(px(12.0))
+            .py(px(6.0))
+            .rounded_full()
+            .cursor_pointer()
+            .bg(if media_on { theme::accent() } else { theme::pane() })
+            .on_click(move |_ev, _window, cx| {
+                weak_media
+                    .update(cx, |root, cx| {
+                        root.playback.update(cx, |pb, cx| pb.set_media_keys(!media_on, cx));
+                    })
+                    .ok();
+            })
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(theme::text_primary())
+                    .child(if media_on { "开" } else { "关" }),
+            )
+            .into_any_element();
 
         let body = div()
             .v_flex()
@@ -28,6 +56,7 @@ impl Root {
                 "在线播放的音质档位（更高档位需登录 / 会员）",
                 quality_row(current, weak),
             ))
+            .child(section("系统", "系统媒体控制（媒体键与系统播放卡片）", media_control))
             .into_any_element();
 
         page_shell("设置".to_string(), body).into_any_element()

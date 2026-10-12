@@ -138,6 +138,8 @@ impl Root {
 
         let initial_route = match std::env::var("SIREN_START").ok().as_deref() {
             Some("search") => Route::Search,
+            Some("settings") => Route::Settings,
+            Some("recent") => Route::RecentPlay,
             _ => Route::Home,
         };
 
