@@ -140,6 +140,38 @@ pub fn parse_liked_ids(value: &Value) -> Vec<i64> {
         .unwrap_or_default()
 }
 
+/// 云搜索（EAPI，按 `kind`：1 单曲 / 10 专辑 / 100 歌手 / 1000 歌单）。
+pub async fn cloud_search(client: &NeteaseClient, keyword: &str, kind: u32, limit: u32) -> Result<Value> {
+    let body = json!({ "s": keyword, "type": kind, "limit": limit, "offset": 0 });
+    let value = client.eapi_post(path::CLOUD_SEARCH, &body).await?;
+    validate(&value)?;
+    Ok(value)
+}
+
+/// 最近播放歌曲（WEAPI，需登录）。
+pub async fn recent_songs(client: &NeteaseClient) -> Result<Vec<Song>> {
+    let value = client.weapi_post(path::RECENT_SONGS, &json!({ "limit": 100 })).await?;
+    validate(&value)?;
+    Ok(parse_recent_songs(&value))
+}
+
+/// 从最近播放返回体取歌曲（`data.list[].data`）。
+pub fn parse_recent_songs(value: &Value) -> Vec<Song> {
+    value
+        .get("data")
+        .and_then(|d| d.get("list"))
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.get("data"))
+                .filter(|data| data.get("id").is_some())
+                .map(crate::model::parse_song)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// 二维码登录：申请 unikey。
 pub async fn login_qr_key(client: &NeteaseClient) -> Result<String> {
     let value = client.weapi_post(path::QR_UNIKEY, &json!({ "type": 1 })).await?;
@@ -204,5 +236,19 @@ mod tests {
         assert!(validate(&json!({ "code": 301 })).unwrap_err().is_unauthorized());
         assert!(validate(&json!({ "code": 200 })).is_ok());
         assert!(validate(&json!({})).is_ok());
+    }
+
+    #[test]
+    fn parses_recent_songs() {
+        let value = json!({
+            "code": 200,
+            "data": { "list": [
+                { "playTime": 1, "data": { "id": 7, "name": "s", "ar": [{"name": "a"}], "al": {"name": "b", "picUrl": "u"}, "dt": 1000 } }
+            ]}
+        });
+        let songs = parse_recent_songs(&value);
+        assert_eq!(songs.len(), 1);
+        assert_eq!(songs[0].id, 7);
+        assert_eq!(songs[0].cover_url, "u");
     }
 }

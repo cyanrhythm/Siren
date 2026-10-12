@@ -25,7 +25,7 @@ use siren_core::network::client::NeteaseClient;
 
 use crate::theme;
 use covers::CoverLoader;
-use pages::{HomePage, LibraryPage, PlaylistPage, SearchPage};
+use pages::{HomePage, LibraryPage, PlaylistPage, RecentPage, SearchPage};
 use playback::Playback;
 use services::Services;
 
@@ -85,6 +85,7 @@ pub struct Root {
     home: Entity<HomePage>,
     library: Entity<LibraryPage>,
     search: Entity<SearchPage>,
+    recent: Entity<RecentPage>,
     playlist_page: Option<Entity<PlaylistPage>>,
     now_playing_open: bool,
     /// 登录后的账号信息（昵称、头像 URL、uid）；未登录为 None。
@@ -123,6 +124,7 @@ impl Root {
         let home = cx.new(|cx| HomePage::new(cx, services.clone()));
         let library = cx.new(|cx| LibraryPage::new(window, cx, services.clone()));
         let search = cx.new(|_cx| SearchPage::new(services.clone(), playback.clone()));
+        let recent = cx.new(|_cx| RecentPage::new(services.clone(), playback.clone()));
 
         // 标题栏搜索输入（回车驱动搜索页）
         let search_input = cx.new(|cx| {
@@ -145,6 +147,12 @@ impl Root {
                 root.on_page_event(ev, cx)
             }));
             subs.push(cx.subscribe(&library, |root: &mut Root, _e, ev: &PageEvent, cx| {
+                root.on_page_event(ev, cx)
+            }));
+            subs.push(cx.subscribe(&search, |root: &mut Root, _e, ev: &PageEvent, cx| {
+                root.on_page_event(ev, cx)
+            }));
+            subs.push(cx.subscribe(&recent, |root: &mut Root, _e, ev: &PageEvent, cx| {
                 root.on_page_event(ev, cx)
             }));
             let _search_sub = cx.subscribe(&search_input, |root: &mut Root, _i, ev: &InputEvent, cx| {
@@ -171,6 +179,7 @@ impl Root {
                 home,
                 library,
                 search,
+                recent,
                 playlist_page: None,
                 now_playing_open: true,
                 account: None,
@@ -211,7 +220,10 @@ impl Root {
             PageEvent::LoggedOut => self.set_account(None, cx),
             PageEvent::OpenLogin => self.open_login(cx),
             PageEvent::OpenProfile { uid } => self.navigate(Route::Profile { uid: *uid }, cx),
-            PageEvent::OpenRecentPlay => self.navigate(Route::RecentPlay, cx),
+            PageEvent::OpenRecentPlay => {
+                self.recent.update(cx, |page, cx| page.load(cx));
+                self.navigate(Route::RecentPlay, cx);
+            }
             PageEvent::OpenSettings => self.navigate(Route::Settings, cx),
         }
     }
@@ -237,6 +249,7 @@ impl Root {
                 self.services.covers.prefetch([url.clone()], 32.0, cx);
                 let uid = *uid;
                 self.playback.update(cx, |pb, cx| pb.load_likes(uid, cx));
+                self.recent.update(cx, |page, cx| page.load(cx));
             }
             None => self.playback.update(cx, |pb, cx| pb.clear_likes(cx)),
         }
@@ -297,9 +310,9 @@ impl Root {
                 .map(|p| p.clone().into_any_element())
                 .unwrap_or_else(|| div().into_any_element()),
             Route::Settings => self.settings_page(weak, cx),
+            Route::RecentPlay => self.recent.clone().into_any_element(),
             // 以下页面先接路由占位，后续逐个补齐
             Route::Profile { .. } => placeholder_page("个人主页", "个人主页（待实现）"),
-            Route::RecentPlay => placeholder_page("最近播放", "最近播放（待实现）"),
         }
     }
 }

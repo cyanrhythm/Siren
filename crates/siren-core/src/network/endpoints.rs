@@ -37,4 +37,8 @@ pub mod path {
     pub const SONG_LIKE: &str = "/eapi/song/like";
     /// 已红心歌曲 ID 列表（EAPI）。
     pub const SONG_LIKE_GET: &str = "/eapi/song/like/get";
+    /// 云搜索（EAPI，按 type 区分单曲/专辑/歌手/歌单/电台）。
+    pub const CLOUD_SEARCH: &str = "/eapi/cloudsearch/pc";
+    /// 最近播放歌曲（WEAPI，需登录）。
+    pub const RECENT_SONGS: &str = "/weapi/play-record/song/list";
 }

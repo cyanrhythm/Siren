@@ -34,6 +34,24 @@ pub struct Playlist {
     pub play_count: i64,
 }
 
+/// 专辑（搜索结果项）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Album {
+    pub id: i64,
+    pub name: String,
+    pub cover_url: String,
+    /// 以 `/` 拼接的歌手名。
+    pub artists: String,
+}
+
+/// 歌手（搜索结果项）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Artist {
+    pub id: i64,
+    pub name: String,
+    pub cover_url: String,
+}
+
 /// 歌单详情。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlaylistDetail {
@@ -76,6 +94,72 @@ pub fn parse_user_playlists(value: &Value) -> Vec<Playlist> {
         .unwrap_or_default()
 }
 
+/// 解析云搜索专辑结果（`result.albums`）。
+pub fn parse_search_albums(value: &Value) -> Vec<Album> {
+    value
+        .get("result")
+        .and_then(|r| r.get("albums"))
+        .and_then(Value::as_array)
+        .map(|items| items.iter().map(parse_album).collect())
+        .unwrap_or_default()
+}
+
+/// 解析云搜索歌手结果（`result.artists`）。
+pub fn parse_search_artists(value: &Value) -> Vec<Artist> {
+    value
+        .get("result")
+        .and_then(|r| r.get("artists"))
+        .and_then(Value::as_array)
+        .map(|items| items.iter().map(parse_artist).collect())
+        .unwrap_or_default()
+}
+
+/// 解析云搜索歌单结果（`result.playlists`）。
+pub fn parse_search_playlists(value: &Value) -> Vec<Playlist> {
+    value
+        .get("result")
+        .and_then(|r| r.get("playlists"))
+        .and_then(Value::as_array)
+        .map(|items| items.iter().map(parse_playlist).collect())
+        .unwrap_or_default()
+}
+
+fn parse_album(value: &Value) -> Album {
+    let artists = value
+        .get("artists")
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|a| a.get("name").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join("/")
+        })
+        .unwrap_or_default();
+    Album {
+        id: value.get("id").and_then(Value::as_i64).unwrap_or_default(),
+        name: str_field(value, "name"),
+        cover_url: value
+            .get("picUrl")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        artists,
+    }
+}
+
+fn parse_artist(value: &Value) -> Artist {
+    Artist {
+        id: value.get("id").and_then(Value::as_i64).unwrap_or_default(),
+        name: str_field(value, "name"),
+        cover_url: value
+            .get("picUrl")
+            .or_else(|| value.get("img1v1Url"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+    }
+}
+
 /// 解析歌单详情（`/weapi/v6/playlist/detail`，`playlist` 对象）。
 pub fn parse_playlist_detail(value: &Value) -> Option<PlaylistDetail> {
     let playlist = value.get("playlist")?;
@@ -110,7 +194,8 @@ pub fn parse_search_songs(value: &Value) -> Vec<Song> {
         .unwrap_or_default()
 }
 
-fn parse_song(value: &Value) -> Song {
+/// 解析单曲（兼容经典 `artists/album/duration` 与 `ar/al/dt`）。
+pub fn parse_song(value: &Value) -> Song {
     let id = value.get("id").and_then(Value::as_i64).unwrap_or_default();
     let name = value
         .get("name")
@@ -226,5 +311,24 @@ mod tests {
         let detail = parse_playlist_detail(&value).unwrap();
         assert_eq!(detail.tracks.len(), 1);
         assert_eq!(detail.tracks[0].artists, "a");
+    }
+
+    #[test]
+    fn parses_search_albums_artists_playlists() {
+        let value = json!({
+            "result": {
+                "albums": [ { "id": 1, "name": "专", "picUrl": "http://a", "artists": [{"name": "甲"}] } ],
+                "artists": [ { "id": 2, "name": "乙", "img1v1Url": "http://b" } ],
+                "playlists": [ { "id": 3, "name": "单", "coverImgUrl": "http://c", "trackCount": 5 } ]
+            }
+        });
+        let albums = parse_search_albums(&value);
+        assert_eq!(albums[0].cover_url, "http://a");
+        assert_eq!(albums[0].artists, "甲");
+        let artists = parse_search_artists(&value);
+        assert_eq!(artists[0].cover_url, "http://b");
+        let playlists = parse_search_playlists(&value);
+        assert_eq!(playlists[0].id, 3);
+        assert_eq!(playlists[0].track_count, 5);
     }
 }
