@@ -49,6 +49,10 @@ pub(crate) struct Playback {
     media_keys_enabled: bool,
     /// 上次已重绘的整数秒（用于外壳节流重绘）。
     last_sec: i64,
+    // 进度插值锚点（弥补 mpv time-pos 更新粒度）
+    anchor_pos: i64,
+    anchor_at: Instant,
+    was_playing: bool,
     /// 正在播放的歌曲与起始时刻（用于打卡上报时长）。
     playing_id: Option<i64>,
     playing_at: Option<Instant>,
@@ -144,6 +148,9 @@ impl Playback {
                 artist_fans: 0,
                 media_keys_enabled: siren_core::settings::load_media_keys(),
                 last_sec: 0,
+                anchor_pos: 0,
+                anchor_at: Instant::now(),
+                was_playing: false,
                 playing_id: None,
                 playing_at: None,
                 progress_slider,
@@ -409,12 +416,30 @@ impl Playback {
         }
         let state = self.player.state();
         if !self.seeking {
+            // 按墙钟插值：mpv 的 time-pos 更新粒度较粗，直接引用会呈阶跃；
+            // 以读到的位置为锚点，两次读数之间用时间推演，得到连续的进度。
+            let now = Instant::now();
+            let playing = state.playing;
+            if playing && self.was_playing {
+                let elapsed = now.duration_since(self.anchor_at).as_millis() as i64;
+                let predicted = self.anchor_pos + elapsed;
+                // 与推演偏差过大（seek / 跳变）则重新锚定
+                if (state.position_ms - predicted).abs() > 400 {
+                    self.anchor_pos = state.position_ms;
+                    self.anchor_at = now;
+                }
+            } else {
+                self.anchor_pos = state.position_ms;
+                self.anchor_at = now;
+            }
+            self.was_playing = playing;
+            let elapsed = now.duration_since(self.anchor_at).as_millis() as i64;
+            let smooth = self.anchor_pos + elapsed;
             let frac = if state.duration_ms > 0 {
-                state.position_ms as f32 / state.duration_ms as f32
+                smooth as f32 / state.duration_ms as f32
             } else {
                 0.0
             };
-            // 进度条以自己的 Entity 高频刷新，保持平滑
             self.progress_slider
                 .update(cx, |s, cx| s.set_value(frac.clamp(0.0, 1.0), window, cx));
         }
