@@ -107,6 +107,8 @@ pub fn run() {
                             if let Some(t) = target {
                                 siren_platform::move_window(hwnd, t.0, t.1, t.2, t.3);
                             }
+                            let icon_ok = siren_platform::set_window_icon(hwnd);
+                            log::info!("set_window_icon -> {icon_ok} (hwnd={hwnd})");
                             siren_platform::show_window(hwnd);
                         })
                         .detach();

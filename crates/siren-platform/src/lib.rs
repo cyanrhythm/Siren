@@ -114,6 +114,14 @@ pub fn move_window(_hwnd: u64, _x: i32, _y: i32, _w: i32, _h: i32) {}
 
 /// 显示窗口并置前（非 Windows 无操作）。
 #[cfg(target_os = "windows")]
+pub use windows::icon::set_window_icon;
+/// 设置窗口图标（仅 Windows 有效；其余平台空实现）。
+#[cfg(not(target_os = "windows"))]
+pub fn set_window_icon(_hwnd: u64) -> bool {
+    false
+}
+
+#[cfg(target_os = "windows")]
 pub use windows::display::show_window;
 #[cfg(not(target_os = "windows"))]
 pub fn show_window(_hwnd: u64) {}
