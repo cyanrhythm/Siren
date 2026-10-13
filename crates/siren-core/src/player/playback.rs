@@ -46,6 +46,8 @@ pub struct Player {
     queue: PlayerQueue,
     state: PlaybackState,
     tx: watch::Sender<PlaybackState>,
+    /// EOF 闩锁：mpv 在新文件加载前会持续报告 eof，避免重复推进队列。
+    eof_latched: bool,
 }
 
 impl Player {
@@ -57,6 +59,7 @@ impl Player {
             queue: PlayerQueue::new(),
             state,
             tx,
+            eof_latched: false,
         }
     }
 
@@ -188,7 +191,14 @@ impl Player {
         }
 
         let mut pending = None;
-        if self.state.song.is_some() && self.engine.eof_reached().unwrap_or(false) {
+        let eof = self.engine.eof_reached().unwrap_or(false);
+        if !eof {
+            // mpv 已开始播放新文件，解除闩锁
+            self.eof_latched = false;
+        }
+        if self.state.song.is_some() && eof && !self.eof_latched {
+            // 只推进一次；在新文件真正播放（eof 变假）前不再重复推进
+            self.eof_latched = true;
             if let Some(song) = self.advance_auto() {
                 pending = Some(song);
             }
