@@ -6,7 +6,6 @@ use std::sync::Arc;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::base::StyledExt;
-use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::*;
 
@@ -29,7 +28,6 @@ pub(crate) struct LibraryPage {
     services: Services,
     /// 登录表单输入与状态（视图态；账号身份存于 [`Session`]）。
     login_input: Entity<InputState>,
-    login_status: SharedString,
     tab: LibraryTab,
     my_playlists: Arc<Vec<Playlist>>,
     albums: Arc<Vec<Album>>,
@@ -53,7 +51,6 @@ impl LibraryPage {
         let mut page = Self {
             services,
             login_input,
-            login_status: "未登录".into(),
             tab: LibraryTab::Playlist,
             my_playlists: Arc::new(Vec::new()),
             albums: Arc::new(Vec::new()),
@@ -70,14 +67,12 @@ impl LibraryPage {
     fn do_login(&mut self, cx: &mut Context<Self>) {
         let raw = self.login_input.read(cx).value().trim().to_string();
         let Some(cookie) = siren_core::auth::normalize_cookie(&raw) else {
-            self.login_status = "请输入 MUSIC_U 或完整 Cookie".into();
             self.services.toast_error("请输入 MUSIC_U 或完整 Cookie", cx);
             cx.notify();
             return;
         };
         siren_core::auth::save_cookie(&cookie);
         self.services.client.set_cookie(Some(cookie));
-        self.login_status = "登录校验中…".into();
         cx.notify();
         self.refresh_account(true, cx);
     }
@@ -87,7 +82,6 @@ impl LibraryPage {
         siren_core::auth::clear_cookie();
         self.services.client.set_cookie(None);
         Session::set(cx, None);
-        self.login_status = "未登录".into();
         self.tab = LibraryTab::Playlist;
         self.my_playlists = Arc::new(Vec::new());
         self.albums = Arc::new(Vec::new());
@@ -139,7 +133,6 @@ impl LibraryPage {
                                 avatar_url: avatar,
                             }),
                         );
-                        this.login_status = format!("已登录：{nickname}").into();
                         log::info!("已登录：{nickname} (uid={uid})");
                         if announce {
                             this.services.toast_success(format!("登录成功：{nickname}"), cx);
@@ -150,7 +143,6 @@ impl LibraryPage {
                     }
                     None => {
                         Session::set(cx, None);
-                        this.login_status = "未登录（Cookie 无效或已过期）".into();
                         if announce {
                             this.services.toast_error("登录失败，请检查 Cookie", cx);
                         } else if had_cookie {
@@ -180,7 +172,6 @@ impl LibraryPage {
                 .unwrap_or_default();
             let _ = tx.send(list);
         });
-        self.login_status = "加载我的歌单…".into();
         cx.notify();
         cx.spawn(async move |this, cx| {
             let list = rx.await.unwrap_or_default();
@@ -188,7 +179,6 @@ impl LibraryPage {
                 if this.load_gen != gen {
                     return;
                 }
-                this.login_status = format!("我的歌单 {} 个", list.len()).into();
                 let urls: Vec<String> = list.iter().map(|p| p.cover_url.clone()).collect();
                 this.my_playlists = Arc::new(list);
                 this.services.covers.prefetch(urls, 48.0, cx);
@@ -562,50 +552,16 @@ impl LibraryPage {
 impl Render for LibraryPage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let logged_in = Session::account(cx).is_some();
-        let content: AnyElement =
-            if !logged_in {
-                let weak = cx.weak_entity();
-                div()
-                    .flex_1()
-                    .w_full()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(
-                        div()
-                            .v_flex()
-                            .w_full()
-                            .gap(px(8.0))
-                            .p(px(12.0))
-                            .rounded(px(8.0))
-                            .bg(theme::card_surface())
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_color(theme::text_primary())
-                                    .child("登录后查看你的音乐库"),
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(theme::text_gray())
-                                    .child(self.login_status.clone()),
-                            )
-                            .child(Button::new("lib-login").primary().label("登录").on_click(
-                                move |_ev, _window, cx| {
-                                    weak.update(cx, |_page, cx| cx.emit(PageEvent::OpenLogin)).ok();
-                                },
-                            )),
-                    )
-                    .into_any_element()
-            } else {
-                match self.tab {
-                    LibraryTab::Playlist => self.playlist_list(cx),
-                    LibraryTab::Album => self.album_list(cx),
-                    LibraryTab::Artist => self.artist_list(cx),
-                }
-            };
+        let content: AnyElement = if !logged_in {
+            // 未登录：不显示提示卡片（登录入口在标题栏账号按钮）
+            div().flex_1().w_full().into_any_element()
+        } else {
+            match self.tab {
+                LibraryTab::Playlist => self.playlist_list(cx),
+                LibraryTab::Album => self.album_list(cx),
+                LibraryTab::Artist => self.artist_list(cx),
+            }
+        };
 
         div()
             .v_flex()
