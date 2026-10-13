@@ -20,7 +20,7 @@ pub mod silent;
 
 pub use mpv::{AudioDevice, Mpv};
 pub use playback::{PlaybackState, Player};
-pub use queue::{PlayMode, PlayerQueue};
+pub use queue::{PlayMode, PlaySource, PlaySourceKind, PlayerQueue};
 pub use silent::SilentEngine;
 
 /// 播放控制抽象：由具体音频引擎实现（当前为 libmpv）。

@@ -12,6 +12,7 @@ use super::super::playback::Playback;
 use super::super::services::Services;
 use super::super::{fmt_time, icon, page_shell_with_header, PageEvent};
 use crate::theme;
+use siren_core::player::{PlaySource, PlaySourceKind};
 
 pub(crate) struct AlbumPage {
     services: Services,
@@ -44,6 +45,16 @@ impl AlbumPage {
         };
         page.load(cx);
         page
+    }
+
+    /// 队列来源容器。
+    fn source(&self) -> PlaySource {
+        PlaySource {
+            kind: PlaySourceKind::Album,
+            id: self.id,
+            name: self.name.clone(),
+            cover_url: self.detail.as_ref().map(|d| d.cover_url.clone()).unwrap_or_default(),
+        }
     }
 
     fn load(&mut self, cx: &mut Context<Self>) {
@@ -195,7 +206,9 @@ impl Render for AlbumPage {
                                 .on_click(move |_ev, _window, cx| {
                                     weak.update(cx, |this, cx| {
                                         let items = this.detail.as_ref().map(|d| d.songs.clone()).unwrap_or_default();
-                                        this.playback.update(cx, |pb, cx| pb.play_from(items, i, cx));
+                                        let source = this.source();
+                                        this.playback
+                                            .update(cx, |pb, cx| pb.play_from_source(items, i, Some(source), cx));
                                     })
                                     .ok();
                                 })

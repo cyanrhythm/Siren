@@ -15,10 +15,16 @@ use super::settings_store::SettingsStore;
 use siren_core::lyrics::LyricLine;
 use siren_core::model::{Artist, ArtistAlbum, ArtistDetail, AudioQuality, CommentPage, Song, SongWiki};
 use siren_core::network::client::NeteaseClient;
-use siren_core::player::{Mpv, PlayMode, PlaybackController, PlaybackState, Player, SilentEngine};
+use siren_core::player::{
+    Mpv, PlayMode, PlaySource, PlaySourceKind, PlaybackController, PlaybackState, Player, SilentEngine,
+};
 use siren_platform::{
     MediaCommand, MediaMetadata, MediaSession, MediaSessionConfig, PlatformMediaSession, PlaybackStatus,
 };
+
+/// 播放上下文标签（对齐 Melodia）。
+pub(crate) const CONTEXT_INTELLIGENCE: &str = "intelligence";
+pub(crate) const CONTEXT_ROAMING: &str = "similar_roaming";
 
 /// 退出时同步落盘用的全局句柄（弱引用）。
 pub(crate) struct PlaybackHandle(std::sync::Mutex<Option<WeakEntity<Playback>>>);
@@ -76,6 +82,8 @@ pub(crate) struct Playback {
     /// 正在播放的歌曲与起始时刻（用于打卡上报时长）。
     playing_id: Option<i64>,
     playing_at: Option<Instant>,
+    /// 打卡上报的容器 id（歌单来源用歌单 id，其余用歌曲 id）。
+    reporting_container: i64,
     progress_slider: Entity<SliderState>,
     volume_slider: Entity<SliderState>,
     media: Option<PlatformMediaSession>,
@@ -110,7 +118,15 @@ impl Playback {
                 _ => (0, 0),
             };
             if player
-                .restore(queue_session.queue, index, queue_session.mode, position_ms, duration_ms)
+                .restore(
+                    queue_session.queue,
+                    index,
+                    queue_session.mode,
+                    position_ms,
+                    duration_ms,
+                    queue_session.play_source,
+                    queue_session.play_context,
+                )
                 .is_some()
             {
                 resume_ms = (position_ms > 0).then_some(position_ms);
@@ -195,6 +211,7 @@ impl Playback {
                 was_playing: false,
                 playing_id: None,
                 playing_at: None,
+                reporting_container: 0,
                 progress_slider,
                 volume_slider,
                 media,
@@ -297,6 +314,8 @@ impl Playback {
                     cx.notify();
                     return;
                 }
+                this.player.set_source(None);
+                this.player.set_context(Some(CONTEXT_ROAMING.to_string()));
                 if let Some(first) = this.player.set_queue(songs) {
                     this.resolve_and_play(first, cx);
                 }
@@ -328,6 +347,8 @@ impl Playback {
                     cx.notify();
                     return;
                 }
+                this.player.set_source(None);
+                this.player.set_context(Some(CONTEXT_INTELLIGENCE.to_string()));
                 if let Some(first) = this.player.set_queue(songs) {
                     this.resolve_and_play(first, cx);
                 }
@@ -517,6 +538,8 @@ impl Playback {
             queue,
             index: state.current_index.unwrap_or(0),
             mode: state.mode,
+            play_context: self.player.context().map(str::to_string),
+            play_source: self.player.source().cloned(),
         }
         .save();
     }
@@ -563,8 +586,21 @@ impl Playback {
         self.play_from(items, 0, cx);
     }
 
-    /// 用给定歌曲列表建立队列并播放指定下标。
+    /// 用给定歌曲列表建立队列并播放指定下标（无来源容器）。
     pub(crate) fn play_from(&mut self, items: Vec<Song>, index: usize, cx: &mut Context<Self>) {
+        self.play_from_source(items, index, None, cx);
+    }
+
+    /// 用给定歌曲列表建立队列并播放指定下标，记录来源容器（歌单/专辑）。
+    pub(crate) fn play_from_source(
+        &mut self,
+        items: Vec<Song>,
+        index: usize,
+        source: Option<PlaySource>,
+        cx: &mut Context<Self>,
+    ) {
+        self.player.set_source(source);
+        self.player.set_context(None);
         if let Some(song) = self.player.set_queue(items) {
             let target = if index == 0 {
                 song
@@ -611,13 +647,22 @@ impl Playback {
         cx.notify();
     }
 
+    /// 打卡上报的容器 id：歌单来源用歌单 id，其余用歌曲 id（对齐 Melodia）。
+    fn report_container(&self, song_id: i64) -> i64 {
+        match self.player.source() {
+            Some(source) if source.kind == PlaySourceKind::Playlist => source.id,
+            _ => song_id,
+        }
+    }
+
     /// 打卡上报上一首的实际播放时长（切歌时）。
     fn finish_previous(&mut self) {
         if let (Some(prev), Some(at)) = (self.playing_id, self.playing_at) {
             let seconds = at.elapsed().as_secs() as i64;
+            let container = self.reporting_container;
             let client = self.client.clone();
             self.handle.spawn(async move {
-                let _ = siren_core::network::api::report_play_end(&client, prev, prev, seconds).await;
+                let _ = siren_core::network::api::report_play_end(&client, prev, container, seconds).await;
             });
         }
     }
@@ -630,10 +675,12 @@ impl Playback {
         self.finish_previous();
         let client_report = self.client.clone();
         let song_id = song.id;
+        let container = self.report_container(song_id);
         self.playing_id = Some(song_id);
         self.playing_at = Some(Instant::now());
+        self.reporting_container = container;
         self.handle.spawn(async move {
-            let _ = siren_core::network::api::report_start_play(&client_report, song_id, song_id).await;
+            let _ = siren_core::network::api::report_start_play(&client_report, song_id, container).await;
         });
 
         // 拉取歌曲详情（发行时间等），完成后刷新正在播放栏。

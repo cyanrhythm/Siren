@@ -18,6 +18,7 @@ use super::super::playback::Playback;
 use super::super::services::Services;
 use super::super::{fmt_time, icon, page_shell_with_header, PageEvent};
 use crate::theme;
+use siren_core::player::{PlaySource, PlaySourceKind};
 
 /// 封面裁剪状态。
 struct CropState {
@@ -129,6 +130,16 @@ impl PlaylistPage {
         };
         page.load(cx);
         page
+    }
+
+    /// 队列来源容器（用于「正在播放」与打卡上报）。
+    fn source(&self) -> PlaySource {
+        PlaySource {
+            kind: PlaySourceKind::Playlist,
+            id: self.id,
+            name: self.name.clone(),
+            cover_url: self.detail.as_ref().map(|d| d.cover_url.clone()).unwrap_or_default(),
+        }
     }
 
     fn load(&mut self, cx: &mut Context<Self>) {
@@ -889,7 +900,9 @@ impl Render for PlaylistPage {
                                 weak_play
                                     .update(cx, |page, cx| {
                                         let items = page.detail.as_ref().map(|d| d.tracks.clone()).unwrap_or_default();
-                                        page.playback.update(cx, |pb, cx| pb.play_from(items, 0, cx));
+                                        let source = page.source();
+                                        page.playback
+                                            .update(cx, |pb, cx| pb.play_from_source(items, 0, Some(source), cx));
                                     })
                                     .ok();
                             })
@@ -1014,7 +1027,9 @@ impl Render for PlaylistPage {
                                     weak.update(cx, |this, cx| {
                                         let items = this.detail.as_ref().map(|d| d.tracks.clone()).unwrap_or_default();
                                         let idx = items.iter().position(|s| s.id == sid).unwrap_or(0);
-                                        this.playback.update(cx, |pb, cx| pb.play_from(items, idx, cx));
+                                        let source = this.source();
+                                        this.playback
+                                            .update(cx, |pb, cx| pb.play_from_source(items, idx, Some(source), cx));
                                     })
                                     .ok();
                                 })

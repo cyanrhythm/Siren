@@ -107,9 +107,30 @@ impl Player {
         self.queue.items().to_vec()
     }
 
+    /// 队列来源容器。
+    pub fn source(&self) -> Option<&crate::player::PlaySource> {
+        self.queue.source()
+    }
+
+    /// 设置队列来源容器。
+    pub fn set_source(&mut self, source: Option<crate::player::PlaySource>) {
+        self.queue.set_source(source);
+    }
+
+    /// 播放上下文标签。
+    pub fn context(&self) -> Option<&str> {
+        self.queue.context()
+    }
+
+    /// 设置播放上下文标签。
+    pub fn set_context(&mut self, context: Option<String>) {
+        self.queue.set_context(context);
+    }
+
     /// 恢复队列/当前曲/进度（不加载音频；等待调用方解析 URL 后 [`Player::play_url`]）。
     ///
     /// 恢复后进入「等待加载」窗口：引擎尚未加载新文件，期间跳过进度同步。
+    #[allow(clippy::too_many_arguments)]
     pub fn restore(
         &mut self,
         queue: Vec<Song>,
@@ -117,12 +138,16 @@ impl Player {
         mode: PlayMode,
         position_ms: i64,
         duration_ms: i64,
+        source: Option<crate::player::PlaySource>,
+        context: Option<String>,
     ) -> Option<Song> {
         if queue.is_empty() {
             return None;
         }
         self.queue.set_items(queue);
         self.queue.set_mode(mode);
+        self.queue.set_source(source);
+        self.queue.set_context(context);
         let idx = index.min(self.queue.len().saturating_sub(1));
         self.queue.select(idx);
         self.sync_queue();

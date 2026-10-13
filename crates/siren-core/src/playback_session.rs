@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::model::Song;
-use crate::player::PlayMode;
+use crate::player::{PlayMode, PlaySource};
 
 fn config_path(name: &str) -> Option<PathBuf> {
     directories::ProjectDirs::from("com", "cyanrhythm", "Siren").map(|dirs| dirs.config_dir().join(name))
@@ -41,6 +41,12 @@ pub struct QueueSession {
     pub queue: Vec<Song>,
     pub index: usize,
     pub mode: PlayMode,
+    /// 播放上下文标签（心动/漫游等）。
+    #[serde(default)]
+    pub play_context: Option<String>,
+    /// 队列来源容器（歌单/专辑）。
+    #[serde(default)]
+    pub play_source: Option<PlaySource>,
 }
 
 impl QueueSession {

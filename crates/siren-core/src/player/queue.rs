@@ -19,12 +19,31 @@ pub enum PlayMode {
     Shuffle,
 }
 
+/// 队列来源容器（供「正在播放」显示名称/跳转，并作为打卡上报的容器 id）。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PlaySource {
+    pub kind: PlaySourceKind,
+    pub id: i64,
+    pub name: String,
+    #[serde(default)]
+    pub cover_url: String,
+}
+
+/// 来源容器类型。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum PlaySourceKind {
+    Playlist,
+    Album,
+}
+
 /// 播放队列。
 #[derive(Debug, Default)]
 pub struct PlayerQueue {
     items: Vec<Song>,
     current: Option<usize>,
     mode: PlayMode,
+    source: Option<PlaySource>,
+    context: Option<String>,
 }
 
 impl PlayerQueue {
@@ -40,6 +59,24 @@ impl PlayerQueue {
 
     pub fn items(&self) -> &[Song] {
         &self.items
+    }
+
+    /// 队列来源容器。
+    pub fn source(&self) -> Option<&PlaySource> {
+        self.source.as_ref()
+    }
+
+    pub fn set_source(&mut self, source: Option<PlaySource>) {
+        self.source = source;
+    }
+
+    /// 播放上下文标签（如 `intelligence` / `similar_roaming`）。
+    pub fn context(&self) -> Option<&str> {
+        self.context.as_deref()
+    }
+
+    pub fn set_context(&mut self, context: Option<String>) {
+        self.context = context;
     }
 
     pub fn len(&self) -> usize {
