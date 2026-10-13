@@ -12,18 +12,18 @@ use crate::theme;
 impl Root {
     /// 打开「新建歌单」浮层。
     pub(crate) fn open_create(&mut self, cx: &mut Context<Self>) {
-        self.create_open = true;
+        self.ops.create_open = true;
         cx.notify();
     }
 
     pub(crate) fn close_create(&mut self, cx: &mut Context<Self>) {
-        self.create_open = false;
+        self.ops.create_open = false;
         cx.notify();
     }
 
     /// 提交新建歌单。
     pub(crate) fn submit_create(&mut self, cx: &mut Context<Self>) {
-        let name = self.create_input.read(cx).value().trim().to_string();
+        let name = self.ops.create_input.read(cx).value().trim().to_string();
         if name.is_empty() {
             return;
         }
@@ -33,7 +33,7 @@ impl Root {
             let id = siren_core::network::api::playlist_create(&client, &name, 0).await.ok();
             let _ = tx.send(id);
         });
-        self.create_open = false;
+        self.ops.create_open = false;
         cx.notify();
         cx.spawn(async move |this, cx| {
             let id = rx.await.ok().flatten();
@@ -50,8 +50,8 @@ impl Root {
 
     /// 打开「添加到歌单」浮层（拉取我的歌单）。
     pub(crate) fn open_picker(&mut self, song_id: i64, cx: &mut Context<Self>) {
-        self.picker_song = Some(song_id);
-        self.picker_playlists.clear();
+        self.ops.picker_song = Some(song_id);
+        self.ops.picker_playlists.clear();
         cx.notify();
         let Some(uid) = Session::uid(cx) else {
             return;
@@ -68,7 +68,7 @@ impl Root {
             let list = rx.await.unwrap_or_default();
             this.update(cx, |this, cx| {
                 let urls: Vec<String> = list.iter().map(|p| p.cover_url.clone()).collect();
-                this.picker_playlists = list;
+                this.ops.picker_playlists = list;
                 this.services.covers.prefetch(urls, 48.0, cx);
                 cx.notify();
             })
@@ -78,13 +78,13 @@ impl Root {
     }
 
     pub(crate) fn close_picker(&mut self, cx: &mut Context<Self>) {
-        self.picker_song = None;
+        self.ops.picker_song = None;
         cx.notify();
     }
 
     /// 把待加入歌曲加到指定歌单，成功后刷新音乐库歌单列表（封面/数量）。
     pub(crate) fn add_to_playlist(&mut self, pid: i64, cx: &mut Context<Self>) {
-        let Some(song) = self.picker_song else {
+        let Some(song) = self.ops.picker_song else {
             return;
         };
         let client = self.services.client.clone();
@@ -95,7 +95,7 @@ impl Root {
                 .is_ok();
             let _ = tx.send(ok);
         });
-        self.picker_song = None;
+        self.ops.picker_song = None;
         cx.notify();
         // 待接口返回后再刷新列表
         cx.spawn(async move |this, cx| {
@@ -142,7 +142,7 @@ impl Root {
                             .text_color(theme::text_primary())
                             .child("新建歌单"),
                     )
-                    .child(Input::new(&self.create_input))
+                    .child(Input::new(&self.ops.create_input))
                     .child(
                         div()
                             .flex()
@@ -177,7 +177,7 @@ impl Root {
             .w_full()
             .gap(px(4.0))
             .overflow_y_scroll();
-        for pl in &self.picker_playlists {
+        for pl in &self.ops.picker_playlists {
             let weak = weak.clone();
             let pid = pl.id;
             list = list.child(
@@ -267,19 +267,19 @@ impl Root {
 
     /// 打开重命名歌单浮层。
     pub(crate) fn open_rename(&mut self, id: i64, cx: &mut Context<Self>) {
-        self.rename_pid = Some(id);
+        self.ops.rename_pid = Some(id);
         cx.notify();
     }
 
     pub(crate) fn close_rename(&mut self, cx: &mut Context<Self>) {
-        self.rename_pid = None;
+        self.ops.rename_pid = None;
         cx.notify();
     }
 
     /// 提交重命名。
     pub(crate) fn submit_rename(&mut self, cx: &mut Context<Self>) {
-        let Some(id) = self.rename_pid else { return };
-        let name = self.rename_input.read(cx).value().trim().to_string();
+        let Some(id) = self.ops.rename_pid else { return };
+        let name = self.ops.rename_input.read(cx).value().trim().to_string();
         if name.is_empty() {
             return;
         }
@@ -292,7 +292,7 @@ impl Root {
                 .is_ok();
             let _ = tx.send(ok);
         });
-        self.rename_pid = None;
+        self.ops.rename_pid = None;
         cx.notify();
         // 待接口返回后再刷新列表，并即时更新当前打开歌单页的标题
         cx.spawn(async move |this, cx| {
@@ -311,24 +311,24 @@ impl Root {
 
     /// 打开删除确认浮层。
     pub(crate) fn open_delete(&mut self, id: i64, cx: &mut Context<Self>) {
-        self.delete_pid = Some(id);
+        self.ops.delete_pid = Some(id);
         cx.notify();
     }
 
     pub(crate) fn close_delete(&mut self, cx: &mut Context<Self>) {
-        self.delete_pid = None;
+        self.ops.delete_pid = None;
         cx.notify();
     }
 
     pub(crate) fn confirm_delete(&mut self, cx: &mut Context<Self>) {
-        let Some(id) = self.delete_pid else { return };
+        let Some(id) = self.ops.delete_pid else { return };
         let client = self.services.client.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.services.handle.spawn(async move {
             let ok = siren_core::network::api::playlist_delete(&client, id).await.is_ok();
             let _ = tx.send(ok);
         });
-        self.delete_pid = None;
+        self.ops.delete_pid = None;
         cx.notify();
         // 待接口返回后再刷新列表；若删除的是当前打开的歌单则返回首页
         cx.spawn(async move |this, cx| {
@@ -390,7 +390,7 @@ impl Root {
                             .text_color(theme::text_primary())
                             .child("重命名歌单"),
                     )
-                    .child(Input::new(&self.rename_input))
+                    .child(Input::new(&self.ops.rename_input))
                     .child(
                         div()
                             .flex()
@@ -474,19 +474,19 @@ impl Root {
 
     /// 打开编辑简介浮层。
     pub(crate) fn open_desc(&mut self, id: i64, cx: &mut Context<Self>) {
-        self.desc_pid = Some(id);
+        self.ops.desc_pid = Some(id);
         cx.notify();
     }
 
     pub(crate) fn close_desc(&mut self, cx: &mut Context<Self>) {
-        self.desc_pid = None;
+        self.ops.desc_pid = None;
         cx.notify();
     }
 
     /// 提交编辑简介。
     pub(crate) fn submit_desc(&mut self, cx: &mut Context<Self>) {
-        let Some(id) = self.desc_pid else { return };
-        let desc = self.desc_input.read(cx).value().to_string();
+        let Some(id) = self.ops.desc_pid else { return };
+        let desc = self.ops.desc_input.read(cx).value().to_string();
         let client = self.services.client.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.services.handle.spawn(async move {
@@ -495,7 +495,7 @@ impl Root {
                 .is_ok();
             let _ = tx.send(ok);
         });
-        self.desc_pid = None;
+        self.ops.desc_pid = None;
         cx.notify();
         cx.spawn(async move |this, cx| {
             let ok = rx.await.unwrap_or(false);
@@ -541,7 +541,7 @@ impl Root {
                             .text_color(theme::text_primary())
                             .child("编辑简介"),
                     )
-                    .child(Input::new(&self.desc_input))
+                    .child(Input::new(&self.ops.desc_input))
                     .child(
                         div()
                             .flex()

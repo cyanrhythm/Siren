@@ -16,24 +16,24 @@ impl Root {
     /// 打开评论面板（用播放器已载入的首页数据播种）。
     pub(crate) fn open_comments(&mut self, cx: &mut Context<Self>) {
         let page = self.playback.read(cx).comments().clone();
-        self.comments_items = page.comments.clone();
-        self.comments_total = page.total;
-        self.comments_has_more = page.has_more;
-        self.comments_cursor = if page.cursor.is_empty() {
+        self.comments.items = page.comments.clone();
+        self.comments.total = page.total;
+        self.comments.has_more = page.has_more;
+        self.comments.cursor = if page.cursor.is_empty() {
             "0".into()
         } else {
             page.cursor
         };
-        self.comment_floor_open = None;
-        self.comment_floor_items.clear();
-        self.comments_open = true;
+        self.comments.floor_open = None;
+        self.comments.floor_items.clear();
+        self.comments.open = true;
         let avatars: Vec<String> = page.comments.iter().map(|c| c.user.avatar_url.clone()).collect();
         self.services.covers.prefetch(avatars, 32.0, cx);
         cx.notify();
     }
 
     pub(crate) fn close_comments(&mut self, cx: &mut Context<Self>) {
-        self.comments_open = false;
+        self.comments.open = false;
         cx.notify();
     }
 
@@ -42,7 +42,7 @@ impl Root {
             return;
         };
         let tid = api::comment_thread_id(song.id);
-        let cursor = self.comments_cursor.clone();
+        let cursor = self.comments.cursor.clone();
         let client = self.services.client.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.services.handle.spawn(async move {
@@ -54,9 +54,9 @@ impl Root {
             this.update(cx, |this, cx| {
                 if let Some(page) = page {
                     let avatars: Vec<String> = page.comments.iter().map(|c| c.user.avatar_url.clone()).collect();
-                    this.comments_items.extend(page.comments);
-                    this.comments_cursor = page.cursor;
-                    this.comments_has_more = page.has_more;
+                    this.comments.items.extend(page.comments);
+                    this.comments.cursor = page.cursor;
+                    this.comments.has_more = page.has_more;
                     this.services.covers.prefetch(avatars, 32.0, cx);
                 }
                 cx.notify();
@@ -72,7 +72,7 @@ impl Root {
         };
         let tid = api::comment_thread_id(song.id);
         let mut like = false;
-        if let Some(item) = self.comments_items.iter_mut().find(|c| c.comment_id == id) {
+        if let Some(item) = self.comments.items.iter_mut().find(|c| c.comment_id == id) {
             item.liked = !item.liked;
             if item.liked {
                 item.liked_count += 1;
@@ -89,9 +89,9 @@ impl Root {
     }
 
     fn load_comment_floor(&mut self, parent_id: i64, cx: &mut Context<Self>) {
-        if self.comment_floor_open == Some(parent_id) {
-            self.comment_floor_open = None;
-            self.comment_floor_items.clear();
+        if self.comments.floor_open == Some(parent_id) {
+            self.comments.floor_open = None;
+            self.comments.floor_items.clear();
             cx.notify();
             return;
         }
@@ -100,8 +100,8 @@ impl Root {
         };
         let tid = api::comment_thread_id(song.id);
         let client = self.services.client.clone();
-        self.comment_floor_open = Some(parent_id);
-        self.comment_floor_items.clear();
+        self.comments.floor_open = Some(parent_id);
+        self.comments.floor_items.clear();
         cx.notify();
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.services.handle.spawn(async move {
@@ -113,7 +113,7 @@ impl Root {
             this.update(cx, |this, cx| {
                 if let Some(page) = page {
                     let avatars: Vec<String> = page.comments.iter().map(|c| c.user.avatar_url.clone()).collect();
-                    this.comment_floor_items = page.comments;
+                    this.comments.floor_items = page.comments;
                     this.services.covers.prefetch(avatars, 32.0, cx);
                 }
                 cx.notify();
@@ -134,16 +134,16 @@ impl Root {
             .gap(px(12.0))
             .overflow_y_scroll();
 
-        for item in &self.comments_items {
+        for item in &self.comments.items {
             list = list.child(self.comment_row(item, weak.clone()));
-            if self.comment_floor_open == Some(item.comment_id) {
-                for reply in &self.comment_floor_items {
+            if self.comments.floor_open == Some(item.comment_id) {
+                for reply in &self.comments.floor_items {
                     list = list.child(div().pl(px(40.0)).child(self.comment_row(reply, weak.clone())));
                 }
             }
         }
 
-        let footer: AnyElement = if self.comments_has_more {
+        let footer: AnyElement = if self.comments.has_more {
             let weak_more = weak.clone();
             div()
                 .w_full()
@@ -199,7 +199,7 @@ impl Root {
                                     .text_lg()
                                     .font_weight(FontWeight::BOLD)
                                     .text_color(theme::text_primary())
-                                    .child(format!("评论 ({})", self.comments_total)),
+                                    .child(format!("评论 ({})", self.comments.total)),
                             )
                             .child(
                                 div()

@@ -19,7 +19,7 @@ use crate::theme;
 
 impl Root {
     pub(crate) fn now_playing(&self, weak: WeakEntity<Self>, cx: &App) -> impl IntoElement {
-        if !self.now_playing_open {
+        if !self.np.open {
             let weak_expand = weak;
             return div()
                 .v_flex()
@@ -113,7 +113,7 @@ impl Root {
                         Some(artist_albums_card(
                             &albums,
                             &name,
-                            self.np_album_page,
+                            self.np.album_page,
                             &self.services.covers,
                             weak.clone(),
                         ))
@@ -125,7 +125,7 @@ impl Root {
                     } else {
                         Some(similar_artists_card(
                             &simi,
-                            self.np_simi_page,
+                            self.np.simi_page,
                             &self.services.covers,
                             weak.clone(),
                         ))
@@ -439,8 +439,8 @@ fn artist_albums_card(
         title,
         p,
         pages,
-        |root, cx| root.set_np_page(true, root.np_album_page.wrapping_sub(1), cx),
-        |root, cx| root.set_np_page(true, root.np_album_page + 1, cx),
+        |root, cx| root.set_np_page(true, root.np.album_page.wrapping_sub(1), cx),
+        |root, cx| root.set_np_page(true, root.np.album_page + 1, cx),
         row.into_any_element(),
         weak,
     )
@@ -480,8 +480,8 @@ fn similar_artists_card(
         "探索类似艺人".to_string(),
         p,
         pages,
-        |root, cx| root.set_np_page(false, root.np_simi_page.wrapping_sub(1), cx),
-        |root, cx| root.set_np_page(false, root.np_simi_page + 1, cx),
+        |root, cx| root.set_np_page(false, root.np.simi_page.wrapping_sub(1), cx),
+        |root, cx| root.set_np_page(false, root.np.simi_page + 1, cx),
         row.into_any_element(),
         weak,
     )
@@ -572,9 +572,9 @@ impl Root {
     /// 设置歌手专辑 / 相似歌手卡片页码。
     pub(crate) fn set_np_page(&mut self, album: bool, page: usize, cx: &mut Context<Self>) {
         if album {
-            self.np_album_page = page;
+            self.np.album_page = page;
         } else {
-            self.np_simi_page = page;
+            self.np.simi_page = page;
         }
         cx.notify();
     }

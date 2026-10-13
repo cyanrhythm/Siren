@@ -9,17 +9,17 @@
 
 ## A. 状态管理（P0）
 
-- [ ] **A1 Root 上帝对象**：`ui/mod.rs:163` 57 个字段，混合导航/登录/评论/歌单写操作/正在播放配置/账号。
+- [x] **A1 Root 上帝对象**：`ui/mod.rs:163` 57 个字段，混合导航/登录/评论/歌单写操作/正在播放配置/账号。
   拆分为 `NavState` / `LoginDialogState` / `CommentsPanelState` / `PlaylistOpsState` / `NowPlayingUi`。
-- [ ] **A2 设置无单一来源**：持久化是散装 `settings::{load,save}_*`（`siren-core/src/settings.rs`），
+- [x] **A2 设置无单一来源**：持久化是散装 `settings::{load,save}_*`（`siren-core/src/settings.rs`），
   同一 `settings.json` 被 `Playback`（quality/media_keys）、`Root`（np_width/np_cards）、`lib.rs`（window）三处拥有。
   → 统一为一个 `Settings` 模型 + 应用层全局 `SettingsStore`（GPUI Global）。
-- [ ] **A3 账号双真源**：`Root.account`（`ui/mod.rs:189`）与 `LibraryPage.{logged_in,nickname,avatar_url,uid}`（`pages/library.rs:22`），
+- [x] **A3 账号双真源**：`Root.account`（`ui/mod.rs:189`）与 `LibraryPage.{logged_in,nickname,avatar_url,uid}`（`pages/library.rs:22`），
   靠 `PageEvent::Account/LoggedOut` 手动同步。→ 收敛为单一 `Session`（全局）。
 - [ ] **A4 评论双真源**：`Playback.comments`（预览）与 `Root.comments_*`（面板）两套。
 - [ ] **A5 订阅态分散**：`Playback.liked`、`PlaylistPage.subscribed`、`AlbumPage.subscribed` 各存一份。
 - [ ] **A6 路由状态并行**：`nav: Vec<Route>` 与 `playlist_page/album_page: Option<Entity>` 并行维护。
-- [ ] **A7 `navigate` 清空历史**：`ui/mod.rs:392` 每次 `nav.clear()`，`back` 形同虚设（应在首次进入推送）。
+- [x] **A7 路由**：确认设计为「顶层页切换重置历史、详情页 push」；已封装为 `NavState`（含 `route/reset/push/pop`）。
 
 ## B. 异步与健壮性（P1）
 

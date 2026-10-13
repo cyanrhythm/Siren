@@ -159,6 +159,91 @@ impl NpCard {
     }
 }
 
+/// 导航栈：顶层路由历史。
+pub(crate) struct NavState {
+    stack: Vec<Route>,
+}
+
+impl NavState {
+    fn new(route: Route) -> Self {
+        Self { stack: vec![route] }
+    }
+
+    /// 当前页面。
+    fn route(&self) -> Route {
+        self.stack.last().cloned().unwrap_or(Route::Home)
+    }
+
+    /// 切换顶层页面：历史重置为单元素。
+    fn reset(&mut self, route: Route) {
+        self.stack.clear();
+        self.stack.push(route);
+    }
+
+    fn push(&mut self, route: Route) {
+        self.stack.push(route);
+    }
+
+    /// 返回上一页；栈顶无可回退项时返回 `false`。
+    fn pop(&mut self) -> bool {
+        if self.stack.len() > 1 {
+            self.stack.pop();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn last_mut(&mut self) -> Option<&mut Route> {
+        self.stack.last_mut()
+    }
+}
+
+/// 登录弹窗状态。
+pub(crate) struct LoginDialogState {
+    pub(crate) open: bool,
+    pub(crate) tab: login_dialog::LoginTab,
+    /// 二维码轮询的「代」计数：自增即可使旧任务失效。
+    pub(crate) gen: u64,
+    pub(crate) qr_image: Option<Arc<Image>>,
+    pub(crate) status: SharedString,
+    pub(crate) input: Entity<InputState>,
+}
+
+/// 歌曲评论面板状态。
+#[derive(Default)]
+pub(crate) struct CommentsPanelState {
+    pub(crate) open: bool,
+    pub(crate) items: Vec<siren_core::model::CommentItem>,
+    pub(crate) total: i64,
+    pub(crate) has_more: bool,
+    pub(crate) cursor: String,
+    pub(crate) floor_open: Option<i64>,
+    pub(crate) floor_items: Vec<siren_core::model::CommentItem>,
+}
+
+/// 歌单写操作浮层状态。
+pub(crate) struct PlaylistOpsState {
+    pub(crate) create_open: bool,
+    pub(crate) create_input: Entity<InputState>,
+    pub(crate) picker_song: Option<i64>,
+    pub(crate) picker_playlists: Vec<Playlist>,
+    pub(crate) rename_pid: Option<i64>,
+    pub(crate) rename_input: Entity<InputState>,
+    pub(crate) delete_pid: Option<i64>,
+    pub(crate) desc_pid: Option<i64>,
+    pub(crate) desc_input: Entity<InputState>,
+}
+
+/// 正在播放栏的 UI 状态。
+pub(crate) struct NowPlayingUi {
+    pub(crate) open: bool,
+    pub(crate) album_page: usize,
+    pub(crate) simi_page: usize,
+    /// 已为哪首歌预取过播放封面（避免重复预取）。
+    pub(crate) cover_song: Option<i64>,
+}
+
 /// 主窗口根组件：导航与外壳。
 pub struct Root {
     _runtime: tokio::runtime::Runtime,
@@ -169,47 +254,18 @@ pub struct Root {
     pl_filter_input: Entity<InputState>,
     /// 歌单「添加歌曲」搜索框（跨歌单复用）。
     pl_add_input: Entity<InputState>,
-    nav: Vec<Route>,
+    nav: NavState,
     home: Entity<HomePage>,
     library: Entity<LibraryPage>,
     search: Entity<SearchPage>,
     recent: Entity<RecentPage>,
     playlist_page: Option<Entity<PlaylistPage>>,
     album_page: Option<Entity<AlbumPage>>,
-    now_playing_open: bool,
+    np: NowPlayingUi,
     np_width_slider: Entity<SliderState>,
-    /// 歌手专辑 / 相似歌手卡片的当前页码。
-    np_album_page: usize,
-    np_simi_page: usize,
-    /// 已为哪首歌预取过播放封面（避免重复预取）。
-    cover_song: Option<i64>,
-    // ── 登录弹窗状态 ───────────────────────────────────────────
-    login_open: bool,
-    login_tab: login_dialog::LoginTab,
-    /// 二维码轮询的“代”计数：自增即可使旧任务失效。
-    login_gen: u64,
-    qr_image: Option<Arc<Image>>,
-    login_status: SharedString,
-    login_input: Entity<InputState>,
-    // ── 评论面板状态 ───────────────────────────────────────────
-    comments_open: bool,
-    comments_items: Vec<siren_core::model::CommentItem>,
-    comments_total: i64,
-    comments_has_more: bool,
-    comments_cursor: String,
-    comment_floor_open: Option<i64>,
-    comment_floor_items: Vec<siren_core::model::CommentItem>,
-    // ── 歌单写操作 ─────────────────────────────────────────────
-    create_open: bool,
-    create_input: Entity<InputState>,
-    /// 待加入歌单的歌曲 id（Some 时显示歌单选择浮层）。
-    picker_song: Option<i64>,
-    picker_playlists: Vec<Playlist>,
-    rename_pid: Option<i64>,
-    rename_input: Entity<InputState>,
-    delete_pid: Option<i64>,
-    desc_pid: Option<i64>,
-    desc_input: Entity<InputState>,
+    login: LoginDialogState,
+    comments: CommentsPanelState,
+    ops: PlaylistOpsState,
     _subs: Vec<Subscription>,
     _search_sub: Subscription,
 }
@@ -335,40 +391,43 @@ impl Root {
                 search_input,
                 pl_filter_input,
                 pl_add_input,
-                nav: vec![initial_route],
+                nav: NavState::new(initial_route),
                 home,
                 library,
                 search,
                 recent,
                 playlist_page: None,
                 album_page: None,
-                now_playing_open: true,
+                np: NowPlayingUi {
+                    open: true,
+                    album_page: 0,
+                    simi_page: 0,
+                    cover_song: None,
+                },
                 np_width_slider,
-                np_album_page: 0,
-                np_simi_page: 0,
-                cover_song: None,
-                login_open: false,
-                login_tab: login_dialog::LoginTab::Scan,
-                login_gen: 0,
-                qr_image: None,
-                login_status: SharedString::default(),
-                login_input,
-                comments_open: false,
-                comments_items: Vec::new(),
-                comments_total: 0,
-                comments_has_more: false,
-                comments_cursor: "0".to_string(),
-                comment_floor_open: None,
-                comment_floor_items: Vec::new(),
-                create_open: false,
-                create_input,
-                picker_song: None,
-                picker_playlists: Vec::new(),
-                rename_pid: None,
-                rename_input,
-                delete_pid: None,
-                desc_pid: None,
-                desc_input,
+                login: LoginDialogState {
+                    open: false,
+                    tab: login_dialog::LoginTab::Scan,
+                    gen: 0,
+                    qr_image: None,
+                    status: SharedString::default(),
+                    input: login_input,
+                },
+                comments: CommentsPanelState {
+                    cursor: "0".to_string(),
+                    ..Default::default()
+                },
+                ops: PlaylistOpsState {
+                    create_open: false,
+                    create_input,
+                    picker_song: None,
+                    picker_playlists: Vec::new(),
+                    rename_pid: None,
+                    rename_input,
+                    delete_pid: None,
+                    desc_pid: None,
+                    desc_input,
+                },
                 _subs: subs,
                 _search_sub,
             }
@@ -376,13 +435,12 @@ impl Root {
     }
 
     fn route(&self) -> Route {
-        self.nav.last().cloned().unwrap_or(Route::Home)
+        self.nav.route()
     }
 
     /// 切换顶层页面（侧栏导航）。
     fn navigate(&mut self, route: Route, cx: &mut Context<Self>) {
-        self.nav.clear();
-        self.nav.push(route);
+        self.nav.reset(route);
         self.playlist_page = None;
         self.album_page = None;
         cx.notify();
@@ -415,8 +473,8 @@ impl Root {
     fn on_playback(&mut self, playback: Entity<Playback>, cx: &mut Context<Self>) {
         let song = playback.read(cx).state().song;
         let id = song.as_ref().map(|s| s.id);
-        if id != self.cover_song {
-            self.cover_song = id;
+        if id != self.np.cover_song {
+            self.np.cover_song = id;
             if let Some(song) = &song {
                 self.services.covers.prefetch([song.cover_url.clone()], 56.0, cx);
                 self.services.covers.prefetch([song.cover_url.clone()], 512.0, cx);
@@ -515,8 +573,7 @@ impl Root {
     }
 
     fn back(&mut self, cx: &mut Context<Self>) {
-        if self.nav.len() > 1 {
-            self.nav.pop();
+        if self.nav.pop() {
             self.playlist_page = None;
             self.album_page = None;
             cx.notify();
@@ -531,7 +588,7 @@ impl Root {
 
     /// 收起 / 展开正在播放栏。
     fn toggle_now_playing(&mut self, cx: &mut Context<Self>) {
-        self.now_playing_open = !self.now_playing_open;
+        self.np.open = !self.np.open;
         cx.notify();
     }
 
@@ -576,21 +633,21 @@ impl Render for Root {
         let weak_page = cx.weak_entity();
         let weak_login = cx.weak_entity();
         let weak_comments = cx.weak_entity();
-        let login_overlay = self.login_open.then(|| self.login_overlay(weak_login));
-        let comments_overlay = self.comments_open.then(|| self.comments_overlay(weak_comments));
+        let login_overlay = self.login.open.then(|| self.login_overlay(weak_login));
+        let comments_overlay = self.comments.open.then(|| self.comments_overlay(weak_comments));
         let weak_create = cx.weak_entity();
         let weak_picker = cx.weak_entity();
-        let create_overlay = self.create_open.then(|| self.create_overlay(weak_create));
-        let picker_overlay = self.picker_song.map(|_| self.picker_overlay(weak_picker));
+        let create_overlay = self.ops.create_open.then(|| self.create_overlay(weak_create));
+        let picker_overlay = self.ops.picker_song.map(|_| self.picker_overlay(weak_picker));
         let weak_rename = cx.weak_entity();
         let weak_delete = cx.weak_entity();
-        let rename_overlay = self.rename_pid.map(|_| self.rename_overlay(weak_rename));
-        let delete_overlay = self.delete_pid.map(|_| self.delete_overlay(weak_delete));
+        let rename_overlay = self.ops.rename_pid.map(|_| self.rename_overlay(weak_rename));
+        let delete_overlay = self.ops.delete_pid.map(|_| self.delete_overlay(weak_delete));
         let weak_desc = cx.weak_entity();
-        let desc_overlay = self.desc_pid.map(|_| self.desc_overlay(weak_desc));
+        let desc_overlay = self.ops.desc_pid.map(|_| self.desc_overlay(weak_desc));
         // 中间列显式分配宽度，规避 gpui `flex_1` 的横向过度伸展。
         // 右侧栏严格取设置的宽度；空间不足时中间列收缩（不产生横向溢出）。
-        let np_w = if self.now_playing_open {
+        let np_w = if self.np.open {
             SettingsStore::of(cx).np_width()
         } else {
             44.0
