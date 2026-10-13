@@ -47,6 +47,8 @@ pub(crate) struct Playback {
     artist_fans: i64,
     /// 是否启用系统媒体控制（SMTC / MPRIS）。
     media_keys_enabled: bool,
+    /// 上次已重绘的整数秒（用于外壳节流重绘）。
+    last_sec: i64,
     /// 正在播放的歌曲与起始时刻（用于打卡上报时长）。
     playing_id: Option<i64>,
     playing_at: Option<Instant>,
@@ -141,6 +143,7 @@ impl Playback {
                 artist_followed: false,
                 artist_fans: 0,
                 media_keys_enabled: siren_core::settings::load_media_keys(),
+                last_sec: 0,
                 playing_id: None,
                 playing_at: None,
                 progress_slider,
@@ -392,7 +395,7 @@ impl Playback {
 
     fn start_tick_timer(&mut self, window: &Window, cx: &mut Context<Self>) {
         cx.spawn_in(window, async move |this, cx| loop {
-            cx.background_executor().timer(Duration::from_millis(500)).await;
+            cx.background_executor().timer(Duration::from_millis(100)).await;
             if this.update_in(cx, |this, window, cx| this.tick(window, cx)).is_err() {
                 break;
             }
@@ -411,17 +414,25 @@ impl Playback {
             } else {
                 0.0
             };
+            // 进度条以自己的 Entity 高频刷新，保持平滑
             self.progress_slider
                 .update(cx, |s, cx| s.set_value(frac.clamp(0.0, 1.0), window, cx));
         }
-        if state != self.mirrored {
-            self.mirrored = state;
+        // 外壳只在关键状态变化或显示秒变化时重绘（避免每 tick 全量重绘导致卡顿）
+        let sec = state.position_ms / 1000;
+        let key_changed = state.song != self.mirrored.song
+            || state.playing != self.mirrored.playing
+            || state.mode != self.mirrored.mode
+            || state.duration_ms != self.mirrored.duration_ms;
+        self.mirrored = state;
+        if key_changed || sec != self.last_sec {
+            self.last_sec = sec;
             cx.notify();
+            self.push_media_state();
         }
         while let Ok(command) = self.media_cmds.try_recv() {
             self.apply_media_command(command, cx);
         }
-        self.push_media_state();
     }
 
     pub(crate) fn toggle(&mut self, cx: &mut Context<Self>) {
