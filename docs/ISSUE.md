@@ -16,15 +16,15 @@
   → 统一为一个 `Settings` 模型 + 应用层全局 `SettingsStore`（GPUI Global）。
 - [x] **A3 账号双真源**：`Root.account`（`ui/mod.rs:189`）与 `LibraryPage.{logged_in,nickname,avatar_url,uid}`（`pages/library.rs:22`），
   靠 `PageEvent::Account/LoggedOut` 手动同步。→ 收敛为单一 `Session`（全局）。
-- [ ] **A4 评论双真源**：`Playback.comments`（预览）与 `Root.comments_*`（面板）两套。
-- [ ] **A5 订阅态分散**：`Playback.liked`、`PlaylistPage.subscribed`、`AlbumPage.subscribed` 各存一份。
-- [ ] **A6 路由状态并行**：`nav: Vec<Route>` 与 `playlist_page/album_page: Option<Entity>` 并行维护。
+- [x] **A4 评论**：复核后二者语义不同（`Playback.comments` 是当前歌预览卡；`Root.comments` 是指定目标的浮层面板），保留。
+- [x] **A5 订阅/喜欢态**：复核后语义不同（歌曲喜欢 / 歌单订阅 / 专辑订阅），分属各 owner，保留。
+- [x] **A6 路由状态**：导航已收敛为 `NavState`；详情页句柄随路由 push/back 统一清建。
 - [x] **A7 路由**：确认设计为「顶层页切换重置历史、详情页 push」；已封装为 `NavState`（含 `route/reset/push/pop`）。
 
 ## B. 异步与健壮性（P1）
 
 - [x] **B1 页面异步无取消**：为 Playlist/Album/Recent/Search/Library 的加载加 generation guard（登录二维码已有 `gen`）。
-- [ ] **B2 `detach()` 泛滥**：33 处 `.detach()`，错误与取消被忽略；至少记录失败日志。
+- [~] **B2 `detach()`**：已为页面加载加代判；其余发射后不管流程待逐步补失败日志。
 
 ## C. 文档（P0）
 
@@ -34,6 +34,6 @@
 
 ## D. 其他（P2）
 
-- [ ] **D1 `Playback` 承担 UI 偏好**：`media_keys_enabled` 属设置而非播放服务（随 A2 迁移）。
+- [x] **D1 `Playback` UI 偏好**：`quality`/`media_keys` 已迁至设置 store（A2）。
 - [~] **D2 `pages/settings.rs` 仍为 `impl Root`**：随 A1/A2 已改为只读全局 store，暂不再拆独立实体。
 - [ ] **D3 平台未验证**：Linux/macOS 的 playwire/MPRIS 路径尚无实机验证。
