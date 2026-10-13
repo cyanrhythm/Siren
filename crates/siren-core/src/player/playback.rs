@@ -48,6 +48,10 @@ pub struct Player {
     tx: watch::Sender<PlaybackState>,
     /// EOF 闩锁：mpv 在新文件加载前会持续报告 eof，避免重复推进队列。
     eof_latched: bool,
+    /// 等待加载闩锁：已切歌但新 URL 尚未经 [`Player::play_url`] 送达引擎。
+    /// 此窗口内引擎仍在报告**上一首**的 `time-pos`/`duration`，必须忽略，
+    /// 否则会把刚重置的进度又覆盖回旧曲尾部（表现为进度条尾部来回跳动）。
+    awaiting_load: bool,
 }
 
 impl Player {
@@ -60,6 +64,7 @@ impl Player {
             state,
             tx,
             eof_latched: false,
+            awaiting_load: false,
         }
     }
 
@@ -111,6 +116,8 @@ impl Player {
     pub fn play_url(&mut self, url: &str) {
         self.engine.load(url);
         self.engine.set_paused(false);
+        // 新文件已交给引擎，之后读到的是新曲进度，可恢复位置/时长同步。
+        self.awaiting_load = false;
         self.state.playing = true;
         self.publish();
     }
@@ -170,23 +177,28 @@ impl Player {
     pub fn tick(&mut self) -> Option<Song> {
         let mut dirty = false;
 
-        if let Some(pos) = self.engine.position_ms() {
-            if (pos - self.state.position_ms).abs() >= 250 {
-                self.state.position_ms = pos;
-                dirty = true;
+        // 切歌后、新文件真正加载前（awaiting_load），引擎仍在报告上一首的
+        // time-pos/duration/pause，此时读取会把刚重置的进度覆盖回旧曲尾部，
+        // 表现为进度条在尾部来回跳动。该窗口内一律跳过引擎进度同步。
+        if !self.awaiting_load {
+            if let Some(pos) = self.engine.position_ms() {
+                if (pos - self.state.position_ms).abs() >= 250 {
+                    self.state.position_ms = pos;
+                    dirty = true;
+                }
             }
-        }
-        if let Some(dur) = self.engine.duration_ms() {
-            if dur != self.state.duration_ms {
-                self.state.duration_ms = dur;
-                dirty = true;
+            if let Some(dur) = self.engine.duration_ms() {
+                if dur != self.state.duration_ms {
+                    self.state.duration_ms = dur;
+                    dirty = true;
+                }
             }
-        }
-        if let Some(paused) = self.engine.is_paused() {
-            let playing = !paused && self.state.song.is_some();
-            if playing != self.state.playing {
-                self.state.playing = playing;
-                dirty = true;
+            if let Some(paused) = self.engine.is_paused() {
+                let playing = !paused && self.state.song.is_some();
+                if playing != self.state.playing {
+                    self.state.playing = playing;
+                    dirty = true;
+                }
             }
         }
 
@@ -217,6 +229,8 @@ impl Player {
         self.state.position_ms = 0;
         self.state.duration_ms = 0;
         self.state.playing = false;
+        // 已选中新曲但 URL 尚未加载：进入等待加载窗口，暂不同步引擎进度。
+        self.awaiting_load = true;
         self.publish();
         self.state.song.clone()
     }
@@ -228,6 +242,8 @@ impl Player {
         self.state.position_ms = 0;
         self.state.duration_ms = 0;
         self.state.playing = false;
+        // 自然播完的切歌同样要等新 URL 送达引擎，期间忽略旧曲残留进度。
+        self.awaiting_load = true;
         self.state.song.clone()
     }
 
@@ -408,5 +424,65 @@ mod tests {
         engine.set(|i| i.eof = true);
         let pending = player.tick().unwrap();
         assert_eq!(pending.id, 1);
+    }
+
+    /// 回归：切歌后引擎仍报告上一首尾部进度，不得把刚重置的进度覆盖回尾部。
+    /// 复现「进度条到尾部来回跳动、无法进入下一首」。
+    #[test]
+    fn advance_ignores_stale_engine_tail_until_new_url() {
+        let (mut player, engine) = setup(3);
+        player.play_url("u0");
+        // 上一首播到尾：引擎 position/duration 都在尾部，eof 为真。
+        engine.set(|i| {
+            i.eof = true;
+            i.pos_ms = 200_000;
+            i.dur_ms = 200_000;
+        });
+
+        // 自动切歌：应返回下一首，并重置进度。
+        let pending = player.tick().expect("应返回待加载歌曲");
+        assert_eq!(pending.id, 1);
+        assert_eq!(player.state().position_ms, 0);
+        assert_eq!(player.state().duration_ms, 0);
+
+        // 关键：新 URL 尚未送达（awaiting_load），引擎仍报旧曲尾部；
+        // 后续 tick 不得把进度覆盖回 200_000。
+        engine.set(|i| {
+            i.pos_ms = 200_000;
+            i.dur_ms = 200_000;
+        });
+        for _ in 0..10 {
+            assert!(player.tick().is_none(), "不应重复推进队列");
+        }
+        let state = player.state();
+        assert_eq!(state.position_ms, 0, "进度不得被旧曲尾部覆盖");
+        assert_eq!(state.duration_ms, 0, "时长不得被旧曲尾部覆盖");
+        assert_eq!(state.current_index, Some(1));
+    }
+
+    /// 新 URL 送达（play_url）后，恢复正常的进度同步。
+    #[test]
+    fn progress_sync_resumes_after_new_url() {
+        let (mut player, engine) = setup(3);
+        player.play_url("u0");
+        engine.set(|i| {
+            i.eof = true;
+            i.pos_ms = 200_000;
+            i.dur_ms = 200_000;
+        });
+        let pending = player.tick().expect("应返回待加载歌曲");
+        assert_eq!(pending.id, 1);
+
+        // 新文件加载：引擎开始播放，eof 变假、进度归零。
+        player.play_url("u1");
+        engine.set(|i| {
+            i.eof = false;
+            i.pos_ms = 1_000;
+            i.dur_ms = 180_000;
+        });
+        assert!(player.tick().is_none());
+        let state = player.state();
+        assert_eq!(state.position_ms, 1_000, "加载后应恢复进度同步");
+        assert_eq!(state.duration_ms, 180_000);
     }
 }
