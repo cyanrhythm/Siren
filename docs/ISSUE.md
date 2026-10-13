@@ -34,8 +34,8 @@
 
 ## E. 错误提示 / 通知（P0）
 
-- [x] **E1 全局 Toast**：新增 `siren-app::ui::Notifications`（Entity，唯一真源）+ `Root` 底部居中浮层
-  （播放条上方，自动消失、去重、最多 3 条）。`Services` 暴露 `toast/toast_success/toast_error`。
+- [x] **E1 全局 Toast**：新增 `siren-app::ui::Notifications`（Entity，唯一真源）+ `Root` 顶部居中浮层
+  （搜索栏下方，自动消失、去重、最多 3 条）。`Services` 暴露 `toast/toast_success/toast_error`。
   已覆盖：登录过期/失败、无可用播放地址、喜欢失败、歌单新建/重命名/删除/简介/添加到歌单、歌单与专辑订阅。
 - [ ] **E2 收敛残留**：把各页 `status` 文字与静默 `.ok()`（约 198 处）逐步改为 Toast / 日志，
   接入 `siren_core::error::Error::user_message()` 文案。

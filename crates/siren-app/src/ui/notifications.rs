@@ -1,4 +1,4 @@
-//! 全局提示（Toast）：窗口底部居中的轻量通知，替代散落的页面 `status` 文字。
+//! 全局提示（Toast）：窗口顶部居中（搜索栏下方）的轻量通知，替代散落的页面 `status` 文字。
 //!
 //! 设计对齐 Melodia 桌面端的 `SnackbarHost`：所有提示汇入单一通道，展示在播放条上方，
 //! 定时自动消失。约定见 `docs/10-状态管理约定.md`。
@@ -94,7 +94,7 @@ impl Notifications {
 }
 
 impl Root {
-    /// 底部居中的提示浮层（位于播放条上方）。
+    /// 顶部居中的提示浮层（位于搜索栏下方）。
     pub(crate) fn notifications_overlay(&self, cx: &App) -> AnyElement {
         let items = self.services.notifications.read(cx).active();
         if items.is_empty() {

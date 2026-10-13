@@ -1,7 +1,6 @@
 //! 认证：登录、凭据持久化、用户信息同步。
 //!
-//! 对应 Melodia 的 `core/auth/`。当前落地 Cookie 登录与会话持久化；
-//! 扫码登录待后续补充。
+//! 对应 Melodia 的 `core/auth/`。落地 Cookie 登录、**扫码登录**（`qr.rs`）与会话持久化。
 
 pub mod qr;
 
