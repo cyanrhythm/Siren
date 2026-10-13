@@ -14,7 +14,7 @@ use siren_core::model::{HomeCard, HomeShelf, Playlist, RecentPlaylist, Song};
 
 use super::super::playback::Playback;
 use super::super::services::Services;
-use super::super::settings_store::SettingsStore;
+use super::super::PageLayout;
 use super::super::{fmt_month_day, icon, PageEvent};
 use crate::theme;
 
@@ -345,10 +345,10 @@ impl HomePage {
             .w_full()
             .child(div().flex_1().min_w(px(0.0)).child(section_title(&shelf.title)));
         if hovered && can_left {
-            title_row = title_row.child(scroll_arrow(handle.clone(), true));
+            title_row = title_row.child(scroll_arrow(format!("{code}-prev"), handle.clone(), true));
         }
         if hovered && can_right {
-            title_row = title_row.child(scroll_arrow(handle.clone(), false));
+            title_row = title_row.child(scroll_arrow(format!("{code}-next"), handle.clone(), false));
         }
 
         let weak = cx.weak_entity();
@@ -597,9 +597,9 @@ impl HomePage {
 impl Render for HomePage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // 计算最近播放卡片等宽：按可用宽度算列数（2~4），卡片等宽并填充。
-        let vw = f32::from(window.viewport_size().width);
-        let np_w = SettingsStore::of(cx).np_width();
-        let avail = (vw - 300.0 - np_w - 32.0 - 48.0).max(1.0);
+        let _ = window;
+        let page_w = cx.global::<PageLayout>().page_w;
+        let avail = (page_w - 48.0).max(1.0);
         let gap = 12.0f32;
         let min_tile = 240.0f32;
         let cols = (((avail + gap) / (min_tile + gap)).floor() as usize).clamp(2, 4);
@@ -724,9 +724,9 @@ fn open_card_event(card: &HomeCard, cx: &mut Context<HomePage>) {
 }
 
 /// 货架翻页箭头（浅色圆形）。
-fn scroll_arrow(handle: ScrollHandle, back: bool) -> AnyElement {
+fn scroll_arrow(id: String, handle: ScrollHandle, back: bool) -> AnyElement {
     div()
-        .id(if back { "shelf-prev" } else { "shelf-next" })
+        .id(id)
         .size(px(34.0))
         .flex()
         .items_center()

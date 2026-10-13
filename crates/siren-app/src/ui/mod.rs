@@ -38,6 +38,13 @@ use services::Services;
 use session::Session;
 use settings_store::SettingsStore;
 
+/// 当前页面列实际宽度（供页面内自适应排布）。
+pub(crate) struct PageLayout {
+    pub page_w: f32,
+}
+
+impl Global for PageLayout {}
+
 /// 当前页面（音乐库为常驻侧栏，不在此列）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Route {
@@ -291,6 +298,7 @@ impl Root {
         // 全局唯一真源：设置 + 会话
         SettingsStore::init(cx);
         Session::init(cx);
+        cx.set_global(PageLayout { page_w: 0.0 });
         let cookie = std::env::var("SIREN_COOKIE")
             .ok()
             .filter(|s| !s.trim().is_empty())
@@ -723,6 +731,7 @@ impl Render for Root {
             44.0
         };
         let page_w = (vw - 300.0 - np_w - 32.0).max(0.0);
+        cx.global_mut::<PageLayout>().page_w = page_w;
         div()
             .v_flex()
             .relative()
