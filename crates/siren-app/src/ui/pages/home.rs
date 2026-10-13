@@ -42,6 +42,8 @@ pub(crate) struct HomePage {
     shelves: Vec<HomeShelf>,
     /// 每个货架的横向滚动句柄（跨帧保持滚动位置）。
     shelf_scroll: std::collections::HashMap<String, ScrollHandle>,
+    /// 最近播放的横向滚动句柄。
+    recent_scroll: ScrollHandle,
     load_gen: u64,
 }
 
@@ -58,6 +60,7 @@ impl HomePage {
             playlists: Arc::new(Vec::new()),
             shelves: Vec::new(),
             shelf_scroll: std::collections::HashMap::new(),
+            recent_scroll: ScrollHandle::new(),
             load_gen: 0,
         };
         page.load(cx);
@@ -188,19 +191,19 @@ impl HomePage {
         row.into_any_element()
     }
 
-    /// 最近播放：方形卡片（与货架同款）。
-    fn recent_grid(&self, cx: &Context<Self>) -> AnyElement {
-        let mut grid = div().flex().flex_wrap().gap(px(16.0)).w_full();
-        for item in &self.recent {
-            let card = HomeCard::Playlist {
+    /// 最近播放：与服务端货架同款的横向滚动行（带翻页箭头）。
+    fn recent_section(&self, cx: &Context<Self>) -> AnyElement {
+        let cards: Vec<HomeCard> = self
+            .recent
+            .iter()
+            .map(|item| HomeCard::Playlist {
                 id: item.id,
                 title: item.name.clone(),
                 cover_url: item.cover_url.clone(),
                 caption: String::new(),
-            };
-            grid = grid.child(self.card_tile(&card, None, cx));
-        }
-        grid.into_any_element()
+            })
+            .collect();
+        self.card_row("recent", self.recent_scroll.clone(), "最近播放", &cards, false, cx)
     }
 
     /// 今日为你推荐：每日推荐聚焦卡（封面 + 标题 + 日期 + 曲目预览 + 播放）。
@@ -292,17 +295,30 @@ impl HomePage {
         grid.into_any_element()
     }
 
-    /// 服务端货架：标题（悬停显示翻页箭头）+ 横向滚动卡片行。
-    ///
-    /// 箭头仅在内容宽度超过可视宽度（需要滚动）时才渲染；且悬停货架时才显形。
+    /// 服务端货架：委托给通用卡片行。
     fn shelf_section(&self, shelf: &HomeShelf, cx: &Context<Self>) -> AnyElement {
         let code = shelf.block_code.clone();
         let handle = self.shelf_scroll.get(&code).cloned().unwrap_or_default();
+        self.card_row(&code, handle, &shelf.title, &shelf.cards, shelf.show_rank, cx)
+    }
+
+    /// 通用卡片行：标题（悬停显示翻页箭头）+ 横向滚动卡片行。
+    ///
+    /// 箭头仅在内容宽度超过可视宽度（需要滚动）时才渲染；且悬停时才显形。
+    fn card_row(
+        &self,
+        key: &str,
+        handle: ScrollHandle,
+        title: &str,
+        cards: &[HomeCard],
+        show_rank: bool,
+        cx: &Context<Self>,
+    ) -> AnyElement {
         let off = handle.offset();
         let max = handle.max_offset();
 
         // 内容实际宽度（卡片定宽 + 间距），用于首帧判断是否需要滚动。
-        let n = shelf.cards.len() as f32;
+        let n = cards.len() as f32;
         let content_w = if n > 0.0 {
             n * CARD_W + (n - 1.0) * CARD_GAP
         } else {
@@ -318,21 +334,21 @@ impl HomePage {
         };
         let can_left = scroll_w > 0.5 && f32::from(off.x) < -0.5;
         let can_right = scroll_w > 0.5 && f32::from(off.x) > -scroll_w + 0.5;
-        let group = format!("shelf-group-{code}");
+        let group = format!("shelf-group-{key}");
 
-        let mut cards = div()
-            .id(format!("shelf-row-{code}"))
+        let mut cards_el = div()
+            .id(format!("shelf-row-{key}"))
             .flex()
             .gap(px(CARD_GAP))
             .w_full()
             .overflow_x_scroll()
             .restrict_scroll_to_axis()
             .track_scroll(&handle);
-        for (i, card) in shelf.cards.iter().enumerate() {
-            cards = cards.child(
+        for (i, card) in cards.iter().enumerate() {
+            cards_el = cards_el.child(
                 div()
                     .flex_none()
-                    .child(self.card_tile(card, shelf.show_rank.then_some(i + 1), cx)),
+                    .child(self.card_tile(card, show_rank.then_some(i + 1), cx)),
             );
         }
 
@@ -341,10 +357,10 @@ impl HomePage {
             .items_center()
             .gap(px(8.0))
             .w_full()
-            .child(div().flex_1().min_w(px(0.0)).child(section_title(&shelf.title)));
+            .child(div().flex_1().min_w(px(0.0)).child(section_title(title)));
         if can_left {
             title_row = title_row.child(scroll_arrow(
-                format!("{code}-prev"),
+                format!("{key}-prev"),
                 group.clone(),
                 handle.clone(),
                 true,
@@ -353,7 +369,7 @@ impl HomePage {
         }
         if can_right {
             title_row = title_row.child(scroll_arrow(
-                format!("{code}-next"),
+                format!("{key}-next"),
                 group.clone(),
                 handle.clone(),
                 false,
@@ -363,7 +379,7 @@ impl HomePage {
 
         let weak = cx.weak_entity();
         div()
-            .id(format!("shelf-{code}"))
+            .id(format!("shelf-{key}"))
             .group(group)
             .v_flex()
             .w_full()
@@ -373,7 +389,7 @@ impl HomePage {
                 weak.update(cx, |_page, cx| cx.notify()).ok();
             })
             .child(title_row)
-            .child(div().w_full().min_w(px(0.0)).child(cards))
+            .child(div().w_full().min_w(px(0.0)).child(cards_el))
             .into_any_element()
     }
 
@@ -516,7 +532,7 @@ impl Render for HomePage {
                     .p(px(24.0))
                     .overflow_y_scroll();
                 if !self.recent.is_empty() {
-                    col = col.child(section_title("最近播放")).child(self.recent_grid(cx));
+                    col = col.child(self.recent_section(cx));
                 }
                 if let Some(daily) = self.daily_spotlight(cx) {
                     col = col.child(section_title("今日为你推荐")).child(daily);
