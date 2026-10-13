@@ -61,6 +61,7 @@ pub(crate) struct SearchPage {
     playlists: Arc<Vec<Playlist>>,
     selected: Option<usize>,
     status: SharedString,
+    run_gen: u64,
 }
 
 impl EventEmitter<PageEvent> for SearchPage {}
@@ -78,6 +79,7 @@ impl SearchPage {
             playlists: Arc::new(Vec::new()),
             selected: None,
             status: "在顶部搜索框输入关键词并回车".into(),
+            run_gen: 0,
         }
     }
 
@@ -104,6 +106,8 @@ impl SearchPage {
         if self.keyword.is_empty() {
             return;
         }
+        self.run_gen = self.run_gen.wrapping_add(1);
+        let gen = self.run_gen;
         let kind = self.kind;
         let keyword = self.keyword.clone();
         self.status = format!("搜索中：{keyword}").into();
@@ -121,6 +125,9 @@ impl SearchPage {
         cx.spawn(async move |this, cx| {
             let value = rx.await.ok().flatten();
             this.update(cx, |this, cx| {
+                if this.run_gen != gen {
+                    return;
+                }
                 let Some(value) = value else {
                     this.status = format!("{} · 0 条", kind.label()).into();
                     cx.notify();

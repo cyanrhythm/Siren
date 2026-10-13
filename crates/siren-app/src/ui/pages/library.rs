@@ -24,6 +24,7 @@ pub(crate) struct LibraryPage {
     login_input: Entity<InputState>,
     login_status: SharedString,
     my_playlists: Arc<Vec<Playlist>>,
+    load_gen: u64,
     _login_sub: Subscription,
 }
 
@@ -42,6 +43,7 @@ impl LibraryPage {
             login_input,
             login_status: "未登录".into(),
             my_playlists: Arc::new(Vec::new()),
+            load_gen: 0,
             _login_sub,
         };
         page.refresh_account(cx);
@@ -137,6 +139,8 @@ impl LibraryPage {
         let Some(uid) = Session::uid(cx) else {
             return;
         };
+        self.load_gen = self.load_gen.wrapping_add(1);
+        let gen = self.load_gen;
         let client = self.services.client.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.services.handle.spawn(async move {
@@ -150,6 +154,9 @@ impl LibraryPage {
         cx.spawn(async move |this, cx| {
             let list = rx.await.unwrap_or_default();
             this.update(cx, |this, cx| {
+                if this.load_gen != gen {
+                    return;
+                }
                 this.login_status = format!("我的歌单 {} 个", list.len()).into();
                 let urls: Vec<String> = list.iter().map(|p| p.cover_url.clone()).collect();
                 this.my_playlists = Arc::new(list);

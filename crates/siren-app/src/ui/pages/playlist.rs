@@ -77,6 +77,8 @@ pub(crate) struct PlaylistPage {
     add_results: Vec<Song>,
     /// 封面裁剪浮层状态。
     crop: Option<CropState>,
+    /// 加载代：重载时自增，旧响应据此失效。
+    load_gen: u64,
     _filter_sub: Subscription,
     _add_sub: Subscription,
 }
@@ -121,6 +123,7 @@ impl PlaylistPage {
             add_open: false,
             add_results: Vec::new(),
             crop: None,
+            load_gen: 0,
             _filter_sub,
             _add_sub,
         };
@@ -129,6 +132,8 @@ impl PlaylistPage {
     }
 
     fn load(&mut self, cx: &mut Context<Self>) {
+        self.load_gen = self.load_gen.wrapping_add(1);
+        let gen = self.load_gen;
         let client = self.services.client.clone();
         let id = self.id;
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -156,6 +161,9 @@ impl PlaylistPage {
         cx.spawn(async move |this, cx| {
             let detail = rx.await.ok().flatten();
             this.update(cx, |this, cx| {
+                if this.load_gen != gen {
+                    return;
+                }
                 if let Some(d) = &detail {
                     this.subscribed = d.subscribed;
                 }

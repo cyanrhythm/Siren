@@ -23,7 +23,7 @@
 
 ## B. 异步与健壮性（P1）
 
-- [ ] **B1 页面异步无取消**：`reload*` 无 generation guard，快速切换/重载可被旧响应覆盖（仅二维码登录用了 `login_gen`）。
+- [x] **B1 页面异步无取消**：为 Playlist/Album/Recent/Search/Library 的加载加 generation guard（登录二维码已有 `gen`）。
 - [ ] **B2 `detach()` 泛滥**：33 处 `.detach()`，错误与取消被忽略；至少记录失败日志。
 
 ## C. 文档（P0）
@@ -35,5 +35,5 @@
 ## D. 其他（P2）
 
 - [ ] **D1 `Playback` 承担 UI 偏好**：`media_keys_enabled` 属设置而非播放服务（随 A2 迁移）。
-- [ ] **D2 `pages/settings.rs` 实为 `impl Root`**：设置页不是独立实体，逻辑回灌外壳（随 A1/A2 收敛）。
+- [~] **D2 `pages/settings.rs` 仍为 `impl Root`**：随 A1/A2 已改为只读全局 store，暂不再拆独立实体。
 - [ ] **D3 平台未验证**：Linux/macOS 的 playwire/MPRIS 路径尚无实机验证。

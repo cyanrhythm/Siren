@@ -18,6 +18,7 @@ pub(crate) struct RecentPage {
     playback: Entity<Playback>,
     songs: Arc<Vec<Song>>,
     status: SharedString,
+    load_gen: u64,
 }
 
 impl EventEmitter<PageEvent> for RecentPage {}
@@ -29,11 +30,14 @@ impl RecentPage {
             playback,
             songs: Arc::new(Vec::new()),
             status: "最近播放".into(),
+            load_gen: 0,
         }
     }
 
     /// 拉取最近播放（登录后 / 进入页面时）。
     pub(crate) fn load(&mut self, cx: &mut Context<Self>) {
+        self.load_gen = self.load_gen.wrapping_add(1);
+        let gen = self.load_gen;
         let client = self.services.client.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.services.handle.spawn(async move {
@@ -45,6 +49,9 @@ impl RecentPage {
         cx.spawn(async move |this, cx| {
             let songs = rx.await.ok().flatten();
             this.update(cx, |this, cx| {
+                if this.load_gen != gen {
+                    return;
+                }
                 match songs {
                     Some(items) => {
                         let urls: Vec<String> = items.iter().map(|s| s.cover_url.clone()).collect();

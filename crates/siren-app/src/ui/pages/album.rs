@@ -20,6 +20,7 @@ pub(crate) struct AlbumPage {
     name: String,
     detail: Option<Arc<AlbumDetail>>,
     subscribed: bool,
+    load_gen: u64,
 }
 
 impl EventEmitter<PageEvent> for AlbumPage {}
@@ -39,12 +40,15 @@ impl AlbumPage {
             name,
             detail: None,
             subscribed: false,
+            load_gen: 0,
         };
         page.load(cx);
         page
     }
 
     fn load(&mut self, cx: &mut Context<Self>) {
+        self.load_gen = self.load_gen.wrapping_add(1);
+        let gen = self.load_gen;
         let client = self.services.client.clone();
         let id = self.id;
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -56,6 +60,9 @@ impl AlbumPage {
         cx.spawn(async move |this, cx| {
             let detail = rx.await.ok().flatten();
             this.update(cx, |this, cx| {
+                if this.load_gen != gen {
+                    return;
+                }
                 if let Some(d) = &detail {
                     let urls: Vec<String> = d.songs.iter().map(|s| s.cover_url.clone()).collect();
                     this.services.covers.prefetch(urls, 40.0, cx);
