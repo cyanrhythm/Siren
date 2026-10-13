@@ -79,6 +79,16 @@ pub mod path {
     pub const INTELLIGENCE: &str = "/eapi/playmode/intelligence/list";
     /// 专辑详情（WEAPI，后接 `{id}`）。
     pub const ALBUM_DETAIL: &str = "/weapi/v1/album/";
+    /// 用户详情（WEAPI，后接 `{uid}`）。
+    pub const USER_DETAIL: &str = "/weapi/v1/user/detail/";
+    /// 关注用户（WEAPI，后接 `{id}`）。
+    pub const USER_FOLLOW: &str = "/weapi/user/follow/";
+    /// 取消关注用户（WEAPI，后接 `{id}`）。
+    pub const USER_DELFOLLOW: &str = "/weapi/user/delfollow/";
+    /// 用户关注列表（WEAPI，后接 `{uid}`）。
+    pub const USER_FOLLOWS: &str = "/weapi/user/getfollows/";
+    /// 用户粉丝列表（WEAPI，后接 `{uid}`）。
+    pub const USER_FOLLOWEDS: &str = "/weapi/user/getfolloweds/";
     /// 收藏专辑列表（EAPI）。
     pub const ALBUM_SUBLIST: &str = "/eapi/album/sublist";
     /// 更新用户歌单排序（WEAPI）。

@@ -469,6 +469,49 @@ pub async fn comment_floor(
     Ok(crate::model::parse_comments_v2(&json!({ "data": data })))
 }
 
+/// 用户详情（WEAPI）。
+pub async fn user_detail(client: &NeteaseClient, uid: i64) -> Result<Option<crate::model::UserProfile>> {
+    let url = format!("{}{uid}", path::USER_DETAIL);
+    let value = client.weapi_post(&url, &json!({})).await?;
+    validate(&value)?;
+    Ok(crate::model::parse_user_profile(&value))
+}
+
+/// 关注 / 取消关注用户。
+pub async fn user_follow(client: &NeteaseClient, uid: i64, follow: bool) -> Result<()> {
+    let url = if follow {
+        format!("{}{uid}", path::USER_FOLLOW)
+    } else {
+        format!("{}{uid}", path::USER_DELFOLLOW)
+    };
+    let value = client.weapi_post(&url, &json!({})).await?;
+    validate(&value)?;
+    Ok(())
+}
+
+/// 用户关注列表。
+pub async fn user_follows(client: &NeteaseClient, uid: i64, limit: u32) -> Result<Vec<crate::model::UserBrief>> {
+    let url = format!("{}{uid}", path::USER_FOLLOWS);
+    let value = client
+        .weapi_post(&url, &json!({ "offset": 0, "limit": limit, "order": true }))
+        .await?;
+    validate(&value)?;
+    Ok(crate::model::parse_user_follow_list(&value))
+}
+
+/// 用户粉丝列表。
+pub async fn user_followeds(client: &NeteaseClient, uid: i64, limit: u32) -> Result<Vec<crate::model::UserBrief>> {
+    let url = format!("{}{uid}", path::USER_FOLLOWEDS);
+    let value = client
+        .weapi_post(
+            &url,
+            &json!({ "userId": uid, "time": "0", "limit": limit, "offset": 0, "getcounts": "true" }),
+        )
+        .await?;
+    validate(&value)?;
+    Ok(crate::model::parse_user_follow_list(&value))
+}
+
 /// 更新用户歌单排序（`ids` 为完整顺序，逗号分隔）。
 pub async fn playlist_order_update(client: &NeteaseClient, ids: &[i64]) -> Result<()> {
     let joined = ids.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(",");

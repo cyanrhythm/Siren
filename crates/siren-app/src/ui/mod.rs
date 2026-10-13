@@ -31,7 +31,7 @@ use siren_core::network::client::NeteaseClient;
 use crate::theme;
 use covers::CoverLoader;
 use notifications::Notifications;
-use pages::{AlbumPage, ArtistPage, HomePage, LibraryPage, PlaylistPage, RecentPage, SearchPage};
+use pages::{AlbumPage, ArtistPage, HomePage, LibraryPage, PlaylistPage, ProfilePage, RecentPage, SearchPage};
 pub(crate) use playback::flush_playback_session;
 use playback::Playback;
 use services::Services;
@@ -275,6 +275,7 @@ pub struct Root {
     playlist_page: Option<Entity<PlaylistPage>>,
     album_page: Option<Entity<AlbumPage>>,
     artist_page: Option<Entity<ArtistPage>>,
+    profile_page: Option<Entity<ProfilePage>>,
     np: NowPlayingUi,
     np_width_slider: Entity<SliderState>,
     login: LoginDialogState,
@@ -418,6 +419,7 @@ impl Root {
                 playlist_page: None,
                 album_page: None,
                 artist_page: None,
+                profile_page: None,
                 np: NowPlayingUi {
                     open: true,
                     album_page: 0,
@@ -468,6 +470,7 @@ impl Root {
         self.playlist_page = None;
         self.album_page = None;
         self.artist_page = None;
+        self.profile_page = None;
         cx.notify();
     }
 
@@ -480,7 +483,7 @@ impl Root {
             PageEvent::SignedIn => self.on_signed_in(cx),
             PageEvent::LoggedOut => self.on_signed_out(cx),
             PageEvent::OpenLogin => self.open_login(cx),
-            PageEvent::OpenProfile { uid } => self.navigate(Route::Profile { uid: *uid }, cx),
+            PageEvent::OpenProfile { uid } => self.open_profile(*uid, cx),
             PageEvent::OpenRecentPlay => {
                 self.recent.update(cx, |page, cx| page.load(cx));
                 self.navigate(Route::RecentPlay, cx);
@@ -552,6 +555,10 @@ impl Root {
             let uid = account.uid;
             self.playback.update(cx, |pb, cx| pb.load_likes(uid, cx));
             self.recent.update(cx, |page, cx| page.load(cx));
+            // 调试：SIREN_START=profile 登录后直达本人主页
+            if std::env::var("SIREN_START").ok().as_deref() == Some("profile") {
+                self.open_profile(uid, cx);
+            }
         }
         cx.notify();
     }
@@ -609,11 +616,28 @@ impl Root {
         cx.notify();
     }
 
+    fn open_profile(&mut self, uid: i64, cx: &mut Context<Self>) {
+        self.nav.push(Route::Profile { uid });
+        let my_uid = self.account_uid(cx);
+        let page = cx.new(|cx| ProfilePage::new(cx, self.services.clone(), uid, my_uid));
+        let sub = cx.subscribe(&page, |root: &mut Root, _e, ev: &PageEvent, cx| {
+            root.on_page_event(ev, cx)
+        });
+        self._subs.push(sub);
+        self.profile_page = Some(page);
+        cx.notify();
+    }
+
+    fn account_uid(&self, cx: &App) -> Option<i64> {
+        Session::uid(cx)
+    }
+
     fn back(&mut self, cx: &mut Context<Self>) {
         if self.nav.pop() {
             self.playlist_page = None;
             self.album_page = None;
             self.artist_page = None;
+            self.profile_page = None;
             cx.notify();
         }
     }
@@ -663,8 +687,11 @@ impl Root {
                 .unwrap_or_else(|| div().into_any_element()),
             Route::Settings => self.settings_page(weak, cx),
             Route::RecentPlay => self.recent.clone().into_any_element(),
-            // 以下页面先接路由占位，后续逐个补齐
-            Route::Profile { .. } => placeholder_page("个人主页", "个人主页（待实现）"),
+            Route::Profile { .. } => self
+                .profile_page
+                .as_ref()
+                .map(|p| p.clone().into_any_element())
+                .unwrap_or_else(|| div().into_any_element()),
         }
     }
 }
@@ -740,21 +767,6 @@ impl Render for Root {
             .when_some(desc_overlay, |this, overlay| this.child(overlay))
             .child(self.notifications_overlay(cx))
     }
-}
-
-/// 占位页面（路由已接，内容待补）。
-fn placeholder_page(title: &str, hint: &str) -> AnyElement {
-    page_shell(
-        title.to_string(),
-        div()
-            .flex_1()
-            .flex()
-            .items_center()
-            .justify_center()
-            .child(div().text_sm().text_color(theme::text_gray()).child(hint.to_string()))
-            .into_any_element(),
-    )
-    .into_any_element()
 }
 
 // ---------- 共享小部件 ----------

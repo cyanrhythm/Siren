@@ -196,6 +196,76 @@ pub fn parse_search_artists(value: &Value) -> Vec<Artist> {
         .unwrap_or_default()
 }
 
+/// 用户详情。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct UserProfile {
+    pub user_id: i64,
+    pub nickname: String,
+    pub avatar_url: String,
+    pub signature: String,
+    pub follows: i64,
+    pub followeds: i64,
+    pub playlist_count: i64,
+    pub followed: bool,
+}
+
+/// 用户简要（关注/粉丝列表项）。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct UserBrief {
+    pub user_id: i64,
+    pub nickname: String,
+    pub avatar_url: String,
+    pub signature: String,
+    pub followed: bool,
+}
+
+fn parse_user_brief(v: &Value) -> UserBrief {
+    UserBrief {
+        user_id: v.get("userId").and_then(Value::as_i64).unwrap_or_default(),
+        nickname: str_field(v, "nickname"),
+        avatar_url: v
+            .get("avatarUrl")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        signature: str_field(v, "signature"),
+        followed: v.get("followed").and_then(Value::as_bool).unwrap_or(false),
+    }
+}
+
+/// 解析用户详情（`profile`）。
+pub fn parse_user_profile(value: &Value) -> Option<UserProfile> {
+    let p = value.get("profile")?;
+    let user_id = p.get("userId").and_then(Value::as_i64).unwrap_or_default();
+    if user_id == 0 {
+        return None;
+    }
+    Some(UserProfile {
+        user_id,
+        nickname: str_field(p, "nickname"),
+        avatar_url: p
+            .get("avatarUrl")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        signature: str_field(p, "signature"),
+        follows: p.get("follows").and_then(Value::as_i64).unwrap_or_default(),
+        followeds: p.get("followeds").and_then(Value::as_i64).unwrap_or_default(),
+        playlist_count: p.get("playlistCount").and_then(Value::as_i64).unwrap_or_default(),
+        followed: p.get("followed").and_then(Value::as_bool).unwrap_or(false),
+    })
+}
+
+/// 解析关注/粉丝列表（取 `follow` 或 `followeds` 数组）。
+pub fn parse_user_follow_list(value: &Value) -> Vec<UserBrief> {
+    let arr = value
+        .get("follow")
+        .and_then(Value::as_array)
+        .or_else(|| value.get("followeds").and_then(Value::as_array));
+    arr.map(|items| items.iter().map(parse_user_brief).collect())
+        .unwrap_or_default()
+}
+
 /// 最近播放歌曲（含播放时间）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecentSong {
