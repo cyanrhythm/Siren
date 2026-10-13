@@ -37,6 +37,18 @@ pub fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+/// 毫秒时间戳 → 本地时钟 `HH:MM`（所在日期已由分区头承担，故仅到分钟）；无效返回空串。
+pub fn fmt_clock_time(ms: i64) -> String {
+    use chrono::{Local, TimeZone};
+    if ms <= 0 {
+        return String::new();
+    }
+    match Local.timestamp_millis_opt(ms).single() {
+        Some(dt) => dt.format("%H:%M").to_string(),
+        None => String::new(),
+    }
+}
+
 /// 读取本地最近播放歌单（新的在前）。
 pub fn load_recent_playlists() -> Vec<LocalRecentPlaylist> {
     let Some(path) = store_path() else {

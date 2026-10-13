@@ -122,6 +122,13 @@ impl Player {
         self.queue.context()
     }
 
+    /// 用 `items` 替换 `index` 之后的曲目（漫游续接）。
+    pub fn append_after(&mut self, index: usize, items: Vec<Song>) {
+        self.queue.append_after(index, items);
+        self.sync_queue();
+        self.publish();
+    }
+
     /// 设置播放上下文标签。
     pub fn set_context(&mut self, context: Option<String>) {
         self.queue.set_context(context);

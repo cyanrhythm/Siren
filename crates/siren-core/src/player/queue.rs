@@ -197,6 +197,16 @@ impl PlayerQueue {
         }
     }
 
+    /// 用 `items` 替换 `index` 之后（含后续）的曲目（漫游续接：保留到当前，尾部续接相似歌曲）。
+    pub fn append_after(&mut self, index: usize, items: Vec<Song>) {
+        if self.items.is_empty() {
+            return;
+        }
+        let index = index.min(self.items.len() - 1);
+        self.items.truncate(index + 1);
+        self.items.extend(items);
+    }
+
     /// 按模式推进到下一首，返回新的当前曲。
     pub fn advance(&mut self) -> Option<&Song> {
         if let Some(i) = self.auto_next_index() {

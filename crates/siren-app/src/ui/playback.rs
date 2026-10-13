@@ -86,6 +86,8 @@ pub(crate) struct Playback {
     reporting_container: i64,
     /// 上一次已记录的本地最近播放歌单 id（同一歌单连续切歌不重复记录）。
     last_recorded_playlist: i64,
+    /// 漫游续接：上一次已触发续接的歌曲 id（避免同曲反复拉取）。
+    roaming_last_trigger: i64,
     progress_slider: Entity<SliderState>,
     volume_slider: Entity<SliderState>,
     media: Option<PlatformMediaSession>,
@@ -215,6 +217,7 @@ impl Playback {
                 playing_at: None,
                 reporting_container: 0,
                 last_recorded_playlist: 0,
+                roaming_last_trigger: 0,
                 progress_slider,
                 volume_slider,
                 media,
@@ -345,6 +348,7 @@ impl Playback {
                 this.player.take_snapshot();
                 this.player.set_source(None);
                 this.player.set_context(Some(CONTEXT_ROAMING.to_string()));
+                this.roaming_last_trigger = 0;
                 if let Some(first) = this.player.set_queue(songs) {
                     this.resolve_and_play(first, cx);
                 }
@@ -541,6 +545,7 @@ impl Playback {
         // 进度条 Slider 在 Root render 中创建，只有 Root 重绘才会前进：
         // 每次 tick 都重绘（100ms）以获得平滑进度；系统媒体推送节流到秒变化。
         let sec = state.position_ms / 1000;
+        self.maybe_continue_roaming(&state, cx);
         self.mirrored = state;
         cx.notify();
         if sec != self.last_sec {
@@ -555,6 +560,51 @@ impl Playback {
             self.last_progress_save = Instant::now();
             self.save_progress();
         }
+    }
+
+    /// 相似漫游：播放到队列末尾且临近结束时，拉取相似歌曲续接到队列尾部。
+    fn maybe_continue_roaming(&mut self, state: &PlaybackState, cx: &mut Context<Self>) {
+        if self.player.context() != Some(CONTEXT_ROAMING) {
+            return;
+        }
+        let Some(song) = state.song.as_ref() else {
+            return;
+        };
+        let at_tail = state.queue_len > 0 && state.current_index == Some(state.queue_len - 1);
+        if !at_tail || state.duration_ms <= 0 {
+            return;
+        }
+        // 距结束 15s 内触发
+        if state.duration_ms - state.position_ms > 15_000 {
+            return;
+        }
+        if self.roaming_last_trigger == song.id {
+            return;
+        }
+        self.roaming_last_trigger = song.id;
+        let song_id = song.id;
+        let index = state.current_index.unwrap_or(0);
+        let client = self.client.clone();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.handle.spawn(async move {
+            let songs = siren_core::network::api::simi_songs(&client, song_id)
+                .await
+                .unwrap_or_default();
+            let _ = tx.send(songs);
+        });
+        cx.spawn(async move |this, cx| {
+            let songs = rx.await.unwrap_or_default();
+            this.update(cx, |this, cx| {
+                if this.player.context() != Some(CONTEXT_ROAMING) || songs.is_empty() {
+                    return;
+                }
+                this.player.append_after(index, songs);
+                this.save_queue_session();
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// 落盘队列会话（队列/下标/模式）；仅在结构变化时调用。

@@ -11,7 +11,7 @@ use siren_core::model::{RecentAlbum, RecentPlaylist, RecentSong};
 
 use super::super::playback::Playback;
 use super::super::services::Services;
-use super::super::{fmt_day_label, fmt_time, page_shell_with_header, PageEvent};
+use super::super::{fmt_day_label, page_shell_with_header, PageEvent};
 use crate::theme;
 
 pub(crate) struct RecentPage {
@@ -219,7 +219,7 @@ impl RecentPage {
                             .w(px(56.0))
                             .text_xs()
                             .text_color(theme::text_gray())
-                            .child(fmt_time(item.song.duration_ms)),
+                            .child(siren_core::recent_playlists::fmt_clock_time(item.play_time)),
                     )
                     .context_menu(move |menu, _w, _cx| {
                         let weak_ctx = weak_ctx.clone();
