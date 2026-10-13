@@ -402,7 +402,7 @@ impl Playback {
 
     fn start_tick_timer(&mut self, window: &Window, cx: &mut Context<Self>) {
         cx.spawn_in(window, async move |this, cx| loop {
-            cx.background_executor().timer(Duration::from_millis(50)).await;
+            cx.background_executor().timer(Duration::from_millis(16)).await;
             if this.update_in(cx, |this, window, cx| this.tick(window, cx)).is_err() {
                 break;
             }
