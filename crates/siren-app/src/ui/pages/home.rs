@@ -110,7 +110,7 @@ impl HomePage {
 
                     this.services
                         .covers
-                        .prefetch(merged.iter().map(|p| p.cover_url.clone()), 128.0, cx);
+                        .prefetch(merged.iter().map(|p| p.cover_url.clone()), 168.0, cx);
                     this.services
                         .covers
                         .prefetch(playlists.iter().map(|p| p.cover_url.clone()), 168.0, cx);
@@ -313,12 +313,9 @@ impl HomePage {
             .gap(px(8.0))
             .w_full()
             .child(div().flex_1().min_w(px(0.0)).child(section_title(&shelf.title)));
-        if can_left {
-            title_row = title_row.child(scroll_arrow(format!("{code}-prev"), handle.clone(), true));
-        }
-        if can_right {
-            title_row = title_row.child(scroll_arrow(format!("{code}-next"), handle.clone(), false));
-        }
+        let _ = (can_left, can_right);
+        title_row = title_row.child(scroll_arrow(format!("{code}-prev"), handle.clone(), true));
+        title_row = title_row.child(scroll_arrow(format!("{code}-next"), handle.clone(), false));
 
         let weak = cx.weak_entity();
         let hover_code = code.clone();
