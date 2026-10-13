@@ -46,7 +46,7 @@ impl LibraryPage {
             load_gen: 0,
             _login_sub,
         };
-        page.refresh_account(cx);
+        page.refresh_account(false, cx);
         page
     }
 
@@ -61,7 +61,7 @@ impl LibraryPage {
         self.services.client.set_cookie(Some(cookie));
         self.login_status = "登录校验中…".into();
         cx.notify();
-        self.refresh_account(cx);
+        self.refresh_account(true, cx);
     }
 
     /// 退出登录：清除 Cookie 与会话，回到未登录态。
@@ -75,7 +75,8 @@ impl LibraryPage {
         cx.notify();
     }
 
-    pub(crate) fn refresh_account(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn refresh_account(&mut self, announce: bool, cx: &mut Context<Self>) {
+        let had_cookie = self.services.client.cookie().is_some();
         let client = self.services.client.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.services.handle.spawn(async move {
@@ -119,12 +120,20 @@ impl LibraryPage {
                         );
                         this.login_status = format!("已登录：{nickname}").into();
                         log::info!("已登录：{nickname} (uid={uid})");
+                        if announce {
+                            this.services.toast_success(format!("登录成功：{nickname}"), cx);
+                        }
                         cx.emit(PageEvent::SignedIn);
                         this.load_my_playlists(cx);
                     }
                     None => {
                         Session::set(cx, None);
                         this.login_status = "未登录（Cookie 无效或已过期）".into();
+                        if announce {
+                            this.services.toast_error("登录失败，请检查 Cookie", cx);
+                        } else if had_cookie {
+                            this.services.toast_error("登录已过期，请重新登录", cx);
+                        }
                         cx.emit(PageEvent::LoggedOut);
                     }
                 }

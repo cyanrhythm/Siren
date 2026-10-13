@@ -76,7 +76,7 @@ impl Root {
         self.login.open = false;
         self.login.gen = self.login.gen.wrapping_add(1);
         cx.notify();
-        self.library.update(cx, |page, cx| page.refresh_account(cx));
+        self.library.update(cx, |page, cx| page.refresh_account(true, cx));
     }
 
     /// 生成二维码并轮询扫码状态。

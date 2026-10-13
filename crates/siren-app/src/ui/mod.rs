@@ -8,6 +8,7 @@
 pub mod components;
 pub mod covers;
 pub mod login_dialog;
+mod notifications;
 pub mod pages;
 mod playback;
 mod services;
@@ -29,6 +30,7 @@ use siren_core::network::client::NeteaseClient;
 
 use crate::theme;
 use covers::CoverLoader;
+use notifications::Notifications;
 use pages::{AlbumPage, HomePage, LibraryPage, PlaylistPage, RecentPage, SearchPage};
 use playback::Playback;
 use services::Services;
@@ -283,10 +285,12 @@ impl Root {
             .or_else(siren_core::auth::load_cookie);
         let client = Arc::new(NeteaseClient::with_cookie(cookie));
         let covers = CoverLoader::new(client.clone(), runtime.handle().clone());
+        let notifications = Notifications::new(cx);
         let services = Services {
             client,
             handle: runtime.handle().clone(),
             covers,
+            notifications: notifications.clone(),
         };
         let playback = Playback::new(
             window,
@@ -294,6 +298,7 @@ impl Root {
             services.client.clone(),
             services.handle.clone(),
             services.covers.clone(),
+            notifications.clone(),
         );
 
         let home = cx.new(|cx| HomePage::new(cx, services.clone()));
@@ -384,6 +389,8 @@ impl Root {
             subs.push(cx.observe(&playback, |root: &mut Root, playback, cx| {
                 root.on_playback(playback, cx)
             }));
+            // 提示变化时重绘外壳（Toast 浮层）
+            subs.push(cx.observe(&notifications, |_root, _n, cx| cx.notify()));
             Self {
                 _runtime: runtime,
                 services,
@@ -655,6 +662,7 @@ impl Render for Root {
         let page_w = (vw - 300.0 - np_w - 32.0).max(0.0);
         div()
             .v_flex()
+            .relative()
             .size_full()
             .bg(theme::window_bg())
             .child(self.title_bar(weak.clone(), vw, cx))
@@ -694,6 +702,7 @@ impl Render for Root {
             .when_some(rename_overlay, |this, overlay| this.child(overlay))
             .when_some(delete_overlay, |this, overlay| this.child(overlay))
             .when_some(desc_overlay, |this, overlay| this.child(overlay))
+            .child(self.notifications_overlay(cx))
     }
 }
 

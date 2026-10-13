@@ -10,6 +10,7 @@ use gpui_kit::component::slider::{SliderEvent, SliderState, SliderValue};
 use gpui_kit::*;
 
 use super::covers::CoverLoader;
+use super::notifications::Notifications;
 use super::settings_store::SettingsStore;
 use siren_core::lyrics::LyricLine;
 use siren_core::model::{Artist, ArtistAlbum, ArtistDetail, AudioQuality, CommentPage, Song, SongWiki};
@@ -24,6 +25,7 @@ pub(crate) struct Playback {
     client: Arc<NeteaseClient>,
     handle: tokio::runtime::Handle,
     covers: CoverLoader,
+    notifications: Entity<Notifications>,
     player: Player,
     status: SharedString,
     mirrored: PlaybackState,
@@ -68,6 +70,7 @@ impl Playback {
         client: Arc<NeteaseClient>,
         handle: tokio::runtime::Handle,
         covers: CoverLoader,
+        notifications: Entity<Notifications>,
     ) -> Entity<Self> {
         let engine: Arc<dyn PlaybackController> = match Mpv::load(&siren_platform::mpv_library_candidates()) {
             Ok(mpv) => Arc::new(mpv),
@@ -128,6 +131,7 @@ impl Playback {
                 client,
                 handle,
                 covers,
+                notifications,
                 player,
                 status: "就绪".into(),
                 mirrored: PlaybackState::default(),
@@ -377,6 +381,7 @@ impl Playback {
                         this.liked.insert(id);
                     }
                     this.status = "喜欢操作失败".into();
+                    this.notifications.update(cx, |n, cx| n.error("喜欢操作失败", cx));
                     cx.notify();
                 })
                 .ok();
@@ -683,6 +688,8 @@ impl Playback {
                     None => {
                         log::warn!("无可用播放地址 id={}", song.id);
                         this.status = "无可用播放地址（需登录/会员）".into();
+                        this.notifications
+                            .update(cx, |n, cx| n.error("无可用播放地址（需登录/会员）", cx));
                     }
                 }
                 cx.notify();

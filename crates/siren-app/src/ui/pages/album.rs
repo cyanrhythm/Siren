@@ -82,9 +82,34 @@ impl AlbumPage {
         cx.notify();
         let client = self.services.client.clone();
         let id = self.id;
+        let (tx, rx) = tokio::sync::oneshot::channel();
         self.services.handle.spawn(async move {
-            let _ = siren_core::network::api::album_subscribe(&client, id, subscribe).await;
+            let ok = siren_core::network::api::album_subscribe(&client, id, subscribe)
+                .await
+                .is_ok();
+            let _ = tx.send(ok);
         });
+        cx.spawn(async move |this, cx| {
+            let ok = rx.await.unwrap_or(false);
+            this.update(cx, |this, cx| {
+                if ok {
+                    this.services.toast(
+                        if subscribe {
+                            "已收藏专辑"
+                        } else {
+                            "已取消收藏"
+                        },
+                        cx,
+                    );
+                } else {
+                    this.subscribed = !subscribe;
+                    this.services.toast_error("操作失败", cx);
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 }
 

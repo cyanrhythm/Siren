@@ -25,6 +25,7 @@ impl Root {
     pub(crate) fn submit_create(&mut self, cx: &mut Context<Self>) {
         let name = self.ops.create_input.read(cx).value().trim().to_string();
         if name.is_empty() {
+            self.services.toast_error("歌单名不能为空", cx);
             return;
         }
         let client = self.services.client.clone();
@@ -39,7 +40,10 @@ impl Root {
             let id = rx.await.ok().flatten();
             this.update(cx, |this, cx| {
                 if id.is_some() {
+                    this.services.toast_success("歌单已创建", cx);
                     this.library.update(cx, |page, cx| page.reload_playlists(cx));
+                } else {
+                    this.services.toast_error("创建歌单失败", cx);
                 }
                 cx.notify();
             })
@@ -102,7 +106,10 @@ impl Root {
             let ok = rx.await.unwrap_or(false);
             this.update(cx, |this, cx| {
                 if ok {
+                    this.services.toast_success("已添加到歌单", cx);
                     this.library.update(cx, |page, cx| page.reload_playlists(cx));
+                } else {
+                    this.services.toast_error("添加到歌单失败", cx);
                 }
                 cx.notify();
             })
@@ -281,6 +288,7 @@ impl Root {
         let Some(id) = self.ops.rename_pid else { return };
         let name = self.ops.rename_input.read(cx).value().trim().to_string();
         if name.is_empty() {
+            self.services.toast_error("歌单名不能为空", cx);
             return;
         }
         let client = self.services.client.clone();
@@ -299,8 +307,11 @@ impl Root {
             let ok = rx.await.unwrap_or(false);
             this.update(cx, |this, cx| {
                 if ok {
+                    this.services.toast_success("已重命名歌单", cx);
                     this.library.update(cx, |page, cx| page.reload_playlists(cx));
                     this.update_open_playlist_name(id, &new_name, cx);
+                } else {
+                    this.services.toast_error("重命名失败", cx);
                 }
                 cx.notify();
             })
@@ -335,10 +346,13 @@ impl Root {
             let ok = rx.await.unwrap_or(false);
             this.update(cx, |this, cx| {
                 if ok {
+                    this.services.toast_success("歌单已删除", cx);
                     this.library.update(cx, |page, cx| page.reload_playlists(cx));
                     if matches!(this.route(), Route::Playlist { id: cur, .. } if cur == id) {
                         this.navigate(Route::Home, cx);
                     }
+                } else {
+                    this.services.toast_error("删除歌单失败", cx);
                 }
                 cx.notify();
             })
@@ -501,7 +515,10 @@ impl Root {
             let ok = rx.await.unwrap_or(false);
             this.update(cx, |this, cx| {
                 if ok {
+                    this.services.toast_success("简介已更新", cx);
                     this.library.update(cx, |page, cx| page.reload_playlists(cx));
+                } else {
+                    this.services.toast_error("简介更新失败", cx);
                 }
                 cx.notify();
             })
