@@ -727,6 +727,7 @@ impl Render for Root {
             .v_flex()
             .relative()
             .size_full()
+            .font_family("MiSans")
             .bg(theme::window_bg())
             .child(self.title_bar(weak.clone(), vw, cx))
             .child(

@@ -14,6 +14,7 @@ use siren_core::model::{HomeCard, HomeShelf, Playlist, RecentPlaylist, Song};
 
 use super::super::playback::Playback;
 use super::super::services::Services;
+use super::super::settings_store::SettingsStore;
 use super::super::{fmt_month_day, icon, PageEvent};
 use crate::theme;
 
@@ -179,7 +180,7 @@ impl HomePage {
     }
 
     /// 最近播放：自适应填充的卡片网格（封面 + 标题），悬停显示红色播放按钮。
-    fn recent_grid(&self, cx: &Context<Self>) -> AnyElement {
+    fn recent_grid(&self, tile_w: f32, cx: &Context<Self>) -> AnyElement {
         let weak = cx.weak_entity();
         let covers = self.services.covers.clone();
         let mut grid = div().flex().flex_wrap().gap(px(12.0)).w_full();
@@ -192,9 +193,7 @@ impl HomePage {
             let name_play = item.name.clone();
             let mut tile = div()
                 .id(format!("home-recent-{id}"))
-                .flex_1()
-                .min_w(px(240.0))
-                .max_w(px(420.0))
+                .w(px(tile_w))
                 .h(px(72.0))
                 .flex()
                 .items_center()
@@ -595,7 +594,15 @@ impl HomePage {
 }
 
 impl Render for HomePage {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // 计算最近播放卡片等宽：按可用宽度算列数（2~4），卡片等宽并填充。
+        let vw = f32::from(window.viewport_size().width);
+        let np_w = SettingsStore::of(cx).np_width();
+        let avail = (vw - 300.0 - np_w - 32.0 - 48.0).max(1.0);
+        let gap = 12.0f32;
+        let min_tile = 240.0f32;
+        let cols = (((avail + gap) / (min_tile + gap)).floor() as usize).clamp(2, 4);
+        let tile_w = ((avail - gap * (cols as f32 - 1.0)) / cols as f32).max(120.0);
         let body: AnyElement = match self.tab {
             HomeTab::All => {
                 let mut col = div()
@@ -607,7 +614,7 @@ impl Render for HomePage {
                     .p(px(24.0))
                     .overflow_y_scroll();
                 if !self.recent.is_empty() {
-                    col = col.child(section_title("最近播放")).child(self.recent_grid(cx));
+                    col = col.child(section_title("最近播放")).child(self.recent_grid(tile_w, cx));
                 }
                 if let Some(daily) = self.daily_spotlight(cx) {
                     col = col.child(section_title("今日为你推荐")).child(daily);

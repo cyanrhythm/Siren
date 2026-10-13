@@ -11,9 +11,14 @@
 pub mod theme;
 pub mod ui;
 
+use std::borrow::Cow;
+
 use gpui_kit::*;
 
 use ui::Root;
+
+/// 内嵌的应用字体（MiSans）。
+const MI_SANS: &[u8] = include_bytes!("../../../assets/fonts/MiSans-Regular.ttf");
 
 const DEFAULT_W: f32 = 1100.0;
 const DEFAULT_H: f32 = 760.0;
@@ -55,7 +60,12 @@ pub fn run() {
         .with_assets(gpui_kit::assets::AllAssets)
         .run(move |cx| {
             gpui_kit::init(cx);
+            // 注册应用字体并作为默认字体系
+            if cx.text_system().add_fonts(vec![Cow::Borrowed(MI_SANS)]).is_ok() {
+                log::info!("已注册字体 MiSans");
+            }
             gpui_kit::component::Theme::change(gpui_kit::component::ThemeMode::Dark, None, cx);
+            cx.global_mut::<gpui_kit::component::Theme>().font_family = "MiSans".into();
             crate::theme::install(cx);
             gpui_kit::open_window(
                 WindowOptions {
