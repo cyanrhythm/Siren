@@ -120,7 +120,7 @@ impl LibraryPage {
                         this.nickname = nick.unwrap_or_else(|| "已登录".to_string()).into();
                         this.avatar_url = avatar.clone();
                         this.login_status = format!("已登录：{}", this.nickname).into();
-                        eprintln!("[siren] 已登录：{} (uid={uid})", this.nickname);
+                        log::info!("已登录：{} (uid={uid})", this.nickname);
                         cx.emit(PageEvent::Account {
                             uid,
                             nickname: this.nickname.to_string(),

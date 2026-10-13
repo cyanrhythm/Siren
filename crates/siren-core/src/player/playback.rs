@@ -117,14 +117,14 @@ impl Player {
 
     /// 引擎加载并开始播放指定地址。
     pub fn play_url(&mut self, url: &str) {
-        eprintln!(
-            "[siren][core][play_url] song={:?} len={}",
+        log::info!(
+            "加载播放地址 song={:?} len={}",
             self.state.song.as_ref().map(|s| s.id),
             url.len()
         );
         self.engine.load(url);
         self.engine.set_paused(false);
-        eprintln!("[siren][core][play_url] awaiting_load=false, engine loaded new file");
+        log::debug!("引擎已加载新文件，恢复进度同步");
         // 新文件已交给引擎，之后读到的是新曲进度，可恢复位置/时长同步。
         self.awaiting_load = false;
         self.state.playing = true;
@@ -214,8 +214,8 @@ impl Player {
         let mut pending = None;
         let eof = self.engine.eof_reached().unwrap_or(false);
         if eof != self.last_eof {
-            eprintln!(
-                "[siren][core][eof] eof={eof} pos={} dur={} playing={} song={:?} latched={}",
+            log::debug!(
+                "eof={eof} pos={} dur={} playing={} song={:?} latched={}",
                 self.state.position_ms,
                 self.state.duration_ms,
                 self.state.playing,
@@ -233,10 +233,10 @@ impl Player {
             self.eof_latched = true;
             match self.advance_auto() {
                 Some(song) => {
-                    eprintln!("[siren][core][advance] -> song={}", song.id);
+                    log::info!("自然播完，自动切歌 -> song={}", song.id);
                     pending = Some(song);
                 }
-                None => eprintln!("[siren][core][advance] 队列已到末尾，无下一首"),
+                None => log::warn!("自然播完但队列已到末尾，无下一首"),
             }
             dirty = true;
         }

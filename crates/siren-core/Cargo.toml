@@ -35,6 +35,10 @@ directories.workspace = true
 # 歌词解析
 regex.workspace = true
 
+# 日志
+log.workspace = true
+chrono.workspace = true
+
 # 二维码登录
 qrcode.workspace = true
 png.workspace = true

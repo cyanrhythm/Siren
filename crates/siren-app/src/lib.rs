@@ -20,6 +20,9 @@ const DEFAULT_H: f32 = 760.0;
 
 /// 应用入口：初始化 tokio 运行时与 GPUI 主循环。
 pub fn run() {
+    // 尽早初始化日志（文件 + 可选标准错误镜像）
+    siren_core::logging::init();
+
     // 注册 AppUserModelID：让系统媒体浮层显示应用名而非“未知应用”
     siren_platform::set_app_user_model_id("com.cyanrhythm.Siren");
 

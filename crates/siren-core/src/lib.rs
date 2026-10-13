@@ -19,6 +19,7 @@
 pub mod auth;
 pub mod crypto;
 pub mod error;
+pub mod logging;
 pub mod lyrics;
 pub mod model;
 pub mod network;

@@ -98,7 +98,7 @@ impl Playback {
         )
         .ok();
         if media.is_some() {
-            eprintln!("[siren] 系统媒体控制已启用");
+            log::info!("系统媒体控制已启用");
         }
 
         let entity = cx.new(|cx| {
@@ -412,7 +412,7 @@ impl Playback {
 
     fn tick(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(song) = self.player.tick() {
-            eprintln!("[siren][app][tick] 收到下一首请求 id={}", song.id);
+            log::debug!("收到下一首请求 id={}", song.id);
             self.resolve_and_play(song, cx);
         }
         let state = self.player.state();
@@ -529,7 +529,7 @@ impl Playback {
     }
 
     fn resolve_and_play(&mut self, song: Song, cx: &mut Context<Self>) {
-        eprintln!("[siren][app][resolve] id={} name={}", song.id, song.name);
+        log::info!("解析并播放 id={} name={}", song.id, song.name);
         // 打卡上报：结束上一首（按实际播放时长），并开始新一首。
         self.finish_previous();
         let client_report = self.client.clone();
@@ -683,12 +683,12 @@ impl Playback {
             this.update(cx, |this, cx| {
                 match url {
                     Some(url) => {
-                        eprintln!("[siren][app][resolve] url ok id={}", song.id);
+                        log::info!("播放地址解析成功 id={}", song.id);
                         this.player.play_url(&url);
                         this.status = format!("播放中：{}", song.name).into();
                     }
                     None => {
-                        eprintln!("[siren][app][resolve] 无可用播放地址 id={}", song.id);
+                        log::warn!("无可用播放地址 id={}", song.id);
                         this.status = "无可用播放地址（需登录/会员）".into();
                     }
                 }

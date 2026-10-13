@@ -67,6 +67,10 @@ directories = "6"
 # 歌词解析（siren-core）
 regex = "1"
 
+# ── 日志（siren-core / siren-app）───────────────────────────────
+log = "0.4"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+
 # ── 二维码登录（siren-core）────────────────────────────────────
 qrcode = { version = "0.14", default-features = false }
 png = "0.17"
