@@ -33,6 +33,10 @@ pub(crate) struct HomePage {
     daily: Arc<Vec<Song>>,
     playlists: Arc<Vec<Playlist>>,
     shelves: Vec<HomeShelf>,
+    /// 每个货架的横向滚动句柄（跨帧保持滚动位置）。
+    shelf_scroll: std::collections::HashMap<String, ScrollHandle>,
+    /// 当前悬停的货架 code（用于显示翻页箭头）。
+    hovered_shelf: Option<String>,
     /// 当前悬停的条目 id（用于显示播放按钮）。
     hovered: Option<i64>,
     load_gen: u64,
@@ -50,6 +54,8 @@ impl HomePage {
             daily: Arc::new(Vec::new()),
             playlists: Arc::new(Vec::new()),
             shelves: Vec::new(),
+            shelf_scroll: std::collections::HashMap::new(),
+            hovered_shelf: None,
             hovered: None,
             load_gen: 0,
         };
@@ -172,30 +178,29 @@ impl HomePage {
         row.into_any_element()
     }
 
-    /// 最近播放：横向卡片网格（封面 + 标题），悬停显示红色播放按钮。
+    /// 最近播放：自适应填充的卡片网格（封面 + 标题），悬停显示红色播放按钮。
     fn recent_grid(&self, cx: &Context<Self>) -> AnyElement {
         let weak = cx.weak_entity();
         let covers = self.services.covers.clone();
         let mut grid = div().flex().flex_wrap().gap(px(12.0)).w_full();
         for item in &self.recent {
             let cover = covers.image(&item.cover_url, 72.0);
-            let weak_click = weak.clone();
             let weak_hover = weak.clone();
             let weak_play = weak.clone();
-            let (id, cover_url) = (item.id, item.cover_url.clone());
-            let name_click = item.name.clone();
+            let id = item.id;
+            let cover_url = item.cover_url.clone();
             let name_play = item.name.clone();
             let mut tile = div()
                 .id(format!("home-recent-{id}"))
-                .w(px(300.0))
+                .flex_1()
+                .min_w(px(240.0))
+                .max_w(px(420.0))
                 .h(px(72.0))
                 .flex()
                 .items_center()
                 .rounded(px(8.0))
                 .bg(theme::surface())
                 .overflow_hidden()
-                .cursor_pointer()
-                .hover(|s| s.bg(theme::surface_light()))
                 .on_hover(move |hovered, _w, cx| {
                     weak_hover
                         .update(cx, |page, cx| {
@@ -207,33 +212,13 @@ impl HomePage {
                             cx.notify();
                         })
                         .ok();
-                })
-                .on_click(move |_ev, _window, cx| {
-                    weak_click
-                        .update(cx, |_p, cx| {
-                            cx.emit(PageEvent::OpenPlaylist {
-                                id,
-                                name: name_click.clone(),
-                            })
-                        })
-                        .ok();
-                })
-                .child(cover)
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(px(0.0))
-                        .px(px(12.0))
-                        .text_sm()
-                        .font_weight(FontWeight::BOLD)
-                        .text_color(theme::text_primary())
-                        .truncate()
-                        .child(item.name.clone()),
-                );
+                });
+            tile = tile.child(recent_open_region(weak.clone(), id, item.name.clone(), cover));
             if self.hovered == Some(id) {
                 tile = tile.child(
                     div()
                         .id(format!("home-recent-play-{id}"))
+                        .flex_none()
                         .pr(px(12.0))
                         .cursor_pointer()
                         .on_click(move |_ev, _window, cx| {
@@ -327,18 +312,66 @@ impl HomePage {
         self.playback.update(cx, |pb, cx| pb.play_from(songs, 0, cx));
     }
 
-    /// 服务端货架：标题 + 卡片网格（类型角标 + 标题 + 描述）。
+    /// 服务端货架：标题（悬停显示翻页箭头）+ 横向滚动卡片行。
     fn shelf_section(&self, shelf: &HomeShelf, cx: &Context<Self>) -> AnyElement {
-        let mut grid = div().flex().flex_wrap().gap(px(16.0)).w_full();
-        for (index, card) in shelf.cards.iter().enumerate() {
-            grid = grid.child(self.card_tile(card, shelf.show_rank.then_some(index + 1), cx));
+        let code = shelf.block_code.clone();
+        let handle = self.shelf_scroll.get(&code).cloned().unwrap_or_default();
+        let hovered = self.hovered_shelf.as_deref() == Some(code.as_str());
+        let off = handle.offset();
+        let max = handle.max_offset();
+        let can_left = f32::from(off.x) > 0.5;
+        let can_right = f32::from(off.x) + 0.5 < f32::from(max.x);
+
+        let mut cards = div()
+            .id(format!("shelf-row-{code}"))
+            .flex()
+            .gap(px(16.0))
+            .w_full()
+            .overflow_x_scroll()
+            .restrict_scroll_to_axis()
+            .track_scroll(&handle);
+        for (i, card) in shelf.cards.iter().enumerate() {
+            cards = cards.child(
+                div()
+                    .flex_none()
+                    .child(self.card_tile(card, shelf.show_rank.then_some(i + 1), cx)),
+            );
         }
+
+        let mut title_row = div()
+            .flex()
+            .items_center()
+            .gap(px(8.0))
+            .w_full()
+            .child(div().flex_1().min_w(px(0.0)).child(section_title(&shelf.title)));
+        if hovered && can_left {
+            title_row = title_row.child(scroll_arrow(handle.clone(), true));
+        }
+        if hovered && can_right {
+            title_row = title_row.child(scroll_arrow(handle.clone(), false));
+        }
+
+        let weak = cx.weak_entity();
+        let hover_code = code.clone();
         div()
+            .id(format!("shelf-{code}"))
             .v_flex()
             .w_full()
             .gap(px(10.0))
-            .child(section_title(&shelf.title))
-            .child(grid)
+            .on_hover(move |hv, _w, cx| {
+                let code = hover_code.clone();
+                weak.update(cx, |page, cx| {
+                    if *hv {
+                        page.hovered_shelf = Some(code);
+                    } else if page.hovered_shelf.as_deref() == Some(code.as_str()) {
+                        page.hovered_shelf = None;
+                    }
+                    cx.notify();
+                })
+                .ok();
+            })
+            .child(title_row)
+            .child(div().w_full().min_w(px(0.0)).child(cards))
             .into_any_element()
     }
 
@@ -355,36 +388,47 @@ impl HomePage {
             Some(r) => format!("{} · {}", card.type_label(), r),
             None => card.type_label().to_string(),
         };
-        let card_owned = card.clone();
-        let weak_click = weak.clone();
-        let weak_hover = weak.clone();
-        let weak_play = weak.clone();
-        let cover_box = div()
-            .relative()
-            .w(px(168.0))
-            .h(px(168.0))
-            .child(cover)
-            .when(self.hovered == Some(key), |el| {
-                el.child(
-                    div()
-                        .id(format!("home-card-play-{key}"))
-                        .absolute()
-                        .right(px(8.0))
-                        .bottom(px(8.0))
-                        .cursor_pointer()
-                        .on_click(move |_ev, _window, cx| {
-                            weak_play.update(cx, |page, cx| page.play_card(&card_owned, cx)).ok();
-                        })
-                        .child(play_fab(40.0)),
-                )
-            });
         let click_card = card.clone();
+        let play_card = card.clone();
+        let weak_open = weak.clone();
+        let weak_play = weak.clone();
+        let weak_hover = weak.clone();
+
+        let cover_click = div()
+            .id(format!("home-card-open-{key}"))
+            .size_full()
+            .cursor_pointer()
+            .on_click(move |_ev, _window, cx| {
+                weak_open.update(cx, |_p, cx| open_card_event(&click_card, cx)).ok();
+            })
+            .child(cover);
+        let media =
+            div()
+                .relative()
+                .w(px(168.0))
+                .h(px(168.0))
+                .child(cover_click)
+                .when(self.hovered == Some(key), |el| {
+                    el.child(
+                        div()
+                            .id(format!("home-card-play-{key}"))
+                            .absolute()
+                            .right(px(8.0))
+                            .bottom(px(8.0))
+                            .cursor_pointer()
+                            .on_click(move |_ev, _window, cx| {
+                                weak_play.update(cx, |page, cx| page.play_card(&play_card, cx)).ok();
+                            })
+                            .child(play_fab(40.0)),
+                    )
+                });
+        let text_card = card.clone();
+        let weak_text = weak.clone();
         div()
             .id(format!("home-card-{key}"))
             .w(px(168.0))
             .v_flex()
             .gap(px(6.0))
-            .cursor_pointer()
             .on_hover(move |hovered, _w, cx| {
                 weak_hover
                     .update(cx, |page, cx| {
@@ -397,47 +441,43 @@ impl HomePage {
                     })
                     .ok();
             })
-            .on_click(move |_ev, _window, cx| {
-                weak_click
-                    .update(cx, |_p, cx| match &click_card {
-                        HomeCard::Playlist { id, title, .. } => cx.emit(PageEvent::OpenPlaylist {
-                            id: *id,
-                            name: title.clone(),
-                        }),
-                        HomeCard::Album { id, title, .. } => cx.emit(PageEvent::OpenAlbum {
-                            id: *id,
-                            name: title.clone(),
-                        }),
-                        HomeCard::Song { .. } | HomeCard::Voice { .. } => {}
+            .child(media)
+            .child(
+                div()
+                    .id(format!("home-card-text-{key}"))
+                    .v_flex()
+                    .w_full()
+                    .gap(px(2.0))
+                    .cursor_pointer()
+                    .on_click(move |_ev, _window, cx| {
+                        weak_text.update(cx, |_p, cx| open_card_event(&text_card, cx)).ok();
                     })
-                    .ok();
-            })
-            .child(cover_box)
-            .child(
-                div()
-                    .w_full()
-                    .text_xs()
-                    .text_color(theme::text_gray())
-                    .child(type_label),
+                    .child(
+                        div()
+                            .w_full()
+                            .text_xs()
+                            .text_color(theme::text_gray())
+                            .child(type_label),
+                    )
+                    .child(
+                        div()
+                            .w_full()
+                            .text_sm()
+                            .text_color(theme::text_primary())
+                            .truncate()
+                            .child(title),
+                    )
+                    .when(!caption.is_empty(), |el| {
+                        el.child(
+                            div()
+                                .w_full()
+                                .text_xs()
+                                .text_color(theme::text_gray())
+                                .truncate()
+                                .child(caption),
+                        )
+                    }),
             )
-            .child(
-                div()
-                    .w_full()
-                    .text_sm()
-                    .text_color(theme::text_primary())
-                    .truncate()
-                    .child(title),
-            )
-            .when(!caption.is_empty(), |el| {
-                el.child(
-                    div()
-                        .w_full()
-                        .text_xs()
-                        .text_color(theme::text_gray())
-                        .truncate()
-                        .child(caption),
-                )
-            })
             .into_any_element()
     }
 
@@ -573,6 +613,10 @@ impl Render for HomePage {
                     col = col.child(section_title("今日为你推荐")).child(daily);
                 }
                 if !self.shelves.is_empty() {
+                    let codes: Vec<String> = self.shelves.iter().map(|s| s.block_code.clone()).collect();
+                    for code in codes {
+                        self.shelf_scroll.entry(code).or_default();
+                    }
                     for shelf in &self.shelves {
                         col = col.child(self.shelf_section(shelf, cx));
                     }
@@ -617,6 +661,92 @@ fn play_circle() -> AnyElement {
         .rounded_full()
         .bg(theme::text_primary())
         .child(icon(IconName::Play, 24.0, theme::window_bg()))
+        .into_any_element()
+}
+
+/// 最近播放卡片的可点区（封面 + 标题）→ 进入歌单页。
+fn recent_open_region(weak: WeakEntity<HomePage>, id: i64, name: String, cover: AnyElement) -> AnyElement {
+    div()
+        .id(format!("home-recent-open-{id}"))
+        .flex_1()
+        .min_w(px(0.0))
+        .h_full()
+        .flex()
+        .items_center()
+        .cursor_pointer()
+        .on_click({
+            let name = name.clone();
+            move |_ev, _window, cx| {
+                weak.update(cx, |_p, cx| cx.emit(PageEvent::OpenPlaylist { id, name: name.clone() }))
+                    .ok();
+            }
+        })
+        .child(cover)
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.0))
+                .px(px(12.0))
+                .text_sm()
+                .font_weight(FontWeight::BOLD)
+                .text_color(theme::text_primary())
+                .truncate()
+                .child(name),
+        )
+        .into_any_element()
+}
+
+/// 卡片点击：歌单/专辑进入详情；单曲/播客不处理。
+fn open_card_event(card: &HomeCard, cx: &mut Context<HomePage>) {
+    match card {
+        HomeCard::Playlist { id, title, .. } => {
+            cx.emit(PageEvent::OpenPlaylist {
+                id: *id,
+                name: title.clone(),
+            });
+        }
+        HomeCard::Album { id, title, .. } => {
+            cx.emit(PageEvent::OpenAlbum {
+                id: *id,
+                name: title.clone(),
+            });
+        }
+        HomeCard::Song { .. } | HomeCard::Voice { .. } => {}
+    }
+}
+
+/// 货架翻页箭头（浅色圆形）。
+fn scroll_arrow(handle: ScrollHandle, back: bool) -> AnyElement {
+    div()
+        .id(if back { "shelf-prev" } else { "shelf-next" })
+        .size(px(34.0))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_full()
+        .bg(theme::surface_light())
+        .cursor_pointer()
+        .hover(|s| s.bg(theme::surface()))
+        .on_click(move |_ev, _window, _cx| {
+            let off = handle.offset();
+            let max = handle.max_offset();
+            let step = 800.0f32;
+            let nx = if back {
+                (f32::from(off.x) - step).max(0.0)
+            } else {
+                (f32::from(off.x) + step).min(f32::from(max.x))
+            };
+            handle.set_offset(point(px(nx), off.y));
+        })
+        .child(icon(
+            if back {
+                IconName::ChevronLeft
+            } else {
+                IconName::ChevronRight
+            },
+            18.0,
+            theme::text_primary(),
+        ))
         .into_any_element()
 }
 
