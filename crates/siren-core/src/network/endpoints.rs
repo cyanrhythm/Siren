@@ -89,6 +89,8 @@ pub mod path {
     pub const USER_FOLLOWS: &str = "/weapi/user/getfollows/";
     /// 用户粉丝列表（WEAPI，后接 `{uid}`）。
     pub const USER_FOLLOWEDS: &str = "/weapi/user/getfolloweds/";
+    /// 每日推荐歌曲（EAPI）。
+    pub const DAILY_RECOMMEND: &str = "/eapi/v3/discovery/recommend/songs";
     /// 收藏专辑列表（EAPI）。
     pub const ALBUM_SUBLIST: &str = "/eapi/album/sublist";
     /// 更新用户歌单排序（WEAPI）。

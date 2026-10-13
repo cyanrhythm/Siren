@@ -314,7 +314,7 @@ impl Root {
             notifications.clone(),
         );
 
-        let home = cx.new(|cx| HomePage::new(cx, services.clone()));
+        let home = cx.new(|cx| HomePage::new(cx, services.clone(), playback.clone()));
         let library = cx.new(|cx| LibraryPage::new(window, cx, services.clone()));
         let search = cx.new(|_cx| SearchPage::new(services.clone(), playback.clone()));
         let recent = cx.new(|_cx| RecentPage::new(services.clone(), playback.clone()));
@@ -796,6 +796,15 @@ pub(crate) fn page_shell_with_header(header: AnyElement, body: AnyElement) -> im
 pub(crate) fn fmt_time(ms: i64) -> String {
     let total = (ms.max(0) / 1000) as u64;
     format!("{}:{:02}", total / 60, total % 60)
+}
+
+/// 毫秒时间戳 → `M月D日`。
+pub(crate) fn fmt_month_day(ms: i64) -> String {
+    if ms <= 0 {
+        return String::new();
+    }
+    let (_, m, d) = civil_from_days(ms / 86_400_000);
+    format!("{m}月{d}日")
 }
 
 /// 毫秒时间戳 → 分区块标题（`8月24日 周一`；跨年补年份）。无时间返回空串。

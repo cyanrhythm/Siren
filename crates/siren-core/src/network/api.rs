@@ -469,6 +469,18 @@ pub async fn comment_floor(
     Ok(crate::model::parse_comments_v2(&json!({ "data": data })))
 }
 
+/// 每日推荐歌曲（EAPI）。
+pub async fn daily_recommend_songs(client: &NeteaseClient) -> Result<Vec<Song>> {
+    let value = client.eapi_post(path::DAILY_RECOMMEND, &json!({})).await?;
+    validate(&value)?;
+    Ok(value
+        .get("data")
+        .and_then(|d| d.get("dailySongs"))
+        .and_then(Value::as_array)
+        .map(|items| items.iter().map(crate::model::parse_song).collect())
+        .unwrap_or_default())
+}
+
 /// 用户详情（WEAPI）。
 pub async fn user_detail(client: &NeteaseClient, uid: i64) -> Result<Option<crate::model::UserProfile>> {
     let url = format!("{}{uid}", path::USER_DETAIL);
