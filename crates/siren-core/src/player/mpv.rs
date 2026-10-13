@@ -124,7 +124,7 @@ impl Mpv {
             mpv.set_option("audio-display", "no");
             mpv.set_option("terminal", "no");
             mpv.set_option("idle", "yes");
-            mpv.set_option("keep-open", "no");
+            mpv.set_option("keep-open", "yes");
 
             let rc = (mpv.lib.initialize)(handle);
             if rc < 0 {

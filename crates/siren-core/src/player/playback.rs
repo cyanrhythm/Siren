@@ -52,6 +52,8 @@ pub struct Player {
     /// 此窗口内引擎仍在报告**上一首**的 `time-pos`/`duration`，必须忽略，
     /// 否则会把刚重置的进度又覆盖回旧曲尾部（表现为进度条尾部来回跳动）。
     awaiting_load: bool,
+    /// 上一次观察到的 eof 状态（仅用于日志）。
+    last_eof: bool,
 }
 
 impl Player {
@@ -65,6 +67,7 @@ impl Player {
             tx,
             eof_latched: false,
             awaiting_load: false,
+            last_eof: false,
         }
     }
 
@@ -114,8 +117,14 @@ impl Player {
 
     /// 引擎加载并开始播放指定地址。
     pub fn play_url(&mut self, url: &str) {
+        eprintln!(
+            "[siren][core][play_url] song={:?} len={}",
+            self.state.song.as_ref().map(|s| s.id),
+            url.len()
+        );
         self.engine.load(url);
         self.engine.set_paused(false);
+        eprintln!("[siren][core][play_url] awaiting_load=false, engine loaded new file");
         // 新文件已交给引擎，之后读到的是新曲进度，可恢复位置/时长同步。
         self.awaiting_load = false;
         self.state.playing = true;
@@ -204,6 +213,17 @@ impl Player {
 
         let mut pending = None;
         let eof = self.engine.eof_reached().unwrap_or(false);
+        if eof != self.last_eof {
+            eprintln!(
+                "[siren][core][eof] eof={eof} pos={} dur={} playing={} song={:?} latched={}",
+                self.state.position_ms,
+                self.state.duration_ms,
+                self.state.playing,
+                self.state.song.as_ref().map(|s| s.id),
+                self.eof_latched,
+            );
+            self.last_eof = eof;
+        }
         if !eof {
             // mpv 已开始播放新文件，解除闩锁
             self.eof_latched = false;
@@ -211,8 +231,12 @@ impl Player {
         if self.state.song.is_some() && eof && !self.eof_latched {
             // 只推进一次；在新文件真正播放（eof 变假）前不再重复推进
             self.eof_latched = true;
-            if let Some(song) = self.advance_auto() {
-                pending = Some(song);
+            match self.advance_auto() {
+                Some(song) => {
+                    eprintln!("[siren][core][advance] -> song={}", song.id);
+                    pending = Some(song);
+                }
+                None => eprintln!("[siren][core][advance] 队列已到末尾，无下一首"),
             }
             dirty = true;
         }
