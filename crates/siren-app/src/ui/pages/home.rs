@@ -2,8 +2,8 @@
 //!
 //! 对齐 Melodia `desktopApp/ui/HomePage.kt`（`RecentGrid`、`DailySpotlight`、`ShelfRow`/`CardTile`）。
 //!
-//! 卡片播放按钮：常驻渲染，用 `group`/`group_hover` 做透明度显隐（无状态重渲染，避免闪烁），
-//! 并 `occlude()` 保证点击只落在按钮上（点播放=起播，点封面/标题=进详情）。
+//! 卡片播放按钮：`group`/`group_hover` 做透明度显隐（纯样式、无重渲染、不闪烁）；
+//! 点击用 `cx.stop_propagation()` 拦截封面/标题的“打开”行为（点播放=起播，点封面/标题=进详情）。
 
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -17,8 +17,12 @@ use siren_core::model::{HomeCard, HomeShelf, Playlist, RecentPlaylist, Song};
 
 use super::super::playback::Playback;
 use super::super::services::Services;
-use super::super::{fmt_month_day, icon, PageEvent};
+use super::super::{fmt_month_day, icon, PageEvent, PageLayout};
 use crate::theme;
+
+/// 首页卡片定宽与货架卡片间距（与 `card_tile` 保持一致，供货架宽度估算）。
+const CARD_W: f32 = 168.0;
+const CARD_GAP: f32 = 16.0;
 
 /// 首页顶部胶囊。
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -38,8 +42,6 @@ pub(crate) struct HomePage {
     shelves: Vec<HomeShelf>,
     /// 每个货架的横向滚动句柄（跨帧保持滚动位置）。
     shelf_scroll: std::collections::HashMap<String, ScrollHandle>,
-    /// 当前悬停的货架 code（用于显示翻页箭头）。
-    hovered_shelf: Option<String>,
     load_gen: u64,
 }
 
@@ -56,7 +58,6 @@ impl HomePage {
             playlists: Arc::new(Vec::new()),
             shelves: Vec::new(),
             shelf_scroll: std::collections::HashMap::new(),
-            hovered_shelf: None,
             load_gen: 0,
         };
         page.load(cx);
@@ -292,18 +293,37 @@ impl HomePage {
     }
 
     /// 服务端货架：标题（悬停显示翻页箭头）+ 横向滚动卡片行。
+    ///
+    /// 箭头仅在内容宽度超过可视宽度（需要滚动）时才渲染；且悬停货架时才显形。
     fn shelf_section(&self, shelf: &HomeShelf, cx: &Context<Self>) -> AnyElement {
         let code = shelf.block_code.clone();
         let handle = self.shelf_scroll.get(&code).cloned().unwrap_or_default();
         let off = handle.offset();
         let max = handle.max_offset();
-        let can_left = f32::from(off.x) > 0.5;
-        let can_right = f32::from(off.x) + 0.5 < f32::from(max.x);
+
+        // 内容实际宽度（卡片定宽 + 间距），用于首帧判断是否需要滚动。
+        let n = shelf.cards.len() as f32;
+        let content_w = if n > 0.0 {
+            n * CARD_W + (n - 1.0) * CARD_GAP
+        } else {
+            0.0
+        };
+        let avail_w = (cx.global::<PageLayout>().page_w - 48.0).max(0.0);
+        // 已测量则用真实可滚动距离，未测量（首帧）则用估算值。
+        let measured = f32::from(max.x);
+        let scroll_w = if measured > 0.5 {
+            measured
+        } else {
+            (content_w - avail_w).max(0.0)
+        };
+        let can_left = scroll_w > 0.5 && f32::from(off.x) < -0.5;
+        let can_right = scroll_w > 0.5 && f32::from(off.x) > -scroll_w + 0.5;
+        let group = format!("shelf-group-{code}");
 
         let mut cards = div()
             .id(format!("shelf-row-{code}"))
             .flex()
-            .gap(px(16.0))
+            .gap(px(CARD_GAP))
             .w_full()
             .overflow_x_scroll()
             .restrict_scroll_to_axis()
@@ -322,38 +342,35 @@ impl HomePage {
             .gap(px(8.0))
             .w_full()
             .child(div().flex_1().min_w(px(0.0)).child(section_title(&shelf.title)));
-        let _ = (can_left, can_right);
-        title_row = title_row.child(scroll_arrow(
-            format!("{code}-prev"),
-            handle.clone(),
-            true,
-            cx.weak_entity(),
-        ));
-        title_row = title_row.child(scroll_arrow(
-            format!("{code}-next"),
-            handle.clone(),
-            false,
-            cx.weak_entity(),
-        ));
+        if can_left {
+            title_row = title_row.child(scroll_arrow(
+                format!("{code}-prev"),
+                group.clone(),
+                handle.clone(),
+                true,
+                cx.weak_entity(),
+            ));
+        }
+        if can_right {
+            title_row = title_row.child(scroll_arrow(
+                format!("{code}-next"),
+                group.clone(),
+                handle.clone(),
+                false,
+                cx.weak_entity(),
+            ));
+        }
 
         let weak = cx.weak_entity();
-        let hover_code = code.clone();
         div()
             .id(format!("shelf-{code}"))
+            .group(group)
             .v_flex()
             .w_full()
             .gap(px(10.0))
-            .on_hover(move |hv, _w, cx| {
-                let code = hover_code.clone();
-                weak.update(cx, |page, cx| {
-                    if *hv {
-                        page.hovered_shelf = Some(code);
-                    } else if page.hovered_shelf.as_deref() == Some(code.as_str()) {
-                        page.hovered_shelf = None;
-                    }
-                    cx.notify();
-                })
-                .ok();
+            .on_hover(move |_hv, _w, cx| {
+                // 悬停时刷新一次：让首帧尚未测量到的 max_offset 生效，箭头显隐随之修正。
+                weak.update(cx, |_page, cx| cx.notify()).ok();
             })
             .child(title_row)
             .child(div().w_full().min_w(px(0.0)).child(cards))
@@ -378,6 +395,8 @@ impl HomePage {
         let play_card = card.clone();
         let weak_open = weak.clone();
         let weak_play = weak.clone();
+        let group = format!("home-card-{key}");
+        let play_group = group.clone();
         let cover_click = div()
             .id(format!("home-card-open-{key}"))
             .size_full()
@@ -386,28 +405,38 @@ impl HomePage {
                 weak_open.update(cx, |_p, cx| open_card_event(&click_card, cx)).ok();
             })
             .child(cover);
-        let media = div().relative().w(px(168.0)).h(px(168.0)).child(cover_click).child(
-            div()
-                .id(format!("home-card-play-{key}"))
-                .occlude()
-                .absolute()
-                .right(px(2.0))
-                .bottom(px(2.0))
-                .size(px(52.0))
-                .flex()
-                .items_center()
-                .justify_center()
-                .cursor_pointer()
-                .on_click(move |_ev, _window, cx| {
-                    weak_play.update(cx, |page, cx| page.play_card(&play_card, cx)).ok();
-                })
-                .child(play_fab(40.0)),
-        );
+        let media = div()
+            .relative()
+            .w(px(CARD_W))
+            .h(px(CARD_W))
+            .group(group.clone())
+            .child(cover_click)
+            .child(
+                div()
+                    .id(format!("home-card-play-{key}"))
+                    .absolute()
+                    .right(px(2.0))
+                    .bottom(px(2.0))
+                    .size(px(52.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .cursor_pointer()
+                    .opacity(0.0)
+                    .group_hover(play_group, |s| s.opacity(1.0))
+                    .on_click(move |_ev, _window, cx| {
+                        // 冒泡阶段按绘制顺序逆序派发，本按钮在封面之上，先于封面收到点击，
+                        // 因此 stop_propagation 可拦截封面的“打开”行为，无需 occlude。
+                        cx.stop_propagation();
+                        weak_play.update(cx, |page, cx| page.play_card(&play_card, cx)).ok();
+                    })
+                    .child(play_fab(40.0)),
+            );
         let text_card = card.clone();
         let weak_text = weak.clone();
         div()
             .id(format!("home-card-{key}"))
-            .w(px(168.0))
+            .w(px(CARD_W))
             .v_flex()
             .gap(px(6.0))
             .child(media)
@@ -571,8 +600,8 @@ fn play_fab(size: f32) -> impl IntoElement {
         .child(icon(IconName::Play, size * 0.55, theme::text_primary()))
 }
 
-/// 货架翻页箭头（浅色圆形）。
-fn scroll_arrow(id: String, handle: ScrollHandle, back: bool, weak: WeakEntity<HomePage>) -> AnyElement {
+/// 货架翻页箭头（浅色圆形，悬停货架时显形）。
+fn scroll_arrow(id: String, group: String, handle: ScrollHandle, back: bool, weak: WeakEntity<HomePage>) -> AnyElement {
     div()
         .id(id)
         .size(px(34.0))
@@ -582,6 +611,8 @@ fn scroll_arrow(id: String, handle: ScrollHandle, back: bool, weak: WeakEntity<H
         .rounded_full()
         .bg(theme::surface_light())
         .cursor_pointer()
+        .opacity(0.0)
+        .group_hover(group, |s| s.opacity(1.0))
         .hover(|s| s.bg(theme::surface()))
         .on_click(move |_ev, _window, cx| {
             let off = handle.offset();
