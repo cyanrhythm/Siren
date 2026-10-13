@@ -124,6 +124,15 @@ impl HomePage {
                     this.recent = merged;
                     this.daily = Arc::new(daily);
                     this.playlists = Arc::new(playlists);
+                    // 为每个货架建立跨帧保持的滚动句柄，否则每次 render 都会新建句柄，
+                    // 翻页箭头 set_offset 后一重渲染即被丢弃，表现为「点了没反应」。
+                    this.shelf_scroll
+                        .retain(|code, _| shelves.iter().any(|s| &s.block_code == code));
+                    for shelf in &shelves {
+                        this.shelf_scroll
+                            .entry(shelf.block_code.clone())
+                            .or_insert_with(ScrollHandle::new);
+                    }
                     this.shelves = shelves;
                 }
                 cx.notify();
@@ -314,8 +323,18 @@ impl HomePage {
             .w_full()
             .child(div().flex_1().min_w(px(0.0)).child(section_title(&shelf.title)));
         let _ = (can_left, can_right);
-        title_row = title_row.child(scroll_arrow(format!("{code}-prev"), handle.clone(), true));
-        title_row = title_row.child(scroll_arrow(format!("{code}-next"), handle.clone(), false));
+        title_row = title_row.child(scroll_arrow(
+            format!("{code}-prev"),
+            handle.clone(),
+            true,
+            cx.weak_entity(),
+        ));
+        title_row = title_row.child(scroll_arrow(
+            format!("{code}-next"),
+            handle.clone(),
+            false,
+            cx.weak_entity(),
+        ));
 
         let weak = cx.weak_entity();
         let hover_code = code.clone();
@@ -553,7 +572,7 @@ fn play_fab(size: f32) -> impl IntoElement {
 }
 
 /// 货架翻页箭头（浅色圆形）。
-fn scroll_arrow(id: String, handle: ScrollHandle, back: bool) -> AnyElement {
+fn scroll_arrow(id: String, handle: ScrollHandle, back: bool, weak: WeakEntity<HomePage>) -> AnyElement {
     div()
         .id(id)
         .size(px(34.0))
@@ -564,16 +583,18 @@ fn scroll_arrow(id: String, handle: ScrollHandle, back: bool) -> AnyElement {
         .bg(theme::surface_light())
         .cursor_pointer()
         .hover(|s| s.bg(theme::surface()))
-        .on_click(move |_ev, _window, _cx| {
+        .on_click(move |_ev, _window, cx| {
             let off = handle.offset();
             let max = handle.max_offset();
+            // gpui 的滚动偏移为负值，合法范围 [-(内容-视口), 0]
             let step = 800.0f32;
             let nx = if back {
-                (f32::from(off.x) - step).max(0.0)
+                (f32::from(off.x) + step).min(0.0)
             } else {
-                (f32::from(off.x) + step).min(f32::from(max.x))
+                (f32::from(off.x) - step).max(-f32::from(max.x))
             };
             handle.set_offset(point(px(nx), off.y));
+            weak.update(cx, |_page, cx| cx.notify()).ok();
         })
         .child(icon(
             if back {
