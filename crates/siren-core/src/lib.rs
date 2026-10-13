@@ -25,6 +25,7 @@ pub mod model;
 pub mod network;
 pub mod playback_session;
 pub mod player;
+pub mod recent_playlists;
 pub mod settings;
 
 pub use error::{Error, Result};

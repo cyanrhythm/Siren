@@ -1,4 +1,4 @@
-//! 最近播放：需登录，展示最近播放的歌曲。
+//! 最近播放：需登录，展示最近播放的歌曲；顶部为本地记录的「最近播放歌单」。
 
 use std::sync::Arc;
 
@@ -7,16 +7,19 @@ use gpui_kit::component::menu::{ContextMenuExt, PopupMenuItem};
 use gpui_kit::*;
 
 use siren_core::model::Song;
+use siren_core::recent_playlists::LocalRecentPlaylist;
 
 use super::super::playback::Playback;
 use super::super::services::Services;
-use super::super::{page_shell, PageEvent};
+use super::super::{page_shell_with_header, PageEvent};
 use crate::theme;
 
 pub(crate) struct RecentPage {
     services: Services,
     playback: Entity<Playback>,
     songs: Arc<Vec<Song>>,
+    /// 本地记录的最近播放歌单（新的在前）。
+    playlists: Vec<LocalRecentPlaylist>,
     status: SharedString,
     load_gen: u64,
 }
@@ -29,6 +32,7 @@ impl RecentPage {
             services,
             playback,
             songs: Arc::new(Vec::new()),
+            playlists: Vec::new(),
             status: "最近播放".into(),
             load_gen: 0,
         }
@@ -52,6 +56,8 @@ impl RecentPage {
                 if this.load_gen != gen {
                     return;
                 }
+                // 本地记录的最近播放歌单（同步读取）
+                this.playlists = siren_core::recent_playlists::load_recent_playlists();
                 match songs {
                     Some(items) => {
                         let urls: Vec<String> = items.iter().map(|s| s.cover_url.clone()).collect();
@@ -61,21 +67,58 @@ impl RecentPage {
                     }
                     None => this.status = "最近播放（需登录）".into(),
                 }
+                let playlist_covers: Vec<String> = this.playlists.iter().map(|p| p.cover_url.clone()).collect();
+                this.services.covers.prefetch(playlist_covers, 108.0, cx);
                 cx.notify();
             })
             .ok();
         })
         .detach();
     }
-}
 
-impl Render for RecentPage {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    /// 最近播放歌单（横向卡片）。
+    fn playlists_row(&self, cx: &Context<Self>) -> AnyElement {
+        let weak = cx.weak_entity();
+        let covers = self.services.covers.clone();
+        let mut row = div().id("recent-playlists").flex().gap(px(12.0)).pb(px(4.0));
+        for item in &self.playlists {
+            let cover = covers.image(&item.cover_url, 108.0);
+            let weak = weak.clone();
+            let (id, name) = (item.id, item.name.clone());
+            row = row.child(
+                div()
+                    .id(format!("recent-pl-{id}"))
+                    .w(px(108.0))
+                    .flex_none()
+                    .v_flex()
+                    .gap(px(6.0))
+                    .cursor_pointer()
+                    .on_click(move |_ev, _window, cx| {
+                        weak.update(cx, |_page, cx| {
+                            cx.emit(PageEvent::OpenPlaylist { id, name: name.clone() });
+                        })
+                        .ok();
+                    })
+                    .child(cover)
+                    .child(
+                        div()
+                            .w_full()
+                            .text_xs()
+                            .text_color(theme::text_primary())
+                            .truncate()
+                            .child(item.name.clone()),
+                    ),
+            );
+        }
+        row.into_any_element()
+    }
+
+    fn songs_list(&self, cx: &Context<Self>) -> AnyElement {
         let songs = self.songs.clone();
         let count = songs.len();
         let covers = self.services.covers.clone();
         let weak = cx.weak_entity();
-        let list = uniform_list("recent-songs", count, move |range, _window, _cx| {
+        uniform_list("recent-songs", count, move |range, _window, _cx| {
             range
                 .map(|i| {
                     let song = &songs[i];
@@ -144,8 +187,52 @@ impl Render for RecentPage {
         })
         .flex_1()
         .w_full()
-        .min_w(px(0.0));
+        .min_w(px(0.0))
+        .into_any_element()
+    }
+}
 
-        page_shell(self.status.to_string(), list.into_any_element())
+impl Render for RecentPage {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let header = div()
+            .text_lg()
+            .text_color(theme::text_primary())
+            .child(self.status.to_string())
+            .into_any_element();
+
+        let mut body = div().v_flex().flex_1().min_w(px(0.0)).p(px(16.0)).gap(px(12.0));
+        if !self.playlists.is_empty() {
+            body = body.child(
+                div()
+                    .v_flex()
+                    .w_full()
+                    .gap(px(8.0))
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(theme::text_primary())
+                            .child("最近播放歌单"),
+                    )
+                    .child(self.playlists_row(cx)),
+            );
+        }
+        body = body.child(
+            div()
+                .v_flex()
+                .flex_1()
+                .min_w(px(0.0))
+                .gap(px(4.0))
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(theme::text_primary())
+                        .child("最近播放歌曲"),
+                )
+                .child(self.songs_list(cx)),
+        );
+
+        page_shell_with_header(header, body.into_any_element())
     }
 }

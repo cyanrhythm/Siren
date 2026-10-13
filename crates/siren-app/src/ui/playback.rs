@@ -84,6 +84,8 @@ pub(crate) struct Playback {
     playing_at: Option<Instant>,
     /// 打卡上报的容器 id（歌单来源用歌单 id，其余用歌曲 id）。
     reporting_container: i64,
+    /// 上一次已记录的本地最近播放歌单 id（同一歌单连续切歌不重复记录）。
+    last_recorded_playlist: i64,
     progress_slider: Entity<SliderState>,
     volume_slider: Entity<SliderState>,
     media: Option<PlatformMediaSession>,
@@ -212,6 +214,7 @@ impl Playback {
                 playing_id: None,
                 playing_at: None,
                 reporting_container: 0,
+                last_recorded_playlist: 0,
                 progress_slider,
                 volume_slider,
                 media,
@@ -676,6 +679,20 @@ impl Playback {
         let client_report = self.client.clone();
         let song_id = song.id;
         let container = self.report_container(song_id);
+        // 歌单来源：本地记录「最近播放歌单」（服务端不记录本客户端的歌单播放）
+        if let Some(source) = self.player.source() {
+            if source.kind == PlaySourceKind::Playlist && source.id != self.last_recorded_playlist {
+                self.last_recorded_playlist = source.id;
+                siren_core::recent_playlists::record_recent_playlist(
+                    siren_core::recent_playlists::LocalRecentPlaylist {
+                        id: source.id,
+                        name: source.name.clone(),
+                        cover_url: source.cover_url.clone(),
+                        play_time: siren_core::recent_playlists::now_ms(),
+                    },
+                );
+            }
+        }
         self.playing_id = Some(song_id);
         self.playing_at = Some(Instant::now());
         self.reporting_container = container;
