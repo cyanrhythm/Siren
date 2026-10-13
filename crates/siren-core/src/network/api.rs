@@ -155,6 +155,29 @@ pub async fn recent_songs(client: &NeteaseClient) -> Result<Vec<Song>> {
     Ok(parse_recent_songs(&value))
 }
 
+/// 最近播放歌曲（含播放时间）。
+pub async fn recent_songs_with_time(client: &NeteaseClient) -> Result<Vec<crate::model::RecentSong>> {
+    let value = client.weapi_post(path::RECENT_SONGS, &json!({ "limit": 100 })).await?;
+    validate(&value)?;
+    Ok(crate::model::parse_recent_songs_with_time(&value))
+}
+
+/// 最近播放歌单（EAPI，需登录）。
+pub async fn recent_playlists(client: &NeteaseClient) -> Result<Vec<crate::model::RecentPlaylist>> {
+    let value = client
+        .eapi_post(path::RECENT_PLAYLISTS, &json!({ "limit": 100 }))
+        .await?;
+    validate(&value)?;
+    Ok(crate::model::parse_recent_playlists(&value))
+}
+
+/// 最近播放专辑（WEAPI，需登录）。
+pub async fn recent_albums(client: &NeteaseClient) -> Result<Vec<crate::model::RecentAlbum>> {
+    let value = client.weapi_post(path::RECENT_ALBUMS, &json!({ "limit": 100 })).await?;
+    validate(&value)?;
+    Ok(crate::model::parse_recent_albums(&value))
+}
+
 /// 从最近播放返回体取歌曲（`data.list[].data`）。
 pub fn parse_recent_songs(value: &Value) -> Vec<Song> {
     value

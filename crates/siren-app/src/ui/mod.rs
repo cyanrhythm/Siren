@@ -786,6 +786,24 @@ pub(crate) fn fmt_time(ms: i64) -> String {
     format!("{}:{:02}", total / 60, total % 60)
 }
 
+/// 毫秒时间戳 → 分区块标题（`8月24日 周一`；跨年补年份）。无时间返回空串。
+pub(crate) fn fmt_day_label(ms: i64, now_ms: i64) -> String {
+    if ms <= 0 {
+        return String::new();
+    }
+    const WEEKDAYS: [&str; 7] = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+    let days = ms / 86_400_000;
+    let (y, m, d) = civil_from_days(days);
+    let (ny, _, _) = civil_from_days(now_ms / 86_400_000);
+    let weekday = WEEKDAYS[(days + 4).rem_euclid(7) as usize];
+    let date = if y == ny {
+        format!("{m}月{d}日")
+    } else {
+        format!("{y}年{m}月{d}日")
+    };
+    format!("{date} {weekday}")
+}
+
 /// 毫秒时间戳 → `YYYY-MM-DD`（无日期时返回空串）。
 pub(crate) fn fmt_date(ms: i64) -> String {
     if ms <= 0 {

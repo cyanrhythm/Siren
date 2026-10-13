@@ -196,6 +196,124 @@ pub fn parse_search_artists(value: &Value) -> Vec<Artist> {
         .unwrap_or_default()
 }
 
+/// 最近播放歌曲（含播放时间）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecentSong {
+    pub song: Song,
+    /// 播放时间（Unix 毫秒）。
+    pub play_time: i64,
+}
+
+/// 最近播放歌单（含播放时间）。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RecentPlaylist {
+    pub id: i64,
+    pub name: String,
+    pub cover_url: String,
+    pub creator_name: String,
+    pub play_time: i64,
+}
+
+/// 最近播放专辑（含播放时间）。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RecentAlbum {
+    pub id: i64,
+    pub name: String,
+    pub cover_url: String,
+    pub artist: String,
+    pub play_time: i64,
+}
+
+/// 解析最近播放歌曲（`data.list[].{playTime,data}`）。
+pub fn parse_recent_songs_with_time(value: &Value) -> Vec<RecentSong> {
+    value
+        .get("data")
+        .and_then(|d| d.get("list"))
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    let data = item.get("data")?;
+                    data.get("id")?;
+                    Some(RecentSong {
+                        song: parse_song(data),
+                        play_time: item.get("playTime").and_then(Value::as_i64).unwrap_or(0),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// 解析最近播放歌单（`data.list[].{playTime,data}`）。
+pub fn parse_recent_playlists(value: &Value) -> Vec<RecentPlaylist> {
+    value
+        .get("data")
+        .and_then(|d| d.get("list"))
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    let data = item.get("data")?;
+                    Some(RecentPlaylist {
+                        id: data.get("id").and_then(Value::as_i64).unwrap_or_default(),
+                        name: str_field(data, "name"),
+                        cover_url: data
+                            .get("coverImgUrl")
+                            .or_else(|| data.get("picUrl"))
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string(),
+                        creator_name: data
+                            .get("creator")
+                            .and_then(|c| c.get("nickname"))
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string(),
+                        play_time: item.get("playTime").and_then(Value::as_i64).unwrap_or(0),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// 解析最近播放专辑（`data.list[].{playTime,data}`）。
+pub fn parse_recent_albums(value: &Value) -> Vec<RecentAlbum> {
+    value
+        .get("data")
+        .and_then(|d| d.get("list"))
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    let data = item.get("data")?;
+                    Some(RecentAlbum {
+                        id: data.get("id").and_then(Value::as_i64).unwrap_or_default(),
+                        name: str_field(data, "name"),
+                        cover_url: data
+                            .get("picUrl")
+                            .or_else(|| data.get("coverImgUrl"))
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string(),
+                        artist: data
+                            .get("artist")
+                            .and_then(|a| a.get("name"))
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string(),
+                        play_time: item.get("playTime").and_then(Value::as_i64).unwrap_or(0),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// 解析收藏专辑（`/eapi/album/sublist`，`data` 数组）。
 pub fn parse_album_sublist(value: &Value) -> Vec<Album> {
     value
