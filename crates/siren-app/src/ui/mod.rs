@@ -167,6 +167,8 @@ pub struct Root {
     search_input: Entity<InputState>,
     /// 歌单页内搜索框（跨歌单复用）。
     pl_filter_input: Entity<InputState>,
+    /// 歌单「添加歌曲」搜索框（跨歌单复用）。
+    pl_add_input: Entity<InputState>,
     nav: Vec<Route>,
     home: Entity<HomePage>,
     library: Entity<LibraryPage>,
@@ -258,6 +260,7 @@ impl Root {
         // 新建歌单名称输入
         let create_input = cx.new(|cx| InputState::new(window, cx).placeholder("歌单名称"));
         let pl_filter_input = cx.new(|cx| InputState::new(window, cx).placeholder("搜索歌单里的歌曲"));
+        let pl_add_input = cx.new(|cx| InputState::new(window, cx).placeholder("搜索要添加的歌曲"));
         let rename_input = cx.new(|cx| InputState::new(window, cx).placeholder("新名称"));
         let desc_input = cx.new(|cx| InputState::new(window, cx).placeholder("歌单简介"));
 
@@ -334,6 +337,7 @@ impl Root {
                 playback,
                 search_input,
                 pl_filter_input,
+                pl_add_input,
                 nav: vec![initial_route],
                 home,
                 library,
@@ -473,6 +477,7 @@ impl Root {
     fn open_playlist(&mut self, id: i64, name: String, cx: &mut Context<Self>) {
         self.nav.push(Route::Playlist { id, name: name.clone() });
         let filter = self.pl_filter_input.clone();
+        let add_input = self.pl_add_input.clone();
         let my_uid = self.account.as_ref().map(|(_, _, uid)| *uid);
         let page = cx.new(|cx| {
             PlaylistPage::new(
@@ -482,6 +487,7 @@ impl Root {
                 id,
                 name,
                 filter,
+                add_input,
                 my_uid,
             )
         });

@@ -71,14 +71,20 @@ pub(crate) struct PlaylistPage {
     sort: SortOrder,
     /// 当前登录用户 uid（用于判断是否本人创建）。
     my_uid: Option<i64>,
+    /// 「添加歌曲」搜索框与结果。
+    add_input: Entity<InputState>,
+    add_open: bool,
+    add_results: Vec<Song>,
     /// 封面裁剪浮层状态。
     crop: Option<CropState>,
     _filter_sub: Subscription,
+    _add_sub: Subscription,
 }
 
 impl EventEmitter<PageEvent> for PlaylistPage {}
 
 impl PlaylistPage {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         cx: &mut Context<Self>,
         services: Services,
@@ -86,12 +92,18 @@ impl PlaylistPage {
         id: i64,
         name: String,
         query_input: Entity<InputState>,
+        add_input: Entity<InputState>,
         my_uid: Option<i64>,
     ) -> Self {
         let _filter_sub = cx.subscribe(&query_input, |this: &mut PlaylistPage, _i, ev: &InputEvent, cx| {
             if let InputEvent::Change = ev {
                 this.query = this.query_input.read(cx).value().to_string();
                 cx.notify();
+            }
+        });
+        let _add_sub = cx.subscribe(&add_input, |this: &mut PlaylistPage, _i, ev: &InputEvent, cx| {
+            if let InputEvent::PressEnter { .. } = ev {
+                this.run_add_search(cx);
             }
         });
         let mut page = Self {
@@ -105,8 +117,12 @@ impl PlaylistPage {
             query: String::new(),
             sort: SortOrder::Custom,
             my_uid,
+            add_input,
+            add_open: false,
+            add_results: Vec::new(),
             crop: None,
             _filter_sub,
+            _add_sub,
         };
         page.load(cx);
         page
@@ -485,6 +501,168 @@ impl PlaylistPage {
         });
     }
 
+    fn open_add(&mut self, cx: &mut Context<Self>) {
+        self.add_open = true;
+        self.add_results.clear();
+        cx.notify();
+    }
+    fn close_add(&mut self, cx: &mut Context<Self>) {
+        self.add_open = false;
+        cx.notify();
+    }
+    fn run_add_search(&mut self, cx: &mut Context<Self>) {
+        let keyword = self.add_input.read(cx).value().trim().to_string();
+        if keyword.is_empty() {
+            return;
+        }
+        let client = self.services.client.clone();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.services.handle.spawn(async move {
+            let songs = siren_core::network::api::cloud_search(&client, &keyword, 1, 20)
+                .await
+                .ok()
+                .map(|v| siren_core::model::parse_search_songs(&v))
+                .unwrap_or_default();
+            let _ = tx.send(songs);
+        });
+        cx.spawn(async move |this, cx| {
+            let songs = rx.await.unwrap_or_default();
+            this.update(cx, |this, cx| {
+                let urls: Vec<String> = songs.iter().map(|s| s.cover_url.clone()).collect();
+                this.add_results = songs;
+                this.services.covers.prefetch(urls, 40.0, cx);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+    fn add_song(&mut self, song_id: i64, cx: &mut Context<Self>) {
+        let client = self.services.client.clone();
+        let pid = self.id;
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.services.handle.spawn(async move {
+            let ok = siren_core::network::api::playlist_add_tracks(&client, pid, &[song_id])
+                .await
+                .is_ok();
+            let _ = tx.send(ok);
+        });
+        cx.spawn(async move |this, cx| {
+            let ok = rx.await.unwrap_or(false);
+            this.update(cx, |this, cx| {
+                if ok {
+                    this.add_results.retain(|s| s.id != song_id);
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// 添加歌曲浮层。
+    fn add_overlay(&self, weak: WeakEntity<Self>) -> AnyElement {
+        let weak_close = weak.clone();
+        let mut list = div()
+            .id("add-scroll")
+            .v_flex()
+            .flex_1()
+            .min_h(px(0.0))
+            .w_full()
+            .gap(px(2.0))
+            .overflow_y_scroll();
+        for song in &self.add_results {
+            let weak = weak.clone();
+            let sid = song.id;
+            let added = false;
+            list = list.child(
+                div()
+                    .id(format!("add-{sid}"))
+                    .w_full()
+                    .h(px(52.0))
+                    .flex()
+                    .items_center()
+                    .gap(px(10.0))
+                    .rounded(px(6.0))
+                    .child(self.services.covers.image(&song.cover_url, 40.0))
+                    .child(
+                        div()
+                            .v_flex()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .overflow_hidden()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(theme::text_primary())
+                                    .truncate()
+                                    .child(song.name.clone()),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme::text_gray())
+                                    .truncate()
+                                    .child(song.artists.clone()),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .id(("add-btn", sid as usize))
+                            .px(px(12.0))
+                            .py(px(4.0))
+                            .rounded_full()
+                            .cursor_pointer()
+                            .bg(if added { theme::surface() } else { theme::accent() })
+                            .child(div().text_xs().text_color(theme::text_primary()).child("添加"))
+                            .on_click(move |_ev, _window, cx| {
+                                weak.update(cx, |page, cx| page.add_song(sid, cx)).ok();
+                            }),
+                    ),
+            );
+        }
+        div()
+            .id("add-overlay")
+            .occlude()
+            .absolute()
+            .top_0()
+            .left_0()
+            .w_full()
+            .h_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(rgba(0x00000088))
+            .child(
+                div()
+                    .v_flex()
+                    .w(px(420.0))
+                    .h(px(520.0))
+                    .gap(px(12.0))
+                    .rounded(px(12.0))
+                    .bg(theme::surface())
+                    .p(px(18.0))
+                    .child(
+                        div()
+                            .text_lg()
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(theme::text_primary())
+                            .child("添加歌曲"),
+                    )
+                    .child(Input::new(&self.add_input))
+                    .child(list)
+                    .child(
+                        div()
+                            .flex()
+                            .justify_end()
+                            .child(Button::new("add-close").label("完成").on_click(move |_ev, _w, cx| {
+                                weak_close.update(cx, |page, cx| page.close_add(cx)).ok();
+                            })),
+                    ),
+            )
+            .into_any_element()
+    }
+
     /// 当前展示（过滤 + 排序后）的曲目。
     fn shown(&self) -> Vec<Song> {
         let Some(detail) = &self.detail else {
@@ -655,17 +833,19 @@ impl Render for PlaylistPage {
                             ),
                     );
 
+                let weak_add = cx.weak_entity();
+                let weak_edit = cx.weak_entity();
                 let action_row = div()
                     .w_full()
                     .flex()
                     .items_center()
-                    .gap(px(14.0))
+                    .gap(px(18.0))
                     .px(px(24.0))
-                    .pb(px(16.0))
+                    .pb(px(10.0))
                     .child(
                         div()
                             .id("pl-play")
-                            .size(px(48.0))
+                            .size(px(56.0))
                             .flex()
                             .items_center()
                             .justify_center()
@@ -680,7 +860,7 @@ impl Render for PlaylistPage {
                                     })
                                     .ok();
                             })
-                            .child(icon(IconName::Play, 22.0, theme::text_primary())),
+                            .child(icon(IconName::Play, 26.0, theme::text_primary())),
                     )
                     .child(
                         div()
@@ -694,7 +874,7 @@ impl Render for PlaylistPage {
                                     })
                                     .ok();
                             })
-                            .child(icon(IconName::Shuffle, 22.0, theme::text_gray())),
+                            .child(icon(IconName::Shuffle, 28.0, theme::text_gray())),
                     )
                     .child(
                         div()
@@ -705,7 +885,7 @@ impl Render for PlaylistPage {
                             })
                             .child(icon(
                                 if subscribed { IconName::Star } else { IconName::StarOff },
-                                22.0,
+                                28.0,
                                 if subscribed {
                                     theme::accent()
                                 } else {
@@ -713,16 +893,21 @@ impl Render for PlaylistPage {
                                 },
                             )),
                     )
+                    .child(div().id("pl-download").cursor_pointer().child(icon(
+                        IconName::Download,
+                        28.0,
+                        theme::text_gray(),
+                    )))
                     .child(div().flex_1())
                     .child(
                         div()
-                            .w(px(180.0))
-                            .h(px(32.0))
+                            .w(px(200.0))
+                            .h(px(36.0))
                             .flex()
                             .items_center()
                             .gap(px(8.0))
                             .px(px(12.0))
-                            .rounded(px(16.0))
+                            .rounded(px(18.0))
                             .bg(theme::surface())
                             .child(icon(IconName::Search, 16.0, theme::text_gray()))
                             .child(Input::new(&self.query_input)),
@@ -747,6 +932,29 @@ impl Render for PlaylistPage {
                                     .ok();
                             }),
                     );
+
+                let pills: AnyElement = if owned {
+                    let weak_add = weak_add;
+                    let weak_edit = weak_edit;
+                    div()
+                        .w_full()
+                        .flex()
+                        .items_center()
+                        .gap(px(8.0))
+                        .px(px(24.0))
+                        .pb(px(14.0))
+                        .child(pill(IconName::Plus, "添加", move |_ev, _w, cx| {
+                            weak_add.update(cx, |page, cx| page.open_add(cx)).ok();
+                        }))
+                        .child(pill(IconName::Pencil, "名称和详情", move |_ev, _w, cx| {
+                            weak_edit
+                                .update(cx, |_p, cx| cx.emit(PageEvent::RenamePlaylist { id: pid }))
+                                .ok();
+                        }))
+                        .into_any_element()
+                } else {
+                    div().into_any_element()
+                };
 
                 let weak = cx.weak_entity();
                 let covers = self.services.covers.clone();
@@ -851,6 +1059,7 @@ impl Render for PlaylistPage {
                     .w_full()
                     .child(hero)
                     .child(action_row)
+                    .child(pills)
                     .child(rows)
                     .into_any_element()
             }
@@ -864,11 +1073,13 @@ impl Render for PlaylistPage {
         };
         let shell = page_shell_with_header(header.into_any_element(), body).into_any_element();
         let overlay = self.crop.is_some().then(|| self.crop_overlay(cx.weak_entity()));
+        let add_overlay = self.add_open.then(|| self.add_overlay(cx.weak_entity()));
         div()
             .relative()
             .size_full()
             .child(shell)
             .when_some(overlay, |this, overlay| this.child(overlay))
+            .when_some(add_overlay, |this, overlay| this.child(overlay))
             .into_any_element()
     }
 }
@@ -881,4 +1092,32 @@ fn fmt_duration(ms: i64) -> String {
     } else {
         format!("{total_min} 分钟")
     }
+}
+
+/// 「添加 / 名称和详情」胶囊按钮（对齐 Melodia PlaylistPill）。
+fn pill(
+    name: IconName,
+    label: &str,
+    on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> impl IntoElement {
+    div()
+        .id(format!("pill-{label}"))
+        .flex()
+        .items_center()
+        .gap(px(6.0))
+        .px(px(14.0))
+        .h(px(32.0))
+        .rounded(px(16.0))
+        .bg(theme::surface())
+        .cursor_pointer()
+        .hover(|s| s.bg(theme::surface_light()))
+        .child(icon(name, 18.0, theme::text_primary()))
+        .child(
+            div()
+                .text_sm()
+                .font_weight(FontWeight::BOLD)
+                .text_color(theme::text_primary())
+                .child(label.to_string()),
+        )
+        .on_click(on_click)
 }
