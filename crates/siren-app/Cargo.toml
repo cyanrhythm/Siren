@@ -21,3 +21,6 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 [[bin]]
 name = "siren"
 path = "src/main.rs"
+
+[target.'cfg(windows)'.build-dependencies]
+embed-resource = "3"
