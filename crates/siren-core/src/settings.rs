@@ -1,6 +1,11 @@
 //! 用户设置持久化（`config_dir/settings.json`）。
 //!
 //! 与 [`crate::auth`] 的会话文件同目录。写入失败静默忽略，不阻断业务流程。
+//!
+//! 应用层以全局 [`SettingsStore`]（见 `siren-app`）持有本模型的唯一实例，
+//! 各处以 store 读写，避免同一文件被多处各自拥有。
+//! 窗口位置/大小在 UI 图建立前读取，故保留引导期自由函数
+//! [`load_window_bounds`] / [`save_window_bounds`]。
 
 use std::path::PathBuf;
 
@@ -13,8 +18,9 @@ fn settings_path() -> Option<PathBuf> {
     directories::ProjectDirs::from("com", "cyanrhythm", "Siren").map(|dirs| dirs.config_dir().join("settings.json"))
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
-struct Settings {
+/// 全部用户设置。字段均为 `Option`，缺省走各自的默认值。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Settings {
     /// 音质档位代码（如 `exhigh`）。
     quality: Option<String>,
     /// 是否启用系统媒体控制（SMTC / MPRIS），默认开启。
@@ -43,98 +49,127 @@ pub const DEFAULT_CARDS: [&str; 7] = [
     "similar_artists",
 ];
 
-/// 读音质档位（缺省默认）。
-pub fn load_card_layout() -> Vec<String> {
-    let cards = read().cards.unwrap_or_default();
-    if cards.is_empty() {
-        DEFAULT_CARDS.iter().map(|s| s.to_string()).collect()
-    } else {
-        cards
+impl Settings {
+    /// 从磁盘读取（不存在或损坏时返回默认值）。
+    pub fn load() -> Self {
+        let Some(path) = settings_path() else {
+            return Self::default();
+        };
+        std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or_default()
+    }
+
+    /// 写回磁盘（含目录创建；失败静默）。
+    pub fn save(&self) {
+        let Some(path) = settings_path() else {
+            return;
+        };
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(&path, serde_json::to_string_pretty(self).unwrap_or_default());
+    }
+
+    /// 音质档位（缺省为默认档）。
+    pub fn quality(&self) -> AudioQuality {
+        self.quality.as_deref().map(AudioQuality::from_code).unwrap_or_default()
+    }
+
+    /// 设置音质档位并落盘。
+    pub fn set_quality(&mut self, quality: AudioQuality) {
+        self.quality = Some(quality.code().to_string());
+        self.save();
+    }
+
+    /// 是否启用系统媒体控制（默认开启）。
+    pub fn media_keys(&self) -> bool {
+        self.media_keys.unwrap_or(true)
+    }
+
+    /// 设置系统媒体控制开关并落盘。
+    pub fn set_media_keys(&mut self, enabled: bool) {
+        self.media_keys = Some(enabled);
+        self.save();
+    }
+
+    /// 正在播放卡片顺序（缺省为 [`DEFAULT_CARDS`]）。
+    pub fn cards(&self) -> Vec<String> {
+        match &self.cards {
+            Some(cards) if !cards.is_empty() => cards.clone(),
+            _ => DEFAULT_CARDS.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    /// 保存正在播放卡片顺序并落盘。
+    pub fn set_cards(&mut self, cards: Vec<String>) {
+        self.cards = Some(cards);
+        self.save();
+    }
+
+    /// 右侧栏宽度（夹在 [`NP_WIDTH_MIN`]..[`NP_WIDTH_MAX`]）。
+    pub fn np_width(&self) -> f32 {
+        self.np_width
+            .unwrap_or(NP_WIDTH_DEFAULT)
+            .clamp(NP_WIDTH_MIN, NP_WIDTH_MAX)
+    }
+
+    /// 保存右侧栏宽度并落盘。
+    pub fn set_np_width(&mut self, width: f32) {
+        self.np_width = Some(width.clamp(NP_WIDTH_MIN, NP_WIDTH_MAX));
+        self.save();
+    }
+
+    /// 上次窗口位置与大小 `(x, y, w, h)`（尺寸过小时视为无效）。
+    pub fn window_bounds(&self) -> Option<(f32, f32, f32, f32)> {
+        let [x, y, w, h] = self.window?;
+        (w >= 320.0 && h >= 240.0).then_some((x, y, w, h))
+    }
+
+    /// 保存窗口位置与大小。
+    pub fn set_window_bounds(&mut self, x: f32, y: f32, w: f32, h: f32) {
+        self.window = Some([x, y, w, h]);
+        self.save();
     }
 }
 
-/// 保存正在播放卡片顺序。
-pub fn save_card_layout(cards: &[String]) {
-    let mut settings = read();
-    settings.cards = Some(cards.to_vec());
-    write(&settings);
-}
-
-/// 读取右侧栏宽度（夹在 [`NP_WIDTH_MIN`]..[`NP_WIDTH_MAX`]，缺省 [`NP_WIDTH_DEFAULT`]）。
-pub fn load_np_width() -> f32 {
-    read()
-        .np_width
-        .unwrap_or(NP_WIDTH_DEFAULT)
-        .clamp(NP_WIDTH_MIN, NP_WIDTH_MAX)
-}
-
-/// 保存右侧栏宽度。
-pub fn save_np_width(width: f32) {
-    let mut settings = read();
-    settings.np_width = Some(width.clamp(NP_WIDTH_MIN, NP_WIDTH_MAX));
-    write(&settings);
-}
-
-/// 读取上次窗口位置与大小 `(x, y, w, h)`。
+/// 读取上次窗口位置与大小（引导期使用，见本模块文档）。
 pub fn load_window_bounds() -> Option<(f32, f32, f32, f32)> {
-    let [x, y, w, h] = read().window?;
-    if w >= 320.0 && h >= 240.0 {
-        Some((x, y, w, h))
-    } else {
-        None
-    }
+    Settings::load().window_bounds()
 }
 
-/// 保存窗口位置与大小。
+/// 保存窗口位置与大小（引导期使用）。
 pub fn save_window_bounds(x: f32, y: f32, w: f32, h: f32) {
-    let mut settings = read();
-    settings.window = Some([x, y, w, h]);
-    write(&settings);
+    let mut settings = Settings::load();
+    settings.set_window_bounds(x, y, w, h);
 }
 
-fn read() -> Settings {
-    let Some(path) = settings_path() else {
-        return Settings::default();
-    };
-    std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_default()
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-fn write(settings: &Settings) {
-    let Some(path) = settings_path() else {
-        return;
-    };
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
+    #[test]
+    fn defaults_are_sane() {
+        let settings = Settings::default();
+        assert_eq!(settings.quality(), AudioQuality::default());
+        assert!(settings.media_keys());
+        assert_eq!(settings.np_width(), NP_WIDTH_DEFAULT);
+        assert_eq!(settings.cards().len(), DEFAULT_CARDS.len());
+        assert!(settings.window_bounds().is_none());
     }
-    let _ = std::fs::write(&path, serde_json::to_string_pretty(settings).unwrap_or_default());
-}
 
-/// 读取已保存的音质档位（缺省为默认档）。
-pub fn load_quality() -> AudioQuality {
-    read()
-        .quality
-        .map(|code| AudioQuality::from_code(&code))
-        .unwrap_or_default()
-}
-
-/// 保存音质档位。
-pub fn save_quality(quality: AudioQuality) {
-    let mut settings = read();
-    settings.quality = Some(quality.code().to_string());
-    write(&settings);
-}
-
-/// 是否启用系统媒体控制（默认开启）。
-pub fn load_media_keys() -> bool {
-    read().media_keys.unwrap_or(true)
-}
-
-/// 保存系统媒体控制开关。
-pub fn save_media_keys(enabled: bool) {
-    let mut settings = read();
-    settings.media_keys = Some(enabled);
-    write(&settings);
+    #[test]
+    fn np_width_is_clamped() {
+        let low = Settings {
+            np_width: Some(10.0),
+            ..Default::default()
+        };
+        assert_eq!(low.np_width(), NP_WIDTH_MIN);
+        let high = Settings {
+            np_width: Some(9999.0),
+            ..Default::default()
+        };
+        assert_eq!(high.np_width(), NP_WIDTH_MAX);
+    }
 }

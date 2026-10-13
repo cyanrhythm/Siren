@@ -10,6 +10,7 @@ use gpui_kit::component::slider::{SliderEvent, SliderState, SliderValue};
 use gpui_kit::*;
 
 use super::covers::CoverLoader;
+use super::settings_store::SettingsStore;
 use siren_core::lyrics::LyricLine;
 use siren_core::model::{Artist, ArtistAlbum, ArtistDetail, AudioQuality, CommentPage, Song, SongWiki};
 use siren_core::network::client::NeteaseClient;
@@ -27,8 +28,6 @@ pub(crate) struct Playback {
     status: SharedString,
     mirrored: PlaybackState,
     seeking: bool,
-    /// 当前音质档位（持久化于 `siren-core::settings`）。
-    quality: AudioQuality,
     /// 已喜欢的歌曲 ID 集合。
     liked: HashSet<i64>,
     /// 当前播放歌曲的详情（含发行时间等，来自 `song_detail`）。
@@ -45,8 +44,6 @@ pub(crate) struct Playback {
     similar_artists: Vec<Artist>,
     artist_followed: bool,
     artist_fans: i64,
-    /// 是否启用系统媒体控制（SMTC / MPRIS）。
-    media_keys_enabled: bool,
     /// 上次已重绘的整数秒（用于外壳节流重绘）。
     last_sec: i64,
     // 进度插值锚点（弥补 mpv time-pos 更新粒度）
@@ -135,7 +132,6 @@ impl Playback {
                 status: "就绪".into(),
                 mirrored: PlaybackState::default(),
                 seeking: false,
-                quality: siren_core::settings::load_quality(),
                 liked: HashSet::new(),
                 detail: None,
                 lyrics: Vec::new(),
@@ -146,7 +142,6 @@ impl Playback {
                 similar_artists: Vec::new(),
                 artist_followed: false,
                 artist_fans: 0,
-                media_keys_enabled: siren_core::settings::load_media_keys(),
                 last_sec: 0,
                 anchor_pos: 0,
                 anchor_at: Instant::now(),
@@ -169,15 +164,14 @@ impl Playback {
         self.player.state()
     }
 
-    /// 当前音质档位。
-    pub(crate) fn quality(&self) -> AudioQuality {
-        self.quality
+    /// 当前音质档位（唯一真源：设置 store）。
+    pub(crate) fn quality(&self, cx: &App) -> AudioQuality {
+        SettingsStore::of(cx).quality()
     }
 
-    /// 设置音质档位（持久化）。
+    /// 设置音质档位（写入设置 store 并落盘）。
     pub(crate) fn set_quality(&mut self, quality: AudioQuality, cx: &mut Context<Self>) {
-        self.quality = quality;
-        siren_core::settings::save_quality(quality);
+        cx.global_mut::<SettingsStore>().set_quality(quality);
         cx.notify();
     }
 
@@ -294,15 +288,14 @@ impl Playback {
         .detach();
     }
 
-    /// 是否启用系统媒体控制。
-    pub(crate) fn media_keys_enabled(&self) -> bool {
-        self.media_keys_enabled
+    /// 是否启用系统媒体控制（唯一真源：设置 store）。
+    pub(crate) fn media_keys_enabled(&self, cx: &App) -> bool {
+        SettingsStore::of(cx).media_keys()
     }
 
-    /// 设置系统媒体控制开关（持久化）；关闭时清空系统卡片。
+    /// 设置系统媒体控制开关（写入设置 store 并落盘）；关闭时清空系统卡片。
     pub(crate) fn set_media_keys(&mut self, enabled: bool, cx: &mut Context<Self>) {
-        self.media_keys_enabled = enabled;
-        siren_core::settings::save_media_keys(enabled);
+        cx.global_mut::<SettingsStore>().set_media_keys(enabled);
         if !enabled {
             if let Some(media) = &self.media {
                 media.set_metadata(&MediaMetadata::default());
@@ -451,7 +444,7 @@ impl Playback {
         cx.notify();
         if sec != self.last_sec {
             self.last_sec = sec;
-            self.push_media_state();
+            self.push_media_state(cx);
         }
         while let Ok(command) = self.media_cmds.try_recv() {
             self.apply_media_command(command, cx);
@@ -662,7 +655,7 @@ impl Playback {
 
         let client = self.client.clone();
         let id = song.id;
-        let level = self.quality.code();
+        let level = SettingsStore::of(cx).quality().code();
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.handle.spawn(async move {
             let url = match siren_core::network::api::song_url_eapi(&client, id, level)
@@ -741,8 +734,8 @@ impl Playback {
         cx.notify();
     }
 
-    fn push_media_state(&self) {
-        if !self.media_keys_enabled {
+    fn push_media_state(&self, cx: &App) {
+        if !SettingsStore::of(cx).media_keys() {
             return;
         }
         let Some(media) = &self.media else {

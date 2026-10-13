@@ -13,6 +13,7 @@ use gpui_kit::*;
 
 use siren_core::model::{Song, SongWiki};
 
+use super::super::settings_store::SettingsStore;
 use super::super::{cover_placeholder, fmt_date, icon, NpCard, Root};
 use crate::theme;
 
@@ -42,7 +43,8 @@ impl Root {
             None => ("未在播放".to_string(), String::new()),
         };
         // 封面随面板宽度放大（封顶 420，对齐 Melodia NowPlayingMaxWidth）；无歌曲时用小占位。
-        let cover_size = (self.np_width - 28.0).clamp(220.0, 420.0);
+        let np_width = SettingsStore::of(cx).np_width();
+        let cover_size = (np_width - 28.0).clamp(220.0, 420.0);
         let cover: AnyElement = match &song {
             Some(s) => self.services.covers.image(&s.cover_url, cover_size),
             None => cover_placeholder(200.0).into_any_element(),
@@ -84,7 +86,8 @@ impl Root {
         let fans = self.playback.read(cx).artist_fans();
         let albums = self.playback.read(cx).artist_albums().to_vec();
         let simi = self.playback.read(cx).similar_artists().to_vec();
-        for card in &self.np_cards {
+        let np_cards = self.np_cards(cx);
+        for card in &np_cards {
             let el: Option<AnyElement> = match card {
                 NpCard::Lyrics => {
                     if lyrics.is_empty() {
@@ -136,8 +139,8 @@ impl Root {
 
         div()
             .v_flex()
-            .w(px(self.np_width))
-            .min_w(px(self.np_width))
+            .w(px(np_width))
+            .min_w(px(np_width))
             .h_full()
             .flex_none()
             .flex_shrink_0()

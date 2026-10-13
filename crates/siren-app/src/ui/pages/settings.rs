@@ -15,8 +15,8 @@ use crate::theme;
 
 impl Root {
     pub(crate) fn settings_page(&self, weak: WeakEntity<Self>, cx: &App) -> AnyElement {
-        let current = self.playback.read(cx).quality();
-        let media_on = self.playback.read(cx).media_keys_enabled();
+        let current = self.playback.read(cx).quality(cx);
+        let media_on = self.playback.read(cx).media_keys_enabled(cx);
 
         let weak_media = weak.clone();
         let media_control = div()
@@ -58,11 +58,11 @@ impl Root {
                 quality_row(current, weak.clone()),
             ))
             .child(section("系统", "系统媒体控制（媒体键与系统播放卡片）", media_control))
-            .child(section("右侧栏", "正在播放栏宽度（300–800）", self.width_control()))
+            .child(section("右侧栏", "正在播放栏宽度（300–800）", self.width_control(cx)))
             .child(section(
                 "正在播放卡片",
                 "右侧面板卡片的顺序与显隐",
-                self.cards_control(weak),
+                self.cards_control(weak, cx),
             ))
             .into_any_element();
 
@@ -70,10 +70,11 @@ impl Root {
     }
 
     /// 正在播放卡片：显隐 + 上/下移。
-    fn cards_control(&self, weak: WeakEntity<Self>) -> AnyElement {
+    fn cards_control(&self, weak: WeakEntity<Self>, cx: &App) -> AnyElement {
         let mut col = div().v_flex().w_full().gap(px(6.0));
+        let cards = self.np_cards(cx);
         for card in NpCard::ALL {
-            let visible = self.np_cards.contains(&card);
+            let visible = cards.contains(&card);
             let weak_toggle = weak.clone();
             let weak_up = weak.clone();
             let weak_down = weak.clone();
@@ -127,33 +128,29 @@ impl Root {
 
     /// 切换卡片显隐。
     pub(crate) fn toggle_card(&mut self, card: NpCard, cx: &mut Context<Self>) {
-        if let Some(i) = self.np_cards.iter().position(|c| *c == card) {
-            self.np_cards.remove(i);
+        let mut cards = self.np_cards(cx);
+        if let Some(i) = cards.iter().position(|c| *c == card) {
+            cards.remove(i);
         } else {
-            self.np_cards.push(card);
+            cards.push(card);
         }
-        self.persist_cards(cx);
+        self.set_np_cards(cards, cx);
     }
 
     /// 上/下移卡片。
     pub(crate) fn move_card(&mut self, card: NpCard, dir: i32, cx: &mut Context<Self>) {
-        if let Some(i) = self.np_cards.iter().position(|c| *c == card) {
+        let mut cards = self.np_cards(cx);
+        if let Some(i) = cards.iter().position(|c| *c == card) {
             let j = i as i32 + dir;
-            if j >= 0 && (j as usize) < self.np_cards.len() {
-                self.np_cards.swap(i, j as usize);
+            if j >= 0 && (j as usize) < cards.len() {
+                cards.swap(i, j as usize);
             }
         }
-        self.persist_cards(cx);
-    }
-
-    fn persist_cards(&mut self, cx: &mut Context<Self>) {
-        let codes: Vec<String> = self.np_cards.iter().map(|c| c.code().to_string()).collect();
-        siren_core::settings::save_card_layout(&codes);
-        cx.notify();
+        self.set_np_cards(cards, cx);
     }
 
     /// 右侧栏宽度滑块。
-    fn width_control(&self) -> AnyElement {
+    fn width_control(&self, cx: &App) -> AnyElement {
         div()
             .w_full()
             .flex()
@@ -164,7 +161,7 @@ impl Root {
                 div()
                     .text_sm()
                     .text_color(theme::text_primary())
-                    .child(format!("{} px", self.np_width() as i32)),
+                    .child(format!("{} px", self.np_width(cx) as i32)),
             )
             .into_any_element()
     }

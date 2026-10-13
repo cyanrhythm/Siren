@@ -11,6 +11,7 @@ pub mod login_dialog;
 pub mod pages;
 mod playback;
 mod services;
+mod settings_store;
 
 use std::sync::Arc;
 
@@ -30,6 +31,7 @@ use covers::CoverLoader;
 use pages::{AlbumPage, HomePage, LibraryPage, PlaylistPage, RecentPage, SearchPage};
 use playback::Playback;
 use services::Services;
+use settings_store::SettingsStore;
 
 /// 当前页面（音乐库为常驻侧栏，不在此列）。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -177,11 +179,7 @@ pub struct Root {
     playlist_page: Option<Entity<PlaylistPage>>,
     album_page: Option<Entity<AlbumPage>>,
     now_playing_open: bool,
-    /// 右侧栏宽度（像素）。
-    np_width: f32,
     np_width_slider: Entity<SliderState>,
-    /// 正在播放卡片顺序。
-    np_cards: Vec<NpCard>,
     /// 歌手专辑 / 相似歌手卡片的当前页码。
     np_album_page: usize,
     np_simi_page: usize,
@@ -223,6 +221,8 @@ pub struct Root {
 impl Root {
     pub fn new(window: &mut Window, cx: &mut App, runtime: tokio::runtime::Runtime) -> Entity<Self> {
         siren_platform::prepare_native_environment();
+        // 设置唯一真源（全局）
+        SettingsStore::init(cx);
         let cookie = std::env::var("SIREN_COOKIE")
             .ok()
             .filter(|s| !s.trim().is_empty())
@@ -264,7 +264,7 @@ impl Root {
         let rename_input = cx.new(|cx| InputState::new(window, cx).placeholder("新名称"));
         let desc_input = cx.new(|cx| InputState::new(window, cx).placeholder("歌单简介"));
 
-        let np_width = siren_core::settings::load_np_width();
+        let np_width = SettingsStore::of(cx).np_width();
         let np_width_slider = cx.new(|_| {
             SliderState::new()
                 .max(siren_core::settings::NP_WIDTH_MAX)
@@ -346,12 +346,7 @@ impl Root {
                 playlist_page: None,
                 album_page: None,
                 now_playing_open: true,
-                np_width,
                 np_width_slider,
-                np_cards: siren_core::settings::load_card_layout()
-                    .iter()
-                    .filter_map(|c| NpCard::from_code(c))
-                    .collect(),
                 np_album_page: 0,
                 np_simi_page: 0,
                 account: None,
@@ -438,14 +433,13 @@ impl Root {
         cx.notify();
     }
 
-    /// 设置右侧栏宽度（夹在 300..800）。
+    /// 设置右侧栏宽度（写入设置 store 并落盘，夹在 300..800）。
     fn set_np_width(&mut self, width: f32, cx: &mut Context<Self>) {
         let w = width.clamp(siren_core::settings::NP_WIDTH_MIN, siren_core::settings::NP_WIDTH_MAX);
-        if (w - self.np_width).abs() < 0.5 {
+        if (w - SettingsStore::of(cx).np_width()).abs() < 0.5 {
             return;
         }
-        self.np_width = w;
-        siren_core::settings::save_np_width(w);
+        cx.global_mut::<SettingsStore>().set_np_width(w);
         cx.notify();
     }
 
@@ -454,9 +448,25 @@ impl Root {
         &self.np_width_slider
     }
 
-    /// 当前右侧栏宽度。
-    pub(crate) fn np_width(&self) -> f32 {
-        self.np_width
+    /// 当前右侧栏宽度（唯一真源：设置 store）。
+    pub(crate) fn np_width(&self, cx: &App) -> f32 {
+        SettingsStore::of(cx).np_width()
+    }
+
+    /// 当前正在播放卡片顺序（唯一真源：设置 store）。
+    pub(crate) fn np_cards(&self, cx: &App) -> Vec<NpCard> {
+        SettingsStore::of(cx)
+            .cards()
+            .iter()
+            .filter_map(|c| NpCard::from_code(c))
+            .collect()
+    }
+
+    /// 保存正在播放卡片顺序（写入设置 store 并落盘）。
+    pub(crate) fn set_np_cards(&mut self, cards: Vec<NpCard>, cx: &mut Context<Self>) {
+        let codes: Vec<String> = cards.iter().map(|c| c.code().to_string()).collect();
+        cx.global_mut::<SettingsStore>().set_cards(codes);
+        cx.notify();
     }
 
     /// 更新标题栏账号区（登录成功 / 退出登录）。
@@ -586,7 +596,11 @@ impl Render for Root {
         let desc_overlay = self.desc_pid.map(|_| self.desc_overlay(weak_desc));
         // 中间列显式分配宽度，规避 gpui `flex_1` 的横向过度伸展。
         // 右侧栏严格取设置的宽度；空间不足时中间列收缩（不产生横向溢出）。
-        let np_w = if self.now_playing_open { self.np_width } else { 44.0 };
+        let np_w = if self.now_playing_open {
+            SettingsStore::of(cx).np_width()
+        } else {
+            44.0
+        };
         let page_w = (vw - 300.0 - np_w - 32.0).max(0.0);
         div()
             .v_flex()
