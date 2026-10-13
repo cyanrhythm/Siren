@@ -1,6 +1,7 @@
 //! 页面级组件（各自为独立 `Entity`）。
 
 mod album;
+mod artist;
 mod home;
 mod library;
 mod playlist;
@@ -9,6 +10,7 @@ mod search;
 mod settings;
 
 pub(crate) use album::AlbumPage;
+pub(crate) use artist::ArtistPage;
 pub(crate) use home::HomePage;
 pub(crate) use library::LibraryPage;
 pub(crate) use playlist::PlaylistPage;

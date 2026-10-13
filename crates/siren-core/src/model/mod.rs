@@ -196,6 +196,33 @@ pub fn parse_search_artists(value: &Value) -> Vec<Artist> {
         .unwrap_or_default()
 }
 
+/// 解析收藏专辑（`/eapi/album/sublist`，`data` 数组）。
+pub fn parse_album_sublist(value: &Value) -> Vec<Album> {
+    value
+        .get("data")
+        .and_then(Value::as_array)
+        .map(|items| items.iter().map(parse_album).collect())
+        .unwrap_or_default()
+}
+
+/// 解析收藏歌手（`/eapi/artist/sublist`，`data` 数组）。
+pub fn parse_artist_sublist(value: &Value) -> Vec<Artist> {
+    value
+        .get("data")
+        .and_then(Value::as_array)
+        .map(|items| items.iter().map(parse_artist).collect())
+        .unwrap_or_default()
+}
+
+/// 解析歌手热门歌曲（`/weapi/artist/top/song`，`songs` 数组）。
+pub fn parse_artist_top_songs(value: &Value) -> Vec<Song> {
+    value
+        .get("songs")
+        .and_then(Value::as_array)
+        .map(|items| items.iter().map(parse_song).collect())
+        .unwrap_or_default()
+}
+
 /// 解析云搜索歌单结果（`result.playlists`）。
 pub fn parse_search_playlists(value: &Value) -> Vec<Playlist> {
     value
@@ -248,11 +275,9 @@ pub fn parse_artist_detail(value: &Value) -> Option<ArtistDetail> {
     Some(ArtistDetail {
         id: a.get("id").and_then(Value::as_i64).unwrap_or_default(),
         name: str_field(a, "name"),
-        cover_url: a
-            .get("cover")
-            .or_else(|| a.get("avatar"))
-            .or_else(|| a.get("picUrl"))
-            .and_then(Value::as_str)
+        cover_url: ["cover", "avatar", "picUrl", "img1v1Url"]
+            .iter()
+            .find_map(|k| a.get(*k).and_then(Value::as_str).filter(|s| !s.is_empty()))
             .unwrap_or_default()
             .to_string(),
         brief_desc: str_field(a, "briefDesc"),

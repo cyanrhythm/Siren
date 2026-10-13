@@ -75,6 +75,12 @@ pub mod path {
     pub const INTELLIGENCE: &str = "/eapi/playmode/intelligence/list";
     /// 专辑详情（WEAPI，后接 `{id}`）。
     pub const ALBUM_DETAIL: &str = "/weapi/v1/album/";
+    /// 收藏专辑列表（EAPI）。
+    pub const ALBUM_SUBLIST: &str = "/eapi/album/sublist";
+    /// 收藏歌手列表（EAPI）。
+    pub const ARTIST_SUBLIST: &str = "/eapi/artist/sublist";
+    /// 歌手热门歌曲（WEAPI）。
+    pub const ARTIST_TOP_SONGS: &str = "/weapi/artist/top/song";
     /// 歌单增删歌曲（EAPI）。
     pub const PLAYLIST_MANIPULATE: &str = "/eapi/playlist/manipulate/tracks";
     /// 歌单收藏/取消（EAPI，后接 `subscribe` / `unsubscribe`）。

@@ -68,7 +68,7 @@ directories = "6"
 regex = "1"
 
 # ── 日志（siren-core / siren-app）───────────────────────────────
-log = "0.4"
+log = { version = "0.4", features = ["std"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
 # ── 二维码登录（siren-core）────────────────────────────────────

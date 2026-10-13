@@ -3,7 +3,7 @@
 use serde_json::{json, Value};
 
 use crate::error::{Error, Result};
-use crate::model::{parse_search_songs, AlbumDetail, Playlist, PlaylistDetail, Song};
+use crate::model::{parse_search_songs, Album, AlbumDetail, Artist, Playlist, PlaylistDetail, Song};
 use crate::network::client::NeteaseClient;
 use crate::network::endpoints::path;
 
@@ -444,6 +444,49 @@ pub async fn comment_floor(
     validate(&value)?;
     let data = value.get("data").cloned().unwrap_or(serde_json::Value::Null);
     Ok(crate::model::parse_comments_v2(&json!({ "data": data })))
+}
+
+/// 收藏专辑列表（EAPI）。
+pub async fn album_sublist(client: &NeteaseClient) -> Result<Vec<Album>> {
+    let value = client
+        .eapi_post(
+            path::ALBUM_SUBLIST,
+            &json!({ "limit": 1000, "offset": 0, "total": true }),
+        )
+        .await?;
+    validate(&value)?;
+    Ok(crate::model::parse_album_sublist(&value))
+}
+
+/// 收藏歌手列表（EAPI，显式分页取全；服务端默认仅返回 25 条）。
+pub async fn artist_sublist(client: &NeteaseClient) -> Result<Vec<Artist>> {
+    const PAGE: u32 = 100;
+    let mut out = Vec::new();
+    let mut offset = 0u32;
+    loop {
+        let value = client
+            .eapi_post(
+                path::ARTIST_SUBLIST,
+                &json!({ "limit": PAGE, "offset": offset, "total": true }),
+            )
+            .await?;
+        validate(&value)?;
+        let page = crate::model::parse_artist_sublist(&value);
+        let got = page.len();
+        out.extend(page);
+        if got < PAGE as usize || out.len() >= 2000 {
+            break;
+        }
+        offset += PAGE;
+    }
+    Ok(out)
+}
+
+/// 歌手热门歌曲（WEAPI）。
+pub async fn artist_top_songs(client: &NeteaseClient, id: i64) -> Result<Vec<Song>> {
+    let value = client.weapi_post(path::ARTIST_TOP_SONGS, &json!({ "id": id })).await?;
+    validate(&value)?;
+    Ok(crate::model::parse_artist_top_songs(&value))
 }
 
 /// 歌手详情（EAPI）。

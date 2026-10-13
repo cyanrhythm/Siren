@@ -31,7 +31,7 @@ use siren_core::network::client::NeteaseClient;
 use crate::theme;
 use covers::CoverLoader;
 use notifications::Notifications;
-use pages::{AlbumPage, HomePage, LibraryPage, PlaylistPage, RecentPage, SearchPage};
+use pages::{AlbumPage, ArtistPage, HomePage, LibraryPage, PlaylistPage, RecentPage, SearchPage};
 use playback::Playback;
 use services::Services;
 use session::Session;
@@ -48,6 +48,11 @@ pub(crate) enum Route {
     },
     /// 专辑详情。
     Album {
+        id: i64,
+        name: String,
+    },
+    /// 歌手详情。
+    Artist {
         id: i64,
         name: String,
     },
@@ -79,6 +84,11 @@ pub(crate) enum PageEvent {
     LoggedOut,
     /// 请求打开登录弹窗。
     OpenLogin,
+    /// 打开歌手详情。
+    OpenArtist {
+        id: i64,
+        name: String,
+    },
     /// 打开个人主页。
     OpenProfile {
         uid: i64,
@@ -263,6 +273,7 @@ pub struct Root {
     recent: Entity<RecentPage>,
     playlist_page: Option<Entity<PlaylistPage>>,
     album_page: Option<Entity<AlbumPage>>,
+    artist_page: Option<Entity<ArtistPage>>,
     np: NowPlayingUi,
     np_width_slider: Entity<SliderState>,
     login: LoginDialogState,
@@ -338,7 +349,7 @@ impl Root {
             _ => Route::Home,
         };
 
-        cx.new(|cx| {
+        let root = cx.new(|cx| {
             let mut subs = Vec::new();
             subs.push(cx.subscribe(&home, |root: &mut Root, _e, ev: &PageEvent, cx| {
                 root.on_page_event(ev, cx)
@@ -405,6 +416,7 @@ impl Root {
                 recent,
                 playlist_page: None,
                 album_page: None,
+                artist_page: None,
                 np: NowPlayingUi {
                     open: true,
                     album_page: 0,
@@ -438,7 +450,11 @@ impl Root {
                 _subs: subs,
                 _search_sub,
             }
-        })
+        });
+        if std::env::var("SIREN_START").ok().as_deref() == Some("artist") {
+            root.update(cx, |root, cx| root.open_artist(6452, "周杰伦".to_string(), cx));
+        }
+        root
     }
 
     fn route(&self) -> Route {
@@ -450,6 +466,7 @@ impl Root {
         self.nav.reset(route);
         self.playlist_page = None;
         self.album_page = None;
+        self.artist_page = None;
         cx.notify();
     }
 
@@ -457,6 +474,7 @@ impl Root {
         match event {
             PageEvent::OpenPlaylist { id, name } => self.open_playlist(*id, name.clone(), cx),
             PageEvent::OpenAlbum { id, name } => self.open_album(*id, name.clone(), cx),
+            PageEvent::OpenArtist { id, name } => self.open_artist(*id, name.clone(), cx),
             PageEvent::Back => self.back(cx),
             PageEvent::SignedIn => self.on_signed_in(cx),
             PageEvent::LoggedOut => self.on_signed_out(cx),
@@ -579,10 +597,22 @@ impl Root {
         cx.notify();
     }
 
+    fn open_artist(&mut self, id: i64, name: String, cx: &mut Context<Self>) {
+        self.nav.push(Route::Artist { id, name: name.clone() });
+        let page = cx.new(|cx| ArtistPage::new(cx, self.services.clone(), self.playback.clone(), id, name));
+        let sub = cx.subscribe(&page, |root: &mut Root, _e, ev: &PageEvent, cx| {
+            root.on_page_event(ev, cx)
+        });
+        self._subs.push(sub);
+        self.artist_page = Some(page);
+        cx.notify();
+    }
+
     fn back(&mut self, cx: &mut Context<Self>) {
         if self.nav.pop() {
             self.playlist_page = None;
             self.album_page = None;
+            self.artist_page = None;
             cx.notify();
         }
     }
@@ -622,6 +652,11 @@ impl Root {
                 .unwrap_or_else(|| div().into_any_element()),
             Route::Album { .. } => self
                 .album_page
+                .as_ref()
+                .map(|p| p.clone().into_any_element())
+                .unwrap_or_else(|| div().into_any_element()),
+            Route::Artist { .. } => self
+                .artist_page
                 .as_ref()
                 .map(|p| p.clone().into_any_element())
                 .unwrap_or_else(|| div().into_any_element()),
