@@ -500,6 +500,103 @@ pub fn parse_user_follow_list(value: &Value) -> Vec<UserBrief> {
         .unwrap_or_default()
 }
 
+/// 用户等级信息（`/eapi/user/level`）。
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct UserLevel {
+    pub level: i64,
+    pub now_play_count: i64,
+    pub now_login_count: i64,
+    pub next_play_count: i64,
+    pub next_login_count: i64,
+    pub progress: f64,
+}
+
+/// 解析用户等级（`data`）。
+pub fn parse_user_level(value: &Value) -> Option<UserLevel> {
+    let d = value.get("data")?;
+    Some(UserLevel {
+        level: d.get("level").and_then(Value::as_i64).unwrap_or_default(),
+        now_play_count: d.get("nowPlayCount").and_then(Value::as_i64).unwrap_or_default(),
+        now_login_count: d.get("nowLoginCount").and_then(Value::as_i64).unwrap_or_default(),
+        next_play_count: d.get("nextPlayCount").and_then(Value::as_i64).unwrap_or_default(),
+        next_login_count: d.get("nextLoginCount").and_then(Value::as_i64).unwrap_or_default(),
+        progress: d.get("progress").and_then(Value::as_f64).unwrap_or_default(),
+    })
+}
+
+/// VIP 状态信息（`/eapi/vip/info`）。
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct VipInfo {
+    /// 0-非 VIP，10-音乐包，11-黑胶 VIP。
+    pub vip_type: i64,
+    pub red_vip_level: i64,
+    pub expire_time: i64,
+    pub is_vip: bool,
+}
+
+/// 解析 VIP 信息（`data`）。
+///
+/// 真实结构以 `data.associator`（黑胶 VIP）/ `data.musicPackage`（音乐包）的 `expireTime` 为准，
+/// `data.redVipLevel` 为黑胶等级；兼容旧的 `vipType` / `isVip` 字段。
+pub fn parse_vip_info(value: &Value) -> Option<VipInfo> {
+    let d = value.get("data")?;
+    let now = d.get("now").and_then(Value::as_i64).unwrap_or(0);
+    let alive = |exp: i64| exp > 0 && (now == 0 || exp > now);
+    let assoc_exp = d
+        .get("associator")
+        .and_then(|a| a.get("expireTime"))
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    let pkg_exp = d
+        .get("musicPackage")
+        .and_then(|a| a.get("expireTime"))
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    let (vip_type, expire_time) = if alive(assoc_exp) {
+        (11, assoc_exp)
+    } else if alive(pkg_exp) {
+        (10, pkg_exp)
+    } else {
+        (
+            d.get("vipType").and_then(Value::as_i64).unwrap_or(0),
+            d.get("expireTime").and_then(Value::as_i64).unwrap_or(0),
+        )
+    };
+    Some(VipInfo {
+        vip_type,
+        red_vip_level: d.get("redVipLevel").and_then(Value::as_i64).unwrap_or(0),
+        expire_time,
+        is_vip: vip_type != 0 || d.get("isVip").and_then(Value::as_bool).unwrap_or(false),
+    })
+}
+
+/// 账号第三方绑定项（`/eapi/user/binding`）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccountBinding {
+    /// 1-手机，2-新浪微博，5-腾讯微博，10-微信，20-QQ，1000-网易邮箱。
+    pub kind: i64,
+    pub type_name: String,
+    pub expired: bool,
+}
+
+/// 解析账号绑定列表（顶层 `bindings`）。
+pub fn parse_bindings(value: &Value) -> Vec<AccountBinding> {
+    value
+        .get("bindings")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .map(|v| AccountBinding {
+                    kind: v.get("type").and_then(Value::as_i64).unwrap_or_default(),
+                    type_name: str_field(v, "typeName"),
+                    expired: v.get("expired").and_then(Value::as_bool).unwrap_or(false),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// 最近播放歌曲（含播放时间）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecentSong {
@@ -1010,5 +1107,56 @@ mod tests {
         let playlists = parse_search_playlists(&value);
         assert_eq!(playlists[0].id, 3);
         assert_eq!(playlists[0].track_count, 5);
+    }
+
+    #[test]
+    fn parses_user_level_and_bindings() {
+        let level = parse_user_level(&json!({
+            "code": 200,
+            "data": { "level": 8, "nowPlayCount": 745, "nextPlayCount": 5000, "progress": 0.15 }
+        }))
+        .unwrap();
+        assert_eq!(level.level, 8);
+        assert_eq!(level.now_play_count, 745);
+
+        let bindings = parse_bindings(&json!({
+            "code": 200,
+            "bindings": [ { "type": 1, "typeName": "手机", "expired": false } ]
+        }));
+        assert_eq!(bindings.len(), 1);
+        assert_eq!(bindings[0].kind, 1);
+        assert_eq!(bindings[0].type_name, "手机");
+    }
+
+    #[test]
+    fn parses_vip_info_active_and_expired() {
+        // 黑胶 VIP 未过期 → vip_type 11，到期时间取 associator。
+        let vip = parse_vip_info(&json!({
+            "code": 200,
+            "data": {
+                "now": 1000,
+                "redVipLevel": 7,
+                "associator": { "expireTime": 5000 },
+                "musicPackage": { "expireTime": 2000 }
+            }
+        }))
+        .unwrap();
+        assert_eq!(vip.vip_type, 11);
+        assert_eq!(vip.red_vip_level, 7);
+        assert_eq!(vip.expire_time, 5000);
+        assert!(vip.is_vip);
+
+        // 黑胶过期、音乐包有效 → 10。
+        let vip = parse_vip_info(&json!({
+            "code": 200,
+            "data": {
+                "now": 9000,
+                "associator": { "expireTime": 5000 },
+                "musicPackage": { "expireTime": 12000 }
+            }
+        }))
+        .unwrap();
+        assert_eq!(vip.vip_type, 10);
+        assert_eq!(vip.expire_time, 12000);
     }
 }

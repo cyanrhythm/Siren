@@ -114,6 +114,38 @@ impl NeteaseClient {
         Ok((value, set_cookie))
     }
 
+    /// WEAPI 原始 multipart POST（不加密，用于头像上传等）。
+    ///
+    /// 对齐 Melodia `/weapi/user/avatar/upload/v1`：字段名 `imgFile`，仅带登录 Cookie。
+    pub async fn weapi_multipart(
+        &self,
+        path: &str,
+        field: &str,
+        filename: &str,
+        mime: &str,
+        bytes: Vec<u8>,
+    ) -> Result<Value> {
+        use reqwest::multipart::{Form, Part};
+
+        let cookie = self.cookie();
+        let part = Part::bytes(bytes).file_name(filename.to_string()).mime_str(mime)?;
+        let form = Form::new().part(field.to_string(), part);
+
+        let url = format!("{}{path}", endpoints::WEB_BASE_URL);
+        let mut request = self
+            .http
+            .post(url)
+            .header("User-Agent", interceptor::PC_USER_AGENT)
+            .header("Referer", endpoints::WEB_BASE_URL)
+            .header("Cookie", interceptor::weapi_cookie(cookie.as_deref()));
+        if let Some(ip) = &self.real_ip {
+            request = request.header("X-Real-IP", ip).header("X-Forwarded-For", ip);
+        }
+
+        let response = request.multipart(form).send().await?;
+        Self::parse_json(response).await
+    }
+
     /// EAPI POST：伪装 Android，仅提交 `params`。
     pub async fn eapi_post(&self, path: &str, body: &Value) -> Result<Value> {
         let api_path = path.replacen("/eapi/", "/api/", 1);

@@ -496,6 +496,80 @@ pub async fn user_detail(client: &NeteaseClient, uid: i64) -> Result<Option<crat
     Ok(crate::model::parse_user_profile(&value))
 }
 
+/// 用户等级（EAPI）。
+pub async fn user_level(client: &NeteaseClient) -> Result<crate::model::UserLevel> {
+    let value = client.eapi_post(path::USER_LEVEL, &json!({})).await?;
+    validate(&value)?;
+    Ok(crate::model::parse_user_level(&value).unwrap_or_default())
+}
+
+/// VIP 状态信息（WEAPI）。
+pub async fn vip_info(client: &NeteaseClient) -> Result<crate::model::VipInfo> {
+    let value = client.weapi_post(path::VIP_INFO, &json!({})).await?;
+    validate(&value)?;
+    Ok(crate::model::parse_vip_info(&value).unwrap_or_default())
+}
+
+/// 账号第三方绑定列表（WEAPI；该接口可能不可用，失败由调用方降级）。
+pub async fn user_bindings(client: &NeteaseClient, uid: i64) -> Result<Vec<crate::model::AccountBinding>> {
+    let value = client.weapi_post(path::USER_BINDING, &json!({ "uid": uid })).await?;
+    validate(&value)?;
+    Ok(crate::model::parse_bindings(&value))
+}
+
+/// 修改用户资料（EAPI，目前仅昵称与个性签名）。
+pub async fn update_user_profile(client: &NeteaseClient, nickname: &str, signature: &str) -> Result<()> {
+    let value = client
+        .eapi_post(
+            path::USER_UPDATE,
+            &json!({
+                "nickname": nickname,
+                "gender": 1,
+                "birthday": 0,
+                "province": 110000,
+                "city": 110101,
+                "signature": signature,
+            }),
+        )
+        .await?;
+    validate(&value)?;
+    Ok(())
+}
+
+/// 昵称查重（EAPI），返回是否已被占用。
+pub async fn check_nickname(client: &NeteaseClient, nickname: &str) -> Result<bool> {
+    let value = client
+        .eapi_post(path::NICKNAME_CHECK, &json!({ "nickname": nickname }))
+        .await?;
+    Ok(value.get("duplicated").and_then(Value::as_bool).unwrap_or(false))
+}
+
+/// 每日签到（EAPI），返回获得的积分；重复签到（`code=-2`）返回 0。
+pub async fn daily_signin(client: &NeteaseClient, kind: i64) -> Result<i64> {
+    let value = client.eapi_post(path::DAILY_TASK, &json!({ "type": kind })).await?;
+    let code = value.get("code").and_then(Value::as_i64).unwrap_or(200);
+    if code != 200 && code != -2 {
+        let message = value.get("msg").and_then(Value::as_str).unwrap_or_default();
+        return Err(Error::from_code(code, message));
+    }
+    Ok(value.get("point").and_then(Value::as_i64).unwrap_or(0))
+}
+
+/// 更换头像（WEAPI multipart），返回新头像地址。
+pub async fn upload_avatar(client: &NeteaseClient, bytes: Vec<u8>, filename: &str) -> Result<String> {
+    let value = client
+        .weapi_multipart(path::AVATAR_UPLOAD, "imgFile", filename, "image/jpeg", bytes)
+        .await?;
+    validate(&value)?;
+    Ok(value
+        .get("data")
+        .and_then(|d| d.get("avatarUrl"))
+        .or_else(|| value.get("url"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string())
+}
+
 /// 关注 / 取消关注用户。
 pub async fn user_follow(client: &NeteaseClient, uid: i64, follow: bool) -> Result<()> {
     let url = if follow {

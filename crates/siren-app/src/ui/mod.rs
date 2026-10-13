@@ -31,7 +31,9 @@ use siren_core::network::client::NeteaseClient;
 use crate::theme;
 use covers::CoverLoader;
 use notifications::Notifications;
-use pages::{AlbumPage, ArtistPage, HomePage, LibraryPage, PlaylistPage, ProfilePage, RecentPage, SearchPage};
+use pages::{
+    AccountPage, AlbumPage, ArtistPage, HomePage, LibraryPage, PlaylistPage, ProfilePage, RecentPage, SearchPage,
+};
 pub(crate) use playback::flush_playback_session;
 use playback::Playback;
 use services::Services;
@@ -91,6 +93,8 @@ pub(crate) enum Route {
     RecentPlay,
     /// 设置。
     Settings,
+    /// 账号设置。
+    Account,
 }
 
 /// 页面回传给外壳的导航事件。
@@ -124,6 +128,8 @@ pub(crate) enum PageEvent {
     OpenRecentPlay,
     /// 打开设置。
     OpenSettings,
+    /// 打开账号设置。
+    OpenAccount,
     /// 请求新建歌单。
     OpenCreate,
     /// 请求把歌曲加入歌单。
@@ -293,6 +299,9 @@ pub struct Root {
     pl_filter_input: Entity<InputState>,
     /// 歌单「添加歌曲」搜索框（跨歌单复用）。
     pl_add_input: Entity<InputState>,
+    /// 账号设置：新昵称 / 个性签名输入。
+    account_nickname_input: Entity<InputState>,
+    account_signature_input: Entity<InputState>,
     nav: NavState,
     home: Entity<HomePage>,
     library: Entity<LibraryPage>,
@@ -302,6 +311,7 @@ pub struct Root {
     album_page: Option<Entity<AlbumPage>>,
     artist_page: Option<Entity<ArtistPage>>,
     profile_page: Option<Entity<ProfilePage>>,
+    account_page: Option<Entity<AccountPage>>,
     np: NowPlayingUi,
     np_width_slider: Entity<SliderState>,
     login: LoginDialogState,
@@ -359,6 +369,8 @@ impl Root {
         let create_input = cx.new(|cx| InputState::new(window, cx).placeholder("歌单名称"));
         let pl_filter_input = cx.new(|cx| InputState::new(window, cx).placeholder("搜索歌单里的歌曲"));
         let pl_add_input = cx.new(|cx| InputState::new(window, cx).placeholder("搜索要添加的歌曲"));
+        let account_nickname_input = cx.new(|cx| InputState::new(window, cx).placeholder("新昵称"));
+        let account_signature_input = cx.new(|cx| InputState::new(window, cx).placeholder("个性签名"));
         let rename_input = cx.new(|cx| InputState::new(window, cx).placeholder("新名称"));
         let desc_input = cx.new(|cx| InputState::new(window, cx).placeholder("歌单简介"));
 
@@ -374,6 +386,7 @@ impl Root {
         let initial_route = match std::env::var("SIREN_START").ok().as_deref() {
             Some("search") => Route::Search,
             Some("settings") => Route::Settings,
+            Some("account") => Route::Account,
             Some("recent") => Route::RecentPlay,
             _ => Route::Home,
         };
@@ -438,6 +451,8 @@ impl Root {
                 search_input,
                 pl_filter_input,
                 pl_add_input,
+                account_nickname_input,
+                account_signature_input,
                 nav: NavState::new(initial_route),
                 home,
                 library,
@@ -447,6 +462,7 @@ impl Root {
                 album_page: None,
                 artist_page: None,
                 profile_page: None,
+                account_page: None,
                 np: NowPlayingUi {
                     open: true,
                     album_page: 0,
@@ -484,6 +500,9 @@ impl Root {
         if std::env::var("SIREN_START").ok().as_deref() == Some("artist") {
             root.update(cx, |root, cx| root.open_artist(6452, "周杰伦".to_string(), cx));
         }
+        if std::env::var("SIREN_START").ok().as_deref() == Some("account") {
+            root.update(cx, |root, cx| root.open_account(cx));
+        }
         root
     }
 
@@ -498,6 +517,7 @@ impl Root {
         self.album_page = None;
         self.artist_page = None;
         self.profile_page = None;
+        self.account_page = None;
         cx.notify();
     }
 
@@ -516,6 +536,7 @@ impl Root {
                 self.navigate(Route::RecentPlay, cx);
             }
             PageEvent::OpenSettings => self.navigate(Route::Settings, cx),
+            PageEvent::OpenAccount => self.open_account(cx),
             PageEvent::OpenCreate => self.open_create(cx),
             PageEvent::AddToPlaylist { song_id } => self.open_picker(*song_id, cx),
             PageEvent::RenamePlaylist { id } => self.open_rename(*id, cx),
@@ -659,12 +680,26 @@ impl Root {
         Session::uid(cx)
     }
 
+    fn open_account(&mut self, cx: &mut Context<Self>) {
+        self.nav.push(Route::Account);
+        let nickname_input = self.account_nickname_input.clone();
+        let signature_input = self.account_signature_input.clone();
+        let page = cx.new(|cx| AccountPage::new(cx, self.services.clone(), nickname_input, signature_input));
+        let sub = cx.subscribe(&page, |root: &mut Root, _e, ev: &PageEvent, cx| {
+            root.on_page_event(ev, cx)
+        });
+        self._subs.push(sub);
+        self.account_page = Some(page);
+        cx.notify();
+    }
+
     fn back(&mut self, cx: &mut Context<Self>) {
         if self.nav.pop() {
             self.playlist_page = None;
             self.album_page = None;
             self.artist_page = None;
             self.profile_page = None;
+            self.account_page = None;
             cx.notify();
         }
     }
@@ -713,6 +748,11 @@ impl Root {
                 .map(|p| p.clone().into_any_element())
                 .unwrap_or_else(|| div().into_any_element()),
             Route::Settings => self.settings_page(weak, cx),
+            Route::Account => self
+                .account_page
+                .as_ref()
+                .map(|p| p.clone().into_any_element())
+                .unwrap_or_else(|| div().into_any_element()),
             Route::RecentPlay => self.recent.clone().into_any_element(),
             Route::Profile { .. } => self
                 .profile_page

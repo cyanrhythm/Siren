@@ -123,4 +123,18 @@ pub mod path {
     pub const NOS_TOKEN_ALLOC: &str = "/weapi/nos/token/alloc";
     /// 登记歌单封面（WEAPI）。
     pub const PLAYLIST_COVER_UPDATE: &str = "/weapi/playlist/cover/update";
+    /// 用户等级（EAPI）。
+    pub const USER_LEVEL: &str = "/eapi/user/level";
+    /// VIP 状态（WEAPI）。
+    pub const VIP_INFO: &str = "/weapi/music-vip-membership/client/vip/info";
+    /// 账号第三方绑定（WEAPI）。
+    pub const USER_BINDING: &str = "/weapi/v1/user/binding";
+    /// 修改用户资料（EAPI）。
+    pub const USER_UPDATE: &str = "/eapi/user/update";
+    /// 昵称可用性检查（EAPI）。
+    pub const NICKNAME_CHECK: &str = "/eapi/nickname/check";
+    /// 每日签到（EAPI，`type` 0=安卓 1=web）。
+    pub const DAILY_TASK: &str = "/eapi/point/dailyTask";
+    /// 更换头像（WEAPI，multipart，字段 `imgFile`）。
+    pub const AVATAR_UPLOAD: &str = "/weapi/user/avatar/upload/v1";
 }

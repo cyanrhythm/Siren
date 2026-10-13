@@ -83,6 +83,13 @@ impl Root {
                         },
                     ));
                     let weak = weak_account.clone();
+                    menu = menu.item(PopupMenuItem::new("账号设置").icon(Icon::new(IconName::User)).on_click(
+                        move |_ev, _window, cx| {
+                            weak.update(cx, |root, cx| root.on_page_event(&PageEvent::OpenAccount, cx))
+                                .ok();
+                        },
+                    ));
+                    let weak = weak_account.clone();
                     menu.item(
                         PopupMenuItem::new("退出登录")
                             .icon(Icon::new(IconName::LogOut))
