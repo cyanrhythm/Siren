@@ -108,7 +108,7 @@ impl Root {
             .absolute()
             .left_0()
             .right_0()
-            .bottom(px(96.0))
+            .top(px(72.0))
             .flex()
             .justify_center()
             .child(col)
