@@ -127,6 +127,30 @@ impl Player {
         self.queue.set_context(context);
     }
 
+    /// 备份当前队列（进入心动/漫游前）。
+    pub fn take_snapshot(&mut self) {
+        self.queue.take_snapshot();
+    }
+
+    /// 丢弃队列备份（正常播放新队列时）。
+    pub fn clear_snapshot(&mut self) {
+        self.queue.clear_snapshot();
+    }
+
+    /// 是否处于可退出的特殊上下文（有备份或带上下文标签）。
+    pub fn in_special_context(&self) -> bool {
+        self.queue.context().is_some()
+    }
+
+    /// 退出特殊上下文：还原备份队列（若有），返回退出前的当前曲 id。
+    pub fn exit_special_context(&mut self) -> Option<i64> {
+        let playing = self.state.song.as_ref().map(|s| s.id);
+        self.queue.exit_special_context();
+        self.sync_queue();
+        self.publish();
+        playing
+    }
+
     /// 恢复队列/当前曲/进度（不加载音频；等待调用方解析 URL 后 [`Player::play_url`]）。
     ///
     /// 恢复后进入「等待加载」窗口：引擎尚未加载新文件，期间跳过进度同步。

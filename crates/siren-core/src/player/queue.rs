@@ -44,6 +44,18 @@ pub struct PlayerQueue {
     mode: PlayMode,
     source: Option<PlaySource>,
     context: Option<String>,
+    /// 进入特殊上下文（心动/漫游）前的队列备份。
+    snapshot: Option<Snapshot>,
+}
+
+/// 入特殊上下文前的队列备份。
+#[derive(Debug, Clone)]
+struct Snapshot {
+    items: Vec<Song>,
+    index: usize,
+    mode: PlayMode,
+    source: Option<PlaySource>,
+    context: Option<String>,
 }
 
 impl PlayerQueue {
@@ -77,6 +89,44 @@ impl PlayerQueue {
 
     pub fn set_context(&mut self, context: Option<String>) {
         self.context = context;
+    }
+
+    /// 备份当前队列与上下文（进入心动/漫游前调用）。
+    pub fn take_snapshot(&mut self) {
+        self.snapshot = Some(Snapshot {
+            items: self.items.clone(),
+            index: self.current.unwrap_or(0),
+            mode: self.mode,
+            source: self.source.clone(),
+            context: self.context.clone(),
+        });
+    }
+
+    /// 是否存在可还原的备份。
+    pub fn has_snapshot(&self) -> bool {
+        self.snapshot.is_some()
+    }
+
+    /// 丢弃备份（正常播放新队列时）。
+    pub fn clear_snapshot(&mut self) {
+        self.snapshot = None;
+    }
+
+    /// 退出特殊上下文：有备份则还原，否则仅清除上下文标签。
+    pub fn exit_special_context(&mut self) {
+        let Some(snapshot) = self.snapshot.take() else {
+            self.context = None;
+            return;
+        };
+        // 还原前记下正在播放的曲目，尽量把它定位到还原后的队列
+        let playing_id = self.current.and_then(|i| self.items.get(i)).map(|s| s.id);
+        self.items = snapshot.items;
+        self.mode = snapshot.mode;
+        self.source = snapshot.source;
+        self.context = snapshot.context;
+        self.current = playing_id
+            .and_then(|id| self.items.iter().position(|s| s.id == id))
+            .or_else(|| (!self.items.is_empty()).then_some(snapshot.index.min(self.items.len() - 1)));
     }
 
     pub fn len(&self) -> usize {

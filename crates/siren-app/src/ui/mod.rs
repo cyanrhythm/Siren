@@ -562,7 +562,7 @@ impl Root {
         cx.notify();
     }
 
-    fn open_playlist(&mut self, id: i64, name: String, cx: &mut Context<Self>) {
+    pub(crate) fn open_playlist(&mut self, id: i64, name: String, cx: &mut Context<Self>) {
         self.nav.push(Route::Playlist { id, name: name.clone() });
         let filter = self.pl_filter_input.clone();
         let add_input = self.pl_add_input.clone();
@@ -587,7 +587,7 @@ impl Root {
         cx.notify();
     }
 
-    fn open_album(&mut self, id: i64, name: String, cx: &mut Context<Self>) {
+    pub(crate) fn open_album(&mut self, id: i64, name: String, cx: &mut Context<Self>) {
         self.nav.push(Route::Album { id, name: name.clone() });
         let page = cx.new(|cx| AlbumPage::new(cx, self.services.clone(), self.playback.clone(), id, name));
         let sub = cx.subscribe(&page, |root: &mut Root, _e, ev: &PageEvent, cx| {

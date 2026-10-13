@@ -233,6 +233,31 @@ impl Playback {
         self.player.state()
     }
 
+    /// 当前队列来源容器（歌单/专辑）。
+    pub(crate) fn source(&self) -> Option<&PlaySource> {
+        self.player.source()
+    }
+
+    /// 当前播放上下文标签（心动/漫游等）。
+    pub(crate) fn context(&self) -> Option<&str> {
+        self.player.context()
+    }
+
+    /// 退出特殊上下文（心动/漫游）：还原备份队列；若当前曲变化则重新解析播放。
+    pub(crate) fn exit_special_context(&mut self, cx: &mut Context<Self>) {
+        let before = self.player.state().song.map(|s| s.id);
+        self.player.exit_special_context();
+        let after = self.player.state().song.map(|s| s.id);
+        self.save_queue_session();
+        if after.is_some() && after != before {
+            if let Some(song) = self.player.state().song {
+                self.resolve_and_play(song, cx);
+                return;
+            }
+        }
+        cx.notify();
+    }
+
     /// 当前音质档位（唯一真源：设置 store）。
     pub(crate) fn quality(&self, cx: &App) -> AudioQuality {
         SettingsStore::of(cx).quality()
@@ -317,6 +342,7 @@ impl Playback {
                     cx.notify();
                     return;
                 }
+                this.player.take_snapshot();
                 this.player.set_source(None);
                 this.player.set_context(Some(CONTEXT_ROAMING.to_string()));
                 if let Some(first) = this.player.set_queue(songs) {
@@ -350,6 +376,7 @@ impl Playback {
                     cx.notify();
                     return;
                 }
+                this.player.take_snapshot();
                 this.player.set_source(None);
                 this.player.set_context(Some(CONTEXT_INTELLIGENCE.to_string()));
                 if let Some(first) = this.player.set_queue(songs) {
@@ -604,6 +631,7 @@ impl Playback {
     ) {
         self.player.set_source(source);
         self.player.set_context(None);
+        self.player.clear_snapshot();
         if let Some(song) = self.player.set_queue(items) {
             let target = if index == 0 {
                 song
