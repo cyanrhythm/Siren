@@ -217,6 +217,7 @@ impl HomePage {
                 tile = tile.child(
                     div()
                         .id(format!("home-recent-play-{id}"))
+                        .occlude()
                         .flex_none()
                         .pr(px(12.0))
                         .cursor_pointer()
