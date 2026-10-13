@@ -14,6 +14,7 @@ use gpui_kit::*;
 
 use siren_core::model::{PlaylistDetail, Song};
 
+use super::super::components::like_button;
 use super::super::playback::Playback;
 use super::super::services::Services;
 use super::super::{fmt_time, icon, page_shell_with_header, PageEvent};
@@ -1017,6 +1018,7 @@ impl Render for PlaylistPage {
                             let sid = song.id;
                             div()
                                 .id(format!("playlist-track-{}", song.id))
+                                .group(format!("playlist-track-{}", song.id))
                                 .w_full()
                                 .h(px(52.0))
                                 .px(px(24.0))
@@ -1073,6 +1075,12 @@ impl Render for PlaylistPage {
                                         .truncate()
                                         .child(song.album.clone()),
                                 )
+                                .child(like_button(
+                                    &playback,
+                                    song.clone(),
+                                    format!("playlist-track-{}", song.id),
+                                    cx,
+                                ))
                                 .child(
                                     div()
                                         .w(px(56.0))

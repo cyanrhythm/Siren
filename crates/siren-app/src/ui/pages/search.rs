@@ -9,6 +9,7 @@ use gpui_kit::*;
 
 use siren_core::model::{Album, Artist, Playlist, Song};
 
+use super::super::components::like_button;
 use super::super::playback::Playback;
 use super::super::services::Services;
 use super::super::{page_shell, PageEvent};
@@ -233,6 +234,7 @@ impl SearchPage {
                     let liked = playback.read(cx).is_liked(sid);
                     div()
                         .id(format!("search-song-{}", song.id))
+                        .group(format!("search-song-{}", song.id))
                         .w_full()
                         .h(px(48.0))
                         .px(px(16.0))
@@ -272,6 +274,12 @@ impl SearchPage {
                                         .child(song.artists.clone()),
                                 ),
                         )
+                        .child(like_button(
+                            &playback,
+                            song.clone(),
+                            format!("search-song-{}", song.id),
+                            cx,
+                        ))
                         .context_menu(move |menu, _w, _cx| {
                             let weak_next = weak_ctx.clone();
                             let weak_like = weak_ctx.clone();

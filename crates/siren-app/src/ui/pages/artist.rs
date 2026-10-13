@@ -10,6 +10,7 @@ use gpui_kit::*;
 
 use siren_core::model::{Artist, ArtistAlbum, ArtistDetail, Song};
 
+use super::super::components::like_button;
 use super::super::playback::Playback;
 use super::super::services::Services;
 use super::super::{fmt_date, icon, page_shell_with_header, PageEvent};
@@ -249,6 +250,7 @@ impl ArtistPage {
             col = col.child(
                 div()
                     .id(format!("artist-song-{sid}"))
+                    .group(format!("artist-song-{sid}"))
                     .w_full()
                     .h(px(48.0))
                     .px(px(6.0))
@@ -305,6 +307,12 @@ impl ArtistPage {
                                 .child(song.name.clone()),
                         ),
                     )
+                    .child(like_button(
+                        &self.playback,
+                        song.clone(),
+                        format!("artist-song-{sid}"),
+                        cx,
+                    ))
                     .child(
                         div()
                             .w(px(56.0))

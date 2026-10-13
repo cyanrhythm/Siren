@@ -47,14 +47,29 @@ impl SettingsStore {
         self.data.set_media_keys(enabled);
     }
 
-    /// 正在播放卡片顺序（代码列表）。
-    pub(crate) fn cards(&self) -> Vec<String> {
-        self.data.cards()
+    /// 正在播放卡片完整顺序（含隐藏项）。
+    pub(crate) fn card_order(&self) -> Vec<String> {
+        self.data.card_order()
     }
 
-    /// 保存正在播放卡片顺序（落盘）。
-    pub(crate) fn set_cards(&mut self, cards: Vec<String>) {
-        self.data.set_cards(cards);
+    /// 某卡片是否隐藏。
+    pub(crate) fn is_card_hidden(&self, code: &str) -> bool {
+        self.data.is_card_hidden(code)
+    }
+
+    /// 隐藏卡片代码集合。
+    pub(crate) fn hidden_cards(&self) -> Vec<String> {
+        self.data.hidden_cards()
+    }
+
+    /// 保存卡片完整顺序（落盘）。
+    pub(crate) fn set_card_order(&mut self, order: Vec<String>) {
+        self.data.set_card_order(order);
+    }
+
+    /// 保存隐藏卡片集合（落盘）。
+    pub(crate) fn set_hidden_cards(&mut self, hidden: Vec<String>) {
+        self.data.set_hidden_cards(hidden);
     }
 
     /// 右侧栏宽度。

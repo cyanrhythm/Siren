@@ -539,15 +539,6 @@ impl Playback {
         cx.notify();
     }
 
-    /// 当前歌曲是否已喜欢。
-    pub(crate) fn current_liked(&self) -> bool {
-        self.player
-            .state()
-            .song
-            .map(|s| self.liked.contains(&s.id))
-            .unwrap_or(false)
-    }
-
     /// 载入已喜欢歌曲 ID（登录后）。
     pub(crate) fn load_likes(&mut self, uid: i64, cx: &mut Context<Self>) {
         let client = self.client.clone();
@@ -573,51 +564,6 @@ impl Playback {
     pub(crate) fn clear_likes(&mut self, cx: &mut Context<Self>) {
         self.liked.clear();
         cx.notify();
-    }
-
-    /// 喜欢 / 取消喜欢当前歌曲（乐观更新 + 失败回滚）。
-    pub(crate) fn toggle_like_current(&mut self, cx: &mut Context<Self>) {
-        let Some(song) = self.player.state().song else {
-            return;
-        };
-        let id = song.id;
-        let like = !self.liked.contains(&id);
-        if like {
-            self.liked.insert(id);
-        } else {
-            self.liked.remove(&id);
-        }
-        self.status = if like {
-            format!("已喜欢：{}", song.name).into()
-        } else {
-            format!("已取消喜欢：{}", song.name).into()
-        };
-        cx.notify();
-
-        let client = self.client.clone();
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        self.handle.spawn(async move {
-            let ok = siren_core::network::api::like_song(&client, id, like).await.is_ok();
-            let _ = tx.send(ok);
-        });
-        cx.spawn(async move |this, cx| {
-            let ok = rx.await.unwrap_or(false);
-            if !ok {
-                this.update(cx, |this, cx| {
-                    // 回滚
-                    if like {
-                        this.liked.remove(&id);
-                    } else {
-                        this.liked.insert(id);
-                    }
-                    this.status = "喜欢操作失败".into();
-                    this.notifications.update(cx, |n, cx| n.error("喜欢操作失败", cx));
-                    cx.notify();
-                })
-                .ok();
-            }
-        })
-        .detach();
     }
 
     pub(crate) fn progress_slider(&self) -> &Entity<SliderState> {

@@ -4,6 +4,9 @@
 
 mod collect;
 mod comments;
+mod like;
 mod now_playing;
 mod player_bar;
 mod title_bar;
+
+pub(crate) use like::like_button;

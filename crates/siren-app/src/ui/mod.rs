@@ -312,6 +312,8 @@ pub struct Root {
     artist_page: Option<Entity<ArtistPage>>,
     profile_page: Option<Entity<ProfilePage>>,
     account_page: Option<Entity<AccountPage>>,
+    /// 正在播放卡片编辑器的拖拽源索引。
+    card_drag_from: Option<usize>,
     np: NowPlayingUi,
     np_width_slider: Entity<SliderState>,
     login: LoginDialogState,
@@ -463,6 +465,7 @@ impl Root {
                 artist_page: None,
                 profile_page: None,
                 account_page: None,
+                card_drag_from: None,
                 np: NowPlayingUi {
                     open: true,
                     album_page: 0,
@@ -582,18 +585,56 @@ impl Root {
 
     /// 当前正在播放卡片顺序（唯一真源：设置 store）。
     pub(crate) fn np_cards(&self, cx: &App) -> Vec<NpCard> {
-        SettingsStore::of(cx)
-            .cards()
+        let store = SettingsStore::of(cx);
+        store
+            .card_order()
             .iter()
+            .filter(|c| !store.is_card_hidden(c))
             .filter_map(|c| NpCard::from_code(c))
             .collect()
     }
 
-    /// 保存正在播放卡片顺序（写入设置 store 并落盘）。
-    pub(crate) fn set_np_cards(&mut self, cards: Vec<NpCard>, cx: &mut Context<Self>) {
-        let codes: Vec<String> = cards.iter().map(|c| c.code().to_string()).collect();
-        cx.global_mut::<SettingsStore>().set_cards(codes);
+    /// 正在播放卡片编辑器布局：完整顺序 + 各项可见性。
+    pub(crate) fn editor_layout(&self, cx: &App) -> Vec<(NpCard, bool)> {
+        let store = SettingsStore::of(cx);
+        store
+            .card_order()
+            .iter()
+            .filter_map(|c| NpCard::from_code(c).map(|card| (card, !store.is_card_hidden(c))))
+            .collect()
+    }
+
+    /// 拖拽中的源索引（供 live 重排使用）。
+    pub(crate) fn card_drag_from(&self) -> Option<usize> {
+        self.card_drag_from
+    }
+
+    /// 记录 / 清除拖拽源索引。
+    pub(crate) fn set_card_drag_from(&mut self, idx: Option<usize>) {
+        self.card_drag_from = idx;
+    }
+
+    /// 设置某卡片显隐（落盘）。
+    pub(crate) fn set_card_visible(&mut self, card: NpCard, visible: bool, cx: &mut Context<Self>) {
+        let store = cx.global_mut::<SettingsStore>();
+        let mut hidden = store.hidden_cards();
+        hidden.retain(|c| c != card.code());
+        if !visible {
+            hidden.push(card.code().to_string());
+        }
+        store.set_hidden_cards(hidden);
         cx.notify();
+    }
+
+    /// 编辑器内将 `from` 位置卡片移动到 `to`（落盘完整顺序）。
+    pub(crate) fn reorder_card(&mut self, from: usize, to: usize, cx: &mut Context<Self>) {
+        let mut order = cx.global::<SettingsStore>().card_order();
+        if from < order.len() && to < order.len() && from != to {
+            let card = order.remove(from);
+            order.insert(to, card);
+            cx.global_mut::<SettingsStore>().set_card_order(order);
+            cx.notify();
+        }
     }
 
     /// 登录成功：预取头像、加载喜欢列表与最近播放（账号真源是 [`Session`]）。

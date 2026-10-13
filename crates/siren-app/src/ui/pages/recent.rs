@@ -9,6 +9,7 @@ use gpui_kit::*;
 
 use siren_core::model::{RecentAlbum, RecentPlaylist, RecentSong};
 
+use super::super::components::like_button;
 use super::super::playback::Playback;
 use super::super::services::Services;
 use super::super::{fmt_day_label, page_shell_with_header, PageEvent};
@@ -177,6 +178,7 @@ impl RecentPage {
             col = col.child(
                 div()
                     .id(format!("recent-song-{sid}"))
+                    .group(format!("recent-song-{sid}"))
                     .w_full()
                     .h(px(48.0))
                     .px(px(16.0))
@@ -216,6 +218,12 @@ impl RecentPage {
                                     .child(item.song.artists.clone()),
                             ),
                     )
+                    .child(like_button(
+                        &self.playback,
+                        item.song.clone(),
+                        format!("recent-song-{sid}"),
+                        cx,
+                    ))
                     .child(
                         div()
                             .w(px(56.0))

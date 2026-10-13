@@ -9,6 +9,7 @@ use gpui_kit::*;
 
 use siren_core::model::AlbumDetail;
 
+use super::super::components::like_button;
 use super::super::playback::Playback;
 use super::super::services::Services;
 use super::super::{fmt_time, icon, page_shell_with_header, PageEvent};
@@ -199,6 +200,7 @@ impl Render for AlbumPage {
                             let liked = playback.read(cx).is_liked(song.id);
                             div()
                                 .id(format!("album-track-{}", song.id))
+                                .group(format!("album-track-{}", song.id))
                                 .w_full()
                                 .h(px(52.0))
                                 .px(px(16.0))
@@ -272,6 +274,12 @@ impl Render for AlbumPage {
                                                 .child(song.artists.clone()),
                                         ),
                                 )
+                                .child(like_button(
+                                    &playback,
+                                    song.clone(),
+                                    format!("album-track-{}", song.id),
+                                    cx,
+                                ))
                                 .child(
                                     div()
                                         .w(px(56.0))

@@ -27,6 +27,8 @@ pub struct Settings {
     media_keys: Option<bool>,
     /// 正在播放卡片顺序（代码列表，见 [`DEFAULT_CARDS`]）。
     cards: Option<Vec<String>>,
+    /// 正在播放面板中隐藏的卡片（代码）。
+    hidden_cards: Option<Vec<String>>,
     /// 右侧栏宽度（像素）。
     np_width: Option<f32>,
     /// 上次窗口位置与大小（`x,y,w,h`）。
@@ -105,6 +107,41 @@ impl Settings {
     /// 保存正在播放卡片顺序并落盘。
     pub fn set_cards(&mut self, cards: Vec<String>) {
         self.cards = Some(cards);
+        self.save();
+    }
+
+    /// 正在播放卡片的完整顺序（含隐藏项；补齐 [`DEFAULT_CARDS`] 中缺失的代码）。
+    pub fn card_order(&self) -> Vec<String> {
+        let mut order = self.cards();
+        for code in DEFAULT_CARDS {
+            if !order.iter().any(|c| c == code) {
+                order.push(code.to_string());
+            }
+        }
+        let mut seen = std::collections::HashSet::new();
+        order.retain(|c| seen.insert(c.clone()));
+        order
+    }
+
+    /// 隐藏的卡片代码列表。
+    pub fn hidden_cards(&self) -> Vec<String> {
+        self.hidden_cards.clone().unwrap_or_default()
+    }
+
+    /// 某卡片是否隐藏。
+    pub fn is_card_hidden(&self, code: &str) -> bool {
+        self.hidden_cards().iter().any(|c| c == code)
+    }
+
+    /// 保存完整卡片顺序并落盘。
+    pub fn set_card_order(&mut self, order: Vec<String>) {
+        self.cards = Some(order);
+        self.save();
+    }
+
+    /// 保存隐藏卡片集合并落盘。
+    pub fn set_hidden_cards(&mut self, hidden: Vec<String>) {
+        self.hidden_cards = Some(hidden);
         self.save();
     }
 
