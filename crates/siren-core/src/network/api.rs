@@ -469,6 +469,13 @@ pub async fn comment_floor(
     Ok(crate::model::parse_comments_v2(&json!({ "data": data })))
 }
 
+/// 首页货架（EAPI）。
+pub async fn home_shelves(client: &NeteaseClient) -> Result<Vec<crate::model::HomeShelf>> {
+    let value = client.eapi_post(path::HOME_BLOCK_PAGE, &json!({})).await?;
+    validate(&value)?;
+    Ok(crate::model::parse_home_shelves(&value))
+}
+
 /// 每日推荐歌曲（EAPI）。
 pub async fn daily_recommend_songs(client: &NeteaseClient) -> Result<Vec<Song>> {
     let value = client.eapi_post(path::DAILY_RECOMMEND, &json!({})).await?;

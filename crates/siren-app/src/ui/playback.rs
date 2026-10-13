@@ -246,6 +246,81 @@ impl Playback {
         self.liked.contains(&song_id)
     }
 
+    /// 播放歌单：拉取详情后以歌单为来源起播。
+    pub(crate) fn play_playlist(&mut self, id: i64, name: String, cover: String, cx: &mut Context<Self>) {
+        let client = self.client.clone();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.handle.spawn(async move {
+            let _ = tx.send(
+                siren_core::network::api::playlist_detail(&client, id)
+                    .await
+                    .ok()
+                    .flatten(),
+            );
+        });
+        cx.spawn(async move |this, cx| {
+            let detail = rx.await.ok().flatten();
+            this.update(cx, |this, cx| match detail {
+                Some(d) if !d.tracks.is_empty() => {
+                    let source = PlaySource {
+                        kind: PlaySourceKind::Playlist,
+                        id,
+                        name,
+                        cover_url: cover,
+                    };
+                    this.play_from_source(d.tracks, 0, Some(source), cx);
+                }
+                _ => this.notifications.update(cx, |n, cx| n.error("加载歌单失败", cx)),
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// 播放专辑：拉取详情后以专辑为来源起播。
+    pub(crate) fn play_album(&mut self, id: i64, name: String, cover: String, cx: &mut Context<Self>) {
+        let client = self.client.clone();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.handle.spawn(async move {
+            let _ = tx.send(siren_core::network::api::album_detail(&client, id).await.ok().flatten());
+        });
+        cx.spawn(async move |this, cx| {
+            let detail = rx.await.ok().flatten();
+            this.update(cx, |this, cx| match detail {
+                Some(d) if !d.songs.is_empty() => {
+                    let source = PlaySource {
+                        kind: PlaySourceKind::Album,
+                        id,
+                        name,
+                        cover_url: cover,
+                    };
+                    this.play_from_source(d.songs, 0, Some(source), cx);
+                }
+                _ => this.notifications.update(cx, |n, cx| n.error("加载专辑失败", cx)),
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// 播放单首歌曲（按 id 拉取详情后起播）。
+    pub(crate) fn play_song(&mut self, id: i64, cx: &mut Context<Self>) {
+        let client = self.client.clone();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.handle.spawn(async move {
+            let _ = tx.send(siren_core::network::api::song_detail(&client, id).await.ok().flatten());
+        });
+        cx.spawn(async move |this, cx| {
+            let song = rx.await.ok().flatten();
+            this.update(cx, |this, cx| match song {
+                Some(song) => this.play_from(vec![song], 0, cx),
+                None => this.notifications.update(cx, |n, cx| n.error("加载歌曲失败", cx)),
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     /// 把歌曲插到当前曲之后（「下一首播放」）；无当前曲则直接播放。
     pub(crate) fn play_next(&mut self, song: Song, cx: &mut Context<Self>) {
         if self.player.state().song.is_none() {

@@ -196,6 +196,240 @@ pub fn parse_search_artists(value: &Value) -> Vec<Artist> {
         .unwrap_or_default()
 }
 
+/// 首页货架（服务端下发的一组同类卡片）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HomeShelf {
+    pub block_code: String,
+    pub title: String,
+    /// 榜单类货架：卡片角标显示名次。
+    pub show_rank: bool,
+    pub cards: Vec<HomeCard>,
+}
+
+/// 货架卡片（只保留有落地页/可播的类型）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HomeCard {
+    Playlist {
+        id: i64,
+        title: String,
+        cover_url: String,
+        caption: String,
+    },
+    Album {
+        id: i64,
+        title: String,
+        cover_url: String,
+        caption: String,
+    },
+    Song {
+        id: i64,
+        title: String,
+        cover_url: String,
+        caption: String,
+    },
+    /// 播客单集：`program_id` 仅作 key，播放走 `song_id`。
+    Voice {
+        program_id: i64,
+        song_id: i64,
+        title: String,
+        cover_url: String,
+        caption: String,
+    },
+}
+
+impl HomeCard {
+    pub fn title(&self) -> &str {
+        match self {
+            HomeCard::Playlist { title, .. }
+            | HomeCard::Album { title, .. }
+            | HomeCard::Song { title, .. }
+            | HomeCard::Voice { title, .. } => title,
+        }
+    }
+    pub fn cover_url(&self) -> &str {
+        match self {
+            HomeCard::Playlist { cover_url, .. }
+            | HomeCard::Album { cover_url, .. }
+            | HomeCard::Song { cover_url, .. }
+            | HomeCard::Voice { cover_url, .. } => cover_url,
+        }
+    }
+    pub fn caption(&self) -> &str {
+        match self {
+            HomeCard::Playlist { caption, .. }
+            | HomeCard::Album { caption, .. }
+            | HomeCard::Song { caption, .. }
+            | HomeCard::Voice { caption, .. } => caption,
+        }
+    }
+    /// 类型标签（角标文案）。
+    pub fn type_label(&self) -> &'static str {
+        match self {
+            HomeCard::Playlist { .. } => "歌单",
+            HomeCard::Album { .. } => "专辑",
+            HomeCard::Song { .. } => "单曲",
+            HomeCard::Voice { .. } => "播客",
+        }
+    }
+}
+
+fn extract_id(action: Option<&str>, prefix: &str) -> Option<i64> {
+    let action = action?;
+    let idx = action.find(prefix)?;
+    let rest = &action[idx + prefix.len()..];
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    digits.parse().ok()
+}
+
+fn home_caption(ui: &Value) -> String {
+    if let Some(labels) = ui.get("labelTexts").and_then(Value::as_array) {
+        let joined: Vec<&str> = labels
+            .iter()
+            .filter_map(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .collect();
+        if !joined.is_empty() {
+            return joined.join(" · ");
+        }
+    }
+    if let Some(text) = ui.get("labelText").and_then(|l| l.get("text")).and_then(Value::as_str) {
+        if !text.is_empty() {
+            return text.to_string();
+        }
+    }
+    if let Some(text) = ui.get("subTitle").and_then(|t| t.get("title")).and_then(Value::as_str) {
+        if !text.is_empty() {
+            return text.to_string();
+        }
+    }
+    ui.get("description")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// 解析首页货架（`/eapi/homepage/block/page`，`data.blocks`）。
+pub fn parse_home_shelves(value: &Value) -> Vec<HomeShelf> {
+    const SKIP: [&str; 2] = ["HOMEPAGE_BANNER", "HOMEPAGE_BLOCK_OLD_DRAGON_BALL"];
+    let Some(blocks) = value
+        .get("data")
+        .and_then(|d| d.get("blocks"))
+        .and_then(Value::as_array)
+    else {
+        return Vec::new();
+    };
+    let mut shelves = Vec::new();
+    for block in blocks {
+        let block_code = block.get("blockCode").and_then(Value::as_str).unwrap_or_default();
+        if SKIP.contains(&block_code) {
+            continue;
+        }
+        let ui = block.get("uiElement");
+        let title = ui
+            .and_then(|u| u.get("mainTitle").and_then(|t| t.get("title")))
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .or_else(|| {
+                ui.and_then(|u| u.get("subTitle").and_then(|t| t.get("title")))
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.is_empty())
+            })
+            .unwrap_or_default()
+            .to_string();
+        if title.is_empty() {
+            continue;
+        }
+        let mut cards = Vec::new();
+        if let Some(creatives) = block.get("creatives").and_then(Value::as_array) {
+            for creative in creatives {
+                let Some(resources) = creative.get("resources").and_then(Value::as_array) else {
+                    continue;
+                };
+                for res in resources {
+                    let Some(rui) = res.get("uiElement") else { continue };
+                    let name = rui
+                        .get("mainTitle")
+                        .and_then(|t| t.get("title"))
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    let cover = rui
+                        .get("image")
+                        .and_then(|i| i.get("imageUrl"))
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    if name.is_empty() || cover.is_empty() {
+                        continue;
+                    }
+                    let caption = home_caption(rui);
+                    let action = res.get("action").and_then(Value::as_str);
+                    let resource_id = res
+                        .get("resourceId")
+                        .and_then(Value::as_str)
+                        .and_then(|s| s.parse::<i64>().ok());
+                    let kind = res
+                        .get("resourceType")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_lowercase();
+                    let card = match kind.as_str() {
+                        "list" => {
+                            extract_id(action, "orpheus://playlist/")
+                                .or(resource_id)
+                                .map(|id| HomeCard::Playlist {
+                                    id,
+                                    title: name.to_string(),
+                                    cover_url: cover.to_string(),
+                                    caption: caption.clone(),
+                                })
+                        }
+                        "album" | "digitalalbum" => extract_id(action, "orpheus://album/").map(|id| HomeCard::Album {
+                            id,
+                            title: name.to_string(),
+                            cover_url: cover.to_string(),
+                            caption: caption.clone(),
+                        }),
+                        "song" => resource_id.map(|id| HomeCard::Song {
+                            id,
+                            title: name.to_string(),
+                            cover_url: cover.to_string(),
+                            caption: caption.clone(),
+                        }),
+                        "voice" => res
+                            .get("resourceExtInfo")
+                            .and_then(|e| e.get("djProgram"))
+                            .and_then(|p| {
+                                let song_id = p.get("mainSong").and_then(|s| s.get("id")).and_then(Value::as_i64)?;
+                                let program_id = p.get("id").and_then(Value::as_i64).or(resource_id)?;
+                                (song_id > 0).then_some((program_id, song_id))
+                            })
+                            .map(|(program_id, song_id)| HomeCard::Voice {
+                                program_id,
+                                song_id,
+                                title: name.to_string(),
+                                cover_url: cover.to_string(),
+                                caption: caption.clone(),
+                            }),
+                        _ => None,
+                    };
+                    if let Some(card) = card {
+                        cards.push(card);
+                    }
+                }
+            }
+        }
+        if cards.is_empty() {
+            continue;
+        }
+        shelves.push(HomeShelf {
+            block_code: block_code.to_string(),
+            title,
+            show_rank: block_code == "HOMEPAGE_BLOCK_TOPLIST",
+            cards,
+        });
+    }
+    shelves
+}
+
 /// 用户详情。
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct UserProfile {

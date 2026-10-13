@@ -7,9 +7,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use gpui_kit::assets::IconName;
 use gpui_kit::base::StyledExt;
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use siren_core::model::{Playlist, RecentPlaylist, Song};
+use siren_core::model::{HomeCard, HomeShelf, Playlist, RecentPlaylist, Song};
 
 use super::super::playback::Playback;
 use super::super::services::Services;
@@ -31,6 +32,9 @@ pub(crate) struct HomePage {
     recent: Vec<RecentPlaylist>,
     daily: Arc<Vec<Song>>,
     playlists: Arc<Vec<Playlist>>,
+    shelves: Vec<HomeShelf>,
+    /// 当前悬停的条目 id（用于显示播放按钮）。
+    hovered: Option<i64>,
     load_gen: u64,
 }
 
@@ -45,6 +49,8 @@ impl HomePage {
             recent: Vec::new(),
             daily: Arc::new(Vec::new()),
             playlists: Arc::new(Vec::new()),
+            shelves: Vec::new(),
+            hovered: None,
             load_gen: 0,
         };
         page.load(cx);
@@ -66,7 +72,10 @@ impl HomePage {
             let playlists = siren_core::network::api::personalized_playlists(&client, 30)
                 .await
                 .unwrap_or_default();
-            let _ = tx.send((recent, daily, playlists));
+            let shelves = siren_core::network::api::home_shelves(&client)
+                .await
+                .unwrap_or_default();
+            let _ = tx.send((recent, daily, playlists, shelves));
         });
         cx.notify();
         cx.spawn(async move |this, cx| {
@@ -75,7 +84,7 @@ impl HomePage {
                 if this.load_gen != gen {
                     return;
                 }
-                if let Some((recent, daily, playlists)) = payload {
+                if let Some((recent, daily, playlists, shelves)) = payload {
                     // 本地最近播放歌单与服务端合并去重
                     let mut merged: Vec<RecentPlaylist> = siren_core::recent_playlists::load_recent_playlists()
                         .into_iter()
@@ -102,9 +111,14 @@ impl HomePage {
                     if let Some(first) = daily.first() {
                         this.services.covers.prefetch([first.cover_url.clone()], 128.0, cx);
                     }
+                    for shelf in &shelves {
+                        let covers: Vec<String> = shelf.cards.iter().map(|c| c.cover_url().to_string()).collect();
+                        this.services.covers.prefetch(covers, 168.0, cx);
+                    }
                     this.recent = merged;
                     this.daily = Arc::new(daily);
                     this.playlists = Arc::new(playlists);
+                    this.shelves = shelves;
                 }
                 cx.notify();
             })
@@ -158,46 +172,83 @@ impl HomePage {
         row.into_any_element()
     }
 
-    /// 最近播放：横向卡片网格（封面 + 标题），2 行 × N。
+    /// 最近播放：横向卡片网格（封面 + 标题），悬停显示红色播放按钮。
     fn recent_grid(&self, cx: &Context<Self>) -> AnyElement {
         let weak = cx.weak_entity();
         let covers = self.services.covers.clone();
         let mut grid = div().flex().flex_wrap().gap(px(12.0)).w_full();
         for item in &self.recent {
             let cover = covers.image(&item.cover_url, 72.0);
-            let weak = weak.clone();
-            let (id, name) = (item.id, item.name.clone());
-            grid = grid.child(
-                div()
-                    .id(format!("home-recent-{id}"))
-                    .w(px(300.0))
-                    .h(px(72.0))
-                    .flex()
-                    .items_center()
-                    .rounded(px(8.0))
-                    .bg(theme::surface())
-                    .overflow_hidden()
-                    .cursor_pointer()
-                    .hover(|s| s.bg(theme::surface_light()))
-                    .on_click(move |_ev, _window, cx| {
-                        weak.update(cx, |_p, cx| {
-                            cx.emit(PageEvent::OpenPlaylist { id, name: name.clone() });
+            let weak_click = weak.clone();
+            let weak_hover = weak.clone();
+            let weak_play = weak.clone();
+            let (id, cover_url) = (item.id, item.cover_url.clone());
+            let name_click = item.name.clone();
+            let name_play = item.name.clone();
+            let mut tile = div()
+                .id(format!("home-recent-{id}"))
+                .w(px(300.0))
+                .h(px(72.0))
+                .flex()
+                .items_center()
+                .rounded(px(8.0))
+                .bg(theme::surface())
+                .overflow_hidden()
+                .cursor_pointer()
+                .hover(|s| s.bg(theme::surface_light()))
+                .on_hover(move |hovered, _w, cx| {
+                    weak_hover
+                        .update(cx, |page, cx| {
+                            if *hovered {
+                                page.hovered = Some(id);
+                            } else if page.hovered == Some(id) {
+                                page.hovered = None;
+                            }
+                            cx.notify();
                         })
                         .ok();
-                    })
-                    .child(cover)
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w(px(0.0))
-                            .px(px(12.0))
-                            .text_sm()
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(theme::text_primary())
-                            .truncate()
-                            .child(item.name.clone()),
-                    ),
-            );
+                })
+                .on_click(move |_ev, _window, cx| {
+                    weak_click
+                        .update(cx, |_p, cx| {
+                            cx.emit(PageEvent::OpenPlaylist {
+                                id,
+                                name: name_click.clone(),
+                            })
+                        })
+                        .ok();
+                })
+                .child(cover)
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .px(px(12.0))
+                        .text_sm()
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(theme::text_primary())
+                        .truncate()
+                        .child(item.name.clone()),
+                );
+            if self.hovered == Some(id) {
+                tile = tile.child(
+                    div()
+                        .id(format!("home-recent-play-{id}"))
+                        .pr(px(12.0))
+                        .cursor_pointer()
+                        .on_click(move |_ev, _window, cx| {
+                            weak_play
+                                .update(cx, |page, cx| {
+                                    page.playback.update(cx, |pb, cx| {
+                                        pb.play_playlist(id, name_play.clone(), cover_url.clone(), cx)
+                                    })
+                                })
+                                .ok();
+                        })
+                        .child(play_fab(36.0)),
+                );
+            }
+            grid = grid.child(tile);
         }
         grid.into_any_element()
     }
@@ -276,16 +327,182 @@ impl HomePage {
         self.playback.update(cx, |pb, cx| pb.play_from(songs, 0, cx));
     }
 
-    /// 推荐歌单：封面卡片网格。
+    /// 服务端货架：标题 + 卡片网格（类型角标 + 标题 + 描述）。
+    fn shelf_section(&self, shelf: &HomeShelf, cx: &Context<Self>) -> AnyElement {
+        let mut grid = div().flex().flex_wrap().gap(px(16.0)).w_full();
+        for (index, card) in shelf.cards.iter().enumerate() {
+            grid = grid.child(self.card_tile(card, shelf.show_rank.then_some(index + 1), cx));
+        }
+        div()
+            .v_flex()
+            .w_full()
+            .gap(px(10.0))
+            .child(section_title(&shelf.title))
+            .child(grid)
+            .into_any_element()
+    }
+
+    fn card_tile(&self, card: &HomeCard, rank: Option<usize>, cx: &Context<Self>) -> AnyElement {
+        let weak = cx.weak_entity();
+        let key = match card {
+            HomeCard::Voice { program_id, .. } => *program_id,
+            HomeCard::Playlist { id, .. } | HomeCard::Album { id, .. } | HomeCard::Song { id, .. } => *id,
+        };
+        let cover = self.services.covers.image(card.cover_url(), 168.0);
+        let title = card.title().to_string();
+        let caption = card.caption().to_string();
+        let type_label = match rank {
+            Some(r) => format!("{} · {}", card.type_label(), r),
+            None => card.type_label().to_string(),
+        };
+        let card_owned = card.clone();
+        let weak_click = weak.clone();
+        let weak_hover = weak.clone();
+        let weak_play = weak.clone();
+        let cover_box = div()
+            .relative()
+            .w(px(168.0))
+            .h(px(168.0))
+            .child(cover)
+            .when(self.hovered == Some(key), |el| {
+                el.child(
+                    div()
+                        .id(format!("home-card-play-{key}"))
+                        .absolute()
+                        .right(px(8.0))
+                        .bottom(px(8.0))
+                        .cursor_pointer()
+                        .on_click(move |_ev, _window, cx| {
+                            weak_play.update(cx, |page, cx| page.play_card(&card_owned, cx)).ok();
+                        })
+                        .child(play_fab(40.0)),
+                )
+            });
+        let click_card = card.clone();
+        div()
+            .id(format!("home-card-{key}"))
+            .w(px(168.0))
+            .v_flex()
+            .gap(px(6.0))
+            .cursor_pointer()
+            .on_hover(move |hovered, _w, cx| {
+                weak_hover
+                    .update(cx, |page, cx| {
+                        if *hovered {
+                            page.hovered = Some(key);
+                        } else if page.hovered == Some(key) {
+                            page.hovered = None;
+                        }
+                        cx.notify();
+                    })
+                    .ok();
+            })
+            .on_click(move |_ev, _window, cx| {
+                weak_click
+                    .update(cx, |_p, cx| match &click_card {
+                        HomeCard::Playlist { id, title, .. } => cx.emit(PageEvent::OpenPlaylist {
+                            id: *id,
+                            name: title.clone(),
+                        }),
+                        HomeCard::Album { id, title, .. } => cx.emit(PageEvent::OpenAlbum {
+                            id: *id,
+                            name: title.clone(),
+                        }),
+                        HomeCard::Song { .. } | HomeCard::Voice { .. } => {}
+                    })
+                    .ok();
+            })
+            .child(cover_box)
+            .child(
+                div()
+                    .w_full()
+                    .text_xs()
+                    .text_color(theme::text_gray())
+                    .child(type_label),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .text_sm()
+                    .text_color(theme::text_primary())
+                    .truncate()
+                    .child(title),
+            )
+            .when(!caption.is_empty(), |el| {
+                el.child(
+                    div()
+                        .w_full()
+                        .text_xs()
+                        .text_color(theme::text_gray())
+                        .truncate()
+                        .child(caption),
+                )
+            })
+            .into_any_element()
+    }
+
+    fn play_card(&mut self, card: &HomeCard, cx: &mut Context<Self>) {
+        match card {
+            HomeCard::Playlist {
+                id, title, cover_url, ..
+            } => {
+                self.playback
+                    .update(cx, |pb, cx| pb.play_playlist(*id, title.clone(), cover_url.clone(), cx));
+            }
+            HomeCard::Album {
+                id, title, cover_url, ..
+            } => {
+                self.playback
+                    .update(cx, |pb, cx| pb.play_album(*id, title.clone(), cover_url.clone(), cx));
+            }
+            HomeCard::Song { id, .. } => {
+                self.playback.update(cx, |pb, cx| pb.play_song(*id, cx));
+            }
+            HomeCard::Voice { song_id, .. } => {
+                self.playback.update(cx, |pb, cx| pb.play_song(*song_id, cx));
+            }
+        }
+    }
+
+    /// 推荐歌单：封面卡片网格，悬停时封面右下角显示红色播放按钮。
     fn playlist_grid(&self, cx: &Context<Self>) -> AnyElement {
         let weak = cx.weak_entity();
         let covers = self.services.covers.clone();
         let mut grid = div().flex().flex_wrap().gap(px(16.0)).w_full();
         for pl in self.playlists.iter() {
             let cover = covers.image(&pl.cover_url, 168.0);
-            let weak = weak.clone();
-            let (id, name) = (pl.id, pl.name.clone());
-            let count = pl.track_count;
+            let weak_click = weak.clone();
+            let weak_hover = weak.clone();
+            let weak_play = weak.clone();
+            let (id, cover_url, count) = (pl.id, pl.cover_url.clone(), pl.track_count);
+            let name_click = pl.name.clone();
+            let name_play = pl.name.clone();
+            let cover_box =
+                div()
+                    .relative()
+                    .w(px(168.0))
+                    .h(px(168.0))
+                    .child(cover)
+                    .when(self.hovered == Some(id), |el| {
+                        el.child(
+                            div()
+                                .id(format!("home-pl-play-{id}"))
+                                .absolute()
+                                .right(px(8.0))
+                                .bottom(px(8.0))
+                                .cursor_pointer()
+                                .on_click(move |_ev, _window, cx| {
+                                    weak_play
+                                        .update(cx, |page, cx| {
+                                            page.playback.update(cx, |pb, cx| {
+                                                pb.play_playlist(id, name_play.clone(), cover_url.clone(), cx)
+                                            })
+                                        })
+                                        .ok();
+                                })
+                                .child(play_fab(40.0)),
+                        )
+                    });
             grid = grid.child(
                 div()
                     .id(format!("home-pl-{id}"))
@@ -293,13 +510,29 @@ impl HomePage {
                     .v_flex()
                     .gap(px(6.0))
                     .cursor_pointer()
-                    .on_click(move |_ev, _window, cx| {
-                        weak.update(cx, |_p, cx| {
-                            cx.emit(PageEvent::OpenPlaylist { id, name: name.clone() });
-                        })
-                        .ok();
+                    .on_hover(move |hovered, _w, cx| {
+                        weak_hover
+                            .update(cx, |page, cx| {
+                                if *hovered {
+                                    page.hovered = Some(id);
+                                } else if page.hovered == Some(id) {
+                                    page.hovered = None;
+                                }
+                                cx.notify();
+                            })
+                            .ok();
                     })
-                    .child(cover)
+                    .on_click(move |_ev, _window, cx| {
+                        weak_click
+                            .update(cx, |_p, cx| {
+                                cx.emit(PageEvent::OpenPlaylist {
+                                    id,
+                                    name: name_click.clone(),
+                                })
+                            })
+                            .ok();
+                    })
+                    .child(cover_box)
                     .child(
                         div()
                             .w_full()
@@ -339,7 +572,11 @@ impl Render for HomePage {
                 if let Some(daily) = self.daily_spotlight(cx) {
                     col = col.child(section_title("今日为你推荐")).child(daily);
                 }
-                if !self.playlists.is_empty() {
+                if !self.shelves.is_empty() {
+                    for shelf in &self.shelves {
+                        col = col.child(self.shelf_section(shelf, cx));
+                    }
+                } else if !self.playlists.is_empty() {
                     col = col.child(section_title("推荐歌单")).child(self.playlist_grid(cx));
                 }
                 col.into_any_element()
@@ -381,6 +618,18 @@ fn play_circle() -> AnyElement {
         .bg(theme::text_primary())
         .child(icon(IconName::Play, 24.0, theme::window_bg()))
         .into_any_element()
+}
+
+/// 红色圆形播放按钮（品牌强调色底 + 播放三角）。
+fn play_fab(size: f32) -> impl IntoElement {
+    div()
+        .size(px(size))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_full()
+        .bg(theme::accent())
+        .child(icon(IconName::Play, size * 0.55, theme::text_primary()))
 }
 
 /// 压暗颜色（`factor` 越大越暗）。
