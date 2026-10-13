@@ -56,6 +56,9 @@ pub fn run() {
         (80.0, 80.0, DEFAULT_W, DEFAULT_H)
     };
 
+    // 最小窗口尺寸：容纳「左栏 + 中间两个卡片 + 右栏」，高度取宽度的 0.618
+    let (min_w, min_h) = ui::min_window_size(siren_core::settings::Settings::load().np_width());
+
     gpui_kit::application()
         .with_assets(gpui_kit::assets::AllAssets)
         .run(move |cx| {
@@ -82,6 +85,7 @@ pub fn run() {
                     // 先隐藏创建，移动到目标位置后再显示，避免可见的跳动
                     show: false,
                     focus: true,
+                    window_min_size: Some(size(px(min_w), px(min_h))),
                     ..Default::default()
                 },
                 cx,

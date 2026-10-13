@@ -220,7 +220,9 @@ impl Root {
             ))
             .child(window_button("win-close", IconName::X, true, WindowControlArea::Close));
 
-        // 仅空白区可拖动（避免命中区盖住按钮）
+        // 仅空白区可拖动（避免命中区盖住按钮）。
+        // 同时吞掉「双击」：Windows 对 HTCAPTION 的双击会默认最大化窗口，
+        // 这里只在双击时 stop_propagation（单击仍落回系统以启动拖动）。
         let fixed = 84.0 + 472.0 + 224.0;
         let sp = ((vw - 24.0 - fixed) / 2.0).max(0.0);
         let drag = |id: &'static str| {
@@ -229,6 +231,11 @@ impl Root {
                 .w(px(sp))
                 .h(px(64.0))
                 .window_control_area(WindowControlArea::Drag)
+                .on_mouse_down(MouseButton::Left, |ev, _window, cx| {
+                    if ev.click_count == 2 {
+                        cx.stop_propagation();
+                    }
+                })
         };
 
         div()

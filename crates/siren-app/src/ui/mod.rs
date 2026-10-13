@@ -45,6 +45,25 @@ pub(crate) struct PageLayout {
 
 impl Global for PageLayout {}
 
+/// 左侧「音乐库」栏宽度。
+pub(crate) const LIBRARY_W: f32 = 300.0;
+/// 主内容行左右内边距（px 8×2）与列间距（gap 8×2）之和。
+pub(crate) const SHELL_CHROME: f32 = 32.0;
+/// 页面列水平内边距（首页列 `p(24)` 的两侧）。
+pub(crate) const PAGE_PAD: f32 = 48.0;
+/// 首页卡片定宽与间距。
+pub(crate) const CARD_W: f32 = 168.0;
+pub(crate) const CARD_GAP: f32 = 16.0;
+
+/// 最小窗口尺寸：宽度需容纳「左栏 + 中间两个卡片 + 右栏」，
+/// 高度取宽度的 0.618（黄金比）。
+pub(crate) fn min_window_size(np_width: f32) -> (f32, f32) {
+    // 额外 8px 余量：DPI 取整后可视宽度会比请求值少不到 1px，否则第二张卡
+    // 会差之毫厘被挤到下一行，导致最小尺寸下只显示一张卡片。
+    let w = LIBRARY_W + SHELL_CHROME + PAGE_PAD + CARD_W * 2.0 + CARD_GAP + np_width + 8.0;
+    (w, w * 0.618)
+}
+
 /// 当前页面（音乐库为常驻侧栏，不在此列）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Route {
@@ -730,7 +749,7 @@ impl Render for Root {
         } else {
             44.0
         };
-        let page_w = (vw - 300.0 - np_w - 32.0).max(0.0);
+        let page_w = (vw - LIBRARY_W - np_w - SHELL_CHROME).max(0.0);
         cx.global_mut::<PageLayout>().page_w = page_w;
         div()
             .v_flex()
@@ -749,8 +768,8 @@ impl Render for Root {
                     .overflow_hidden()
                     .child(
                         div()
-                            .w(px(300.0))
-                            .min_w(px(300.0))
+                            .w(px(LIBRARY_W))
+                            .min_w(px(LIBRARY_W))
                             .h_full()
                             .flex_none()
                             .flex_shrink_0()
