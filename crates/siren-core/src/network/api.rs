@@ -469,6 +469,28 @@ pub async fn comment_floor(
     Ok(crate::model::parse_comments_v2(&json!({ "data": data })))
 }
 
+/// 更新用户歌单排序（`ids` 为完整顺序，逗号分隔）。
+pub async fn playlist_order_update(client: &NeteaseClient, ids: &[i64]) -> Result<()> {
+    let joined = ids.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(",");
+    let value = client
+        .weapi_post(path::PLAYLIST_ORDER, &json!({ "ids": joined }))
+        .await?;
+    validate(&value)?;
+    Ok(())
+}
+
+/// 置顶 / 取消置顶自建歌单。
+pub async fn playlist_top(client: &NeteaseClient, id: i64, top: bool) -> Result<()> {
+    let url = if top {
+        path::PLAYLIST_TOP.to_string()
+    } else {
+        format!("{}/cancel", path::PLAYLIST_TOP)
+    };
+    let value = client.weapi_post(&url, &json!({ "id": id })).await?;
+    validate(&value)?;
+    Ok(())
+}
+
 /// 收藏专辑列表（EAPI）。
 pub async fn album_sublist(client: &NeteaseClient) -> Result<Vec<Album>> {
     let value = client

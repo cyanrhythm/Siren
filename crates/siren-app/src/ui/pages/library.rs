@@ -7,6 +7,7 @@ use std::sync::Arc;
 use gpui_kit::assets::IconName;
 use gpui_kit::base::StyledExt;
 use gpui_kit::component::input::{InputEvent, InputState};
+use gpui_kit::component::menu::{ContextMenuExt, PopupMenuItem};
 use gpui_kit::*;
 
 use siren_core::model::{Album, Artist, Playlist};
@@ -487,6 +488,52 @@ impl LibraryPage {
         .into_any_element()
     }
 
+    /// 置顶 / 取消置顶自建歌单。
+    fn pin_playlist(&mut self, id: i64, top: bool, cx: &mut Context<Self>) {
+        let client = self.services.client.clone();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.services.handle.spawn(async move {
+            let _ = tx.send(siren_core::network::api::playlist_top(&client, id, top).await);
+        });
+        cx.spawn(async move |this, cx| {
+            let result = rx.await.ok();
+            this.update(cx, |this, cx| {
+                match result {
+                    Some(Ok(())) => {
+                        this.services
+                            .toast_success(if top { "已置顶歌单" } else { "已取消置顶" }, cx);
+                        this.load_my_playlists(cx);
+                    }
+                    Some(Err(err)) => this.services.toast_error(err.user_message(), cx),
+                    None => {}
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// 上/下移歌单并同步云端顺序。
+    fn move_playlist(&mut self, id: i64, dir: i32, cx: &mut Context<Self>) {
+        let Some(i) = self.my_playlists.iter().position(|p| p.id == id) else {
+            return;
+        };
+        let j = i as i32 + dir;
+        if j < 0 || j as usize >= self.my_playlists.len() {
+            return;
+        }
+        let mut items: Vec<Playlist> = self.my_playlists.as_ref().clone();
+        items.swap(i, j as usize);
+        let ids: Vec<i64> = items.iter().map(|p| p.id).collect();
+        self.my_playlists = Arc::new(items);
+        cx.notify();
+        let client = self.services.client.clone();
+        self.services.handle.spawn(async move {
+            let _ = siren_core::network::api::playlist_order_update(&client, &ids).await;
+        });
+    }
+
     /// 我的歌单列表。
     fn playlist_list(&self, cx: &Context<Self>) -> AnyElement {
         let playlists = self.my_playlists.clone();
@@ -499,6 +546,7 @@ impl LibraryPage {
                     let pl = &playlists[i];
                     let cover = covers.image(&pl.cover_url, 48.0);
                     let weak = weak.clone();
+                    let weak_ctx = weak.clone();
                     let (id, name) = (pl.id, pl.name.clone());
                     div()
                         .id(format!("lib-playlist-{id}"))
@@ -516,6 +564,24 @@ impl LibraryPage {
                                 cx.emit(PageEvent::OpenPlaylist { id, name: name.clone() });
                             })
                             .ok();
+                        })
+                        .context_menu(move |menu, _w, _cx| {
+                            let w_pin = weak_ctx.clone();
+                            let w_unpin = weak_ctx.clone();
+                            let w_up = weak_ctx.clone();
+                            let w_down = weak_ctx.clone();
+                            menu.item(PopupMenuItem::new("置顶").on_click(move |_e, _w, cx| {
+                                w_pin.update(cx, |page, cx| page.pin_playlist(id, true, cx)).ok();
+                            }))
+                            .item(PopupMenuItem::new("取消置顶").on_click(move |_e, _w, cx| {
+                                w_unpin.update(cx, |page, cx| page.pin_playlist(id, false, cx)).ok();
+                            }))
+                            .item(PopupMenuItem::new("上移").on_click(move |_e, _w, cx| {
+                                w_up.update(cx, |page, cx| page.move_playlist(id, -1, cx)).ok();
+                            }))
+                            .item(PopupMenuItem::new("下移").on_click(move |_e, _w, cx| {
+                                w_down.update(cx, |page, cx| page.move_playlist(id, 1, cx)).ok();
+                            }))
                         })
                         .child(cover)
                         .child(

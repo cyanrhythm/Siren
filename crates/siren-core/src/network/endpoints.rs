@@ -81,6 +81,10 @@ pub mod path {
     pub const ALBUM_DETAIL: &str = "/weapi/v1/album/";
     /// 收藏专辑列表（EAPI）。
     pub const ALBUM_SUBLIST: &str = "/eapi/album/sublist";
+    /// 更新用户歌单排序（WEAPI）。
+    pub const PLAYLIST_ORDER: &str = "/weapi/playlist/order/update";
+    /// 置顶/取消置顶自建歌单（WEAPI，后接 `top` / `top/cancel`）。
+    pub const PLAYLIST_TOP: &str = "/weapi/user/playlist/top";
     /// 收藏歌手列表（EAPI）。
     pub const ARTIST_SUBLIST: &str = "/eapi/artist/sublist";
     /// 歌手热门歌曲（WEAPI）。
