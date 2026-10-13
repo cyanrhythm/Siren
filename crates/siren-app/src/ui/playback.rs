@@ -241,6 +241,61 @@ impl Playback {
         self.player.source()
     }
 
+    /// 指定歌曲是否已喜欢。
+    pub(crate) fn is_liked(&self, song_id: i64) -> bool {
+        self.liked.contains(&song_id)
+    }
+
+    /// 把歌曲插到当前曲之后（「下一首播放」）；无当前曲则直接播放。
+    pub(crate) fn play_next(&mut self, song: Song, cx: &mut Context<Self>) {
+        if self.player.state().song.is_none() {
+            self.play_from(vec![song], 0, cx);
+            return;
+        }
+        self.player.insert_next(song.clone());
+        self.save_queue_session();
+        self.notifications
+            .update(cx, |n, cx| n.success(format!("已加入下一首播放：{}", song.name), cx));
+        cx.notify();
+    }
+
+    /// 喜欢 / 取消喜欢任意歌曲（乐观更新 + 回滚）。
+    pub(crate) fn toggle_like_song(&mut self, song: Song, cx: &mut Context<Self>) {
+        let id = song.id;
+        let like = !self.liked.contains(&id);
+        if like {
+            self.liked.insert(id);
+        } else {
+            self.liked.remove(&id);
+        }
+        cx.notify();
+        let client = self.client.clone();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.handle.spawn(async move {
+            let _ = tx.send(siren_core::network::api::like_song(&client, id, like).await);
+        });
+        cx.spawn(async move |this, cx| {
+            let result = rx.await.ok();
+            this.update(cx, |this, cx| {
+                match result {
+                    Some(Ok(())) => {}
+                    Some(Err(err)) => {
+                        if like {
+                            this.liked.remove(&id);
+                        } else {
+                            this.liked.insert(id);
+                        }
+                        this.notifications.update(cx, |n, cx| n.error(err.user_message(), cx));
+                    }
+                    None => {}
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     /// 当前播放上下文标签（心动/漫游等）。
     pub(crate) fn context(&self) -> Option<&str> {
         self.player.context()

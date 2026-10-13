@@ -197,6 +197,12 @@ impl PlayerQueue {
         }
     }
 
+    /// 把 `song` 插到当前曲之后（无当前曲则插到队首）。
+    pub fn insert_next(&mut self, song: Song) {
+        let at = self.current.map(|i| i + 1).unwrap_or(0).min(self.items.len());
+        self.items.insert(at, song);
+    }
+
     /// 用 `items` 替换 `index` 之后（含后续）的曲目（漫游续接：保留到当前，尾部续接相似歌曲）。
     pub fn append_after(&mut self, index: usize, items: Vec<Song>) {
         if self.items.is_empty() {

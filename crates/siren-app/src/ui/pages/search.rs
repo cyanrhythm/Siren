@@ -218,8 +218,9 @@ impl SearchPage {
         let count = songs.len();
         let selected = self.selected;
         let covers = self.services.covers.clone();
+        let playback = self.playback.clone();
         let weak = cx.weak_entity();
-        uniform_list("search-songs", count, move |range, _window, _cx| {
+        uniform_list("search-songs", count, move |range, _window, cx| {
             range
                 .map(|i| {
                     let song = &songs[i];
@@ -228,6 +229,8 @@ impl SearchPage {
                     let weak = weak.clone();
                     let weak_ctx = weak.clone();
                     let sid = song.id;
+                    let song_owned = song.clone();
+                    let liked = playback.read(cx).is_liked(sid);
                     div()
                         .id(format!("search-song-{}", song.id))
                         .w_full()
@@ -270,9 +273,30 @@ impl SearchPage {
                                 ),
                         )
                         .context_menu(move |menu, _w, _cx| {
-                            let weak_ctx = weak_ctx.clone();
-                            menu.item(PopupMenuItem::new("添加到歌单").on_click(move |_ev, _w, cx| {
-                                weak_ctx
+                            let weak_next = weak_ctx.clone();
+                            let weak_like = weak_ctx.clone();
+                            let weak_add = weak_ctx.clone();
+                            let song_next = song_owned.clone();
+                            let song_like = song_owned.clone();
+                            menu.item(PopupMenuItem::new("下一首播放").on_click(move |_ev, _w, cx| {
+                                weak_next
+                                    .update(cx, |page, cx| {
+                                        page.playback.update(cx, |pb, cx| pb.play_next(song_next.clone(), cx))
+                                    })
+                                    .ok();
+                            }))
+                            .item(PopupMenuItem::new(if liked { "取消喜欢" } else { "喜欢" }).on_click(
+                                move |_ev, _w, cx| {
+                                    weak_like
+                                        .update(cx, |page, cx| {
+                                            page.playback
+                                                .update(cx, |pb, cx| pb.toggle_like_song(song_like.clone(), cx))
+                                        })
+                                        .ok();
+                                },
+                            ))
+                            .item(PopupMenuItem::new("添加到歌单").on_click(move |_ev, _w, cx| {
+                                weak_add
                                     .update(cx, |_page, cx| cx.emit(PageEvent::AddToPlaylist { song_id: sid }))
                                     .ok();
                             }))

@@ -172,6 +172,8 @@ impl RecentPage {
             let weak_ctx = weak.clone();
             let idx = i;
             let sid = item.song.id;
+            let song_owned = item.song.clone();
+            let liked = self.playback.read(cx).is_liked(sid);
             col = col.child(
                 div()
                     .id(format!("recent-song-{sid}"))
@@ -222,9 +224,30 @@ impl RecentPage {
                             .child(siren_core::recent_playlists::fmt_clock_time(item.play_time)),
                     )
                     .context_menu(move |menu, _w, _cx| {
-                        let weak_ctx = weak_ctx.clone();
-                        menu.item(PopupMenuItem::new("添加到歌单").on_click(move |_ev, _w, cx| {
-                            weak_ctx
+                        let weak_next = weak_ctx.clone();
+                        let weak_like = weak_ctx.clone();
+                        let weak_add = weak_ctx.clone();
+                        let song_next = song_owned.clone();
+                        let song_like = song_owned.clone();
+                        menu.item(PopupMenuItem::new("下一首播放").on_click(move |_ev, _w, cx| {
+                            weak_next
+                                .update(cx, |page, cx| {
+                                    page.playback.update(cx, |pb, cx| pb.play_next(song_next.clone(), cx))
+                                })
+                                .ok();
+                        }))
+                        .item(PopupMenuItem::new(if liked { "取消喜欢" } else { "喜欢" }).on_click(
+                            move |_ev, _w, cx| {
+                                weak_like
+                                    .update(cx, |page, cx| {
+                                        page.playback
+                                            .update(cx, |pb, cx| pb.toggle_like_song(song_like.clone(), cx))
+                                    })
+                                    .ok();
+                            },
+                        ))
+                        .item(PopupMenuItem::new("添加到歌单").on_click(move |_ev, _w, cx| {
+                            weak_add
                                 .update(cx, |_page, cx| cx.emit(PageEvent::AddToPlaylist { song_id: sid }))
                                 .ok();
                         }))

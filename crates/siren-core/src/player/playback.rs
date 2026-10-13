@@ -122,6 +122,13 @@ impl Player {
         self.queue.context()
     }
 
+    /// 把 `song` 插到当前曲之后（「下一首播放」）。
+    pub fn insert_next(&mut self, song: Song) {
+        self.queue.insert_next(song);
+        self.sync_queue();
+        self.publish();
+    }
+
     /// 用 `items` 替换 `index` 之后的曲目（漫游续接）。
     pub fn append_after(&mut self, index: usize, items: Vec<Song>) {
         self.queue.append_after(index, items);

@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::base::StyledExt;
+use gpui_kit::component::menu::{ContextMenuExt, PopupMenuItem};
 use gpui_kit::*;
 
 use siren_core::model::AlbumDetail;
@@ -186,12 +187,16 @@ impl Render for AlbumPage {
                 let count = songs.len();
                 let covers = self.services.covers.clone();
                 let weak = cx.weak_entity();
-                let rows = uniform_list("album-tracks", count, move |range, _window, _cx| {
+                let playback = self.playback.clone();
+                let rows = uniform_list("album-tracks", count, move |range, _window, cx| {
                     range
                         .map(|i| {
                             let song = &songs[i];
                             let cover = covers.image(&song.cover_url, 40.0);
                             let weak = weak.clone();
+                            let weak_ctx = weak.clone();
+                            let song_owned = song.clone();
+                            let liked = playback.read(cx).is_liked(song.id);
                             div()
                                 .id(format!("album-track-{}", song.id))
                                 .w_full()
@@ -211,6 +216,32 @@ impl Render for AlbumPage {
                                             .update(cx, |pb, cx| pb.play_from_source(items, i, Some(source), cx));
                                     })
                                     .ok();
+                                })
+                                .context_menu(move |menu, _w, _cx| {
+                                    let w_next = weak_ctx.clone();
+                                    let w_like = weak_ctx.clone();
+                                    let s_next = song_owned.clone();
+                                    let s_like = song_owned.clone();
+                                    menu.item(PopupMenuItem::new("下一首播放").on_click(move |_e, _w, cx| {
+                                        w_next
+                                            .update(cx, |page, cx| {
+                                                page.playback.update(cx, |pb, cx| pb.play_next(s_next.clone(), cx))
+                                            })
+                                            .ok();
+                                    }))
+                                    .item(
+                                        PopupMenuItem::new(if liked { "取消喜欢" } else { "喜欢" }).on_click(
+                                            move |_e, _w, cx| {
+                                                w_like
+                                                    .update(cx, |page, cx| {
+                                                        page.playback.update(cx, |pb, cx| {
+                                                            pb.toggle_like_song(s_like.clone(), cx)
+                                                        })
+                                                    })
+                                                    .ok();
+                                            },
+                                        ),
+                                    )
                                 })
                                 .child(
                                     div()
