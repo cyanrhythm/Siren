@@ -77,7 +77,9 @@ pub fn run() {
                 cx,
                 move |window, cx| {
                     // 关闭时保存窗口的物理矩形，供下次启动跨屏恢复
-                    window.on_window_should_close(cx, |window, _cx| {
+                    window.on_window_should_close(cx, |window, cx| {
+                        // 退出时同步落盘播放会话（队列/当前曲/进度）
+                        ui::flush_playback_session(cx);
                         if let Some(hwnd) = siren_platform::window_hwnd(window) {
                             if let Some((x, y, w, h)) = siren_platform::window_physical_rect(hwnd) {
                                 siren_core::settings::save_window_bounds(x as f32, y as f32, w as f32, h as f32);

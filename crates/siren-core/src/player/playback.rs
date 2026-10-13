@@ -102,6 +102,39 @@ impl Player {
     }
 
     /// 下一首（手动，顺序回绕）；返回需要加载的歌曲。
+    /// 当前队列快照（用于持久化）。
+    pub fn queue_items(&self) -> Vec<Song> {
+        self.queue.items().to_vec()
+    }
+
+    /// 恢复队列/当前曲/进度（不加载音频；等待调用方解析 URL 后 [`Player::play_url`]）。
+    ///
+    /// 恢复后进入「等待加载」窗口：引擎尚未加载新文件，期间跳过进度同步。
+    pub fn restore(
+        &mut self,
+        queue: Vec<Song>,
+        index: usize,
+        mode: PlayMode,
+        position_ms: i64,
+        duration_ms: i64,
+    ) -> Option<Song> {
+        if queue.is_empty() {
+            return None;
+        }
+        self.queue.set_items(queue);
+        self.queue.set_mode(mode);
+        let idx = index.min(self.queue.len().saturating_sub(1));
+        self.queue.select(idx);
+        self.sync_queue();
+        self.state.position_ms = position_ms.max(0);
+        self.state.duration_ms = duration_ms.max(0);
+        self.state.playing = false;
+        self.awaiting_load = true;
+        self.eof_latched = false;
+        self.publish();
+        self.state.song.clone()
+    }
+
     pub fn next_track(&mut self) -> Option<Song> {
         let index = self.queue.next_index()?;
         self.queue.select(index);

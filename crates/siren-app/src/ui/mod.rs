@@ -32,6 +32,7 @@ use crate::theme;
 use covers::CoverLoader;
 use notifications::Notifications;
 use pages::{AlbumPage, ArtistPage, HomePage, LibraryPage, PlaylistPage, RecentPage, SearchPage};
+pub(crate) use playback::flush_playback_session;
 use playback::Playback;
 use services::Services;
 use session::Session;

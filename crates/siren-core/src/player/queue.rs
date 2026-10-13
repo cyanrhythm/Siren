@@ -3,11 +3,12 @@
 //! 队列只管理「顺序、当前索引、模式」；实际解码由音频引擎负责。
 
 use rand::Rng;
+use serde::{Deserialize, Serialize};
 
 use crate::model::Song;
 
 /// 播放模式。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum PlayMode {
     /// 列表循环。
     #[default]

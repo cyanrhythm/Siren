@@ -20,6 +20,21 @@ use siren_platform::{
     MediaCommand, MediaMetadata, MediaSession, MediaSessionConfig, PlatformMediaSession, PlaybackStatus,
 };
 
+/// 退出时同步落盘用的全局句柄（弱引用）。
+pub(crate) struct PlaybackHandle(std::sync::Mutex<Option<WeakEntity<Playback>>>);
+
+impl Global for PlaybackHandle {}
+
+/// 退出时同步落盘播放会话（供 `lib.rs` 的关闭回调调用）。
+pub(crate) fn flush_playback_session(cx: &mut App) {
+    let weak = cx
+        .try_global::<PlaybackHandle>()
+        .and_then(|h| h.0.lock().ok().and_then(|g| g.clone()));
+    if let Some(weak) = weak {
+        let _ = weak.update(cx, |playback, _cx| playback.save_session_now());
+    }
+}
+
 /// 播放服务。
 pub(crate) struct Playback {
     client: Arc<NeteaseClient>,
@@ -48,6 +63,12 @@ pub(crate) struct Playback {
     artist_fans: i64,
     /// 上次已重绘的整数秒（用于外壳节流重绘）。
     last_sec: i64,
+    /// 冷启动恢复的待播放进度（URL 加载后 seek 到此处后清除）。
+    resume_ms: Option<i64>,
+    /// 已恢复但尚未解析 URL（首次播放需先解析）。
+    needs_resolve: bool,
+    /// 上次进度落盘时刻（节流，5s）。
+    last_progress_save: Instant,
     // 进度插值锚点（弥补 mpv time-pos 更新粒度）
     anchor_pos: i64,
     anchor_at: Instant,
@@ -76,7 +97,26 @@ impl Playback {
             Ok(mpv) => Arc::new(mpv),
             Err(_) => Arc::new(SilentEngine),
         };
-        let player = Player::new(engine);
+        let mut player = Player::new(engine);
+        // 冷启动恢复上次队列/当前曲/进度（不自动播放；首次播放时解析 URL 并 seek 回进度）
+        let mut resume_ms: Option<i64> = None;
+        let mut needs_resolve = false;
+        if let Some(queue_session) = siren_core::playback_session::QueueSession::load() {
+            let index = queue_session.index;
+            let current_id = queue_session.queue.get(index).map(|s| s.id);
+            // 进度仅当与恢复出的当前曲一致时才采用
+            let (position_ms, duration_ms) = match siren_core::playback_session::ProgressSession::load() {
+                Some(p) if Some(p.song_id) == current_id => (p.position_ms, p.duration_ms),
+                _ => (0, 0),
+            };
+            if player
+                .restore(queue_session.queue, index, queue_session.mode, position_ms, duration_ms)
+                .is_some()
+            {
+                resume_ms = (position_ms > 0).then_some(position_ms);
+                needs_resolve = true;
+            }
+        }
 
         // 系统媒体控制：从 GPUI 窗口取原生句柄（Windows SMTC 需要）。
         let hwnd = siren_platform::window_hwnd(window);
@@ -147,6 +187,9 @@ impl Playback {
                 artist_followed: false,
                 artist_fans: 0,
                 last_sec: 0,
+                resume_ms,
+                needs_resolve,
+                last_progress_save: Instant::now(),
                 anchor_pos: 0,
                 anchor_at: Instant::now(),
                 was_playing: false,
@@ -161,6 +204,8 @@ impl Playback {
             }
         });
         entity.update(cx, |this, cx| this.start_tick_timer(window, cx));
+        // 供退出时同步落盘（弱引用，不延长生命周期）
+        cx.set_global(PlaybackHandle(std::sync::Mutex::new(Some(entity.downgrade()))));
         entity
     }
 
@@ -454,10 +499,59 @@ impl Playback {
         while let Ok(command) = self.media_cmds.try_recv() {
             self.apply_media_command(command, cx);
         }
+        // 每 5s 落盘一次进度（小文件；队列仅在结构变化时写）
+        if self.last_progress_save.elapsed() >= Duration::from_secs(5) {
+            self.last_progress_save = Instant::now();
+            self.save_progress();
+        }
+    }
+
+    /// 落盘队列会话（队列/下标/模式）；仅在结构变化时调用。
+    fn save_queue_session(&self) {
+        let state = self.player.state();
+        let queue = self.player.queue_items();
+        if queue.is_empty() {
+            return;
+        }
+        siren_core::playback_session::QueueSession {
+            queue,
+            index: state.current_index.unwrap_or(0),
+            mode: state.mode,
+        }
+        .save();
+    }
+
+    /// 落盘进度会话（当前曲 id/进度/时长）；高频、文件很小。
+    fn save_progress(&self) {
+        let state = self.player.state();
+        let Some(song) = state.song else {
+            return;
+        };
+        let position_ms = self.resume_ms.unwrap_or(state.position_ms).max(0);
+        siren_core::playback_session::ProgressSession {
+            song_id: song.id,
+            position_ms,
+            duration_ms: state.duration_ms.max(0),
+        }
+        .save();
+    }
+
+    /// 同步落盘（退出时调用）：队列 + 进度各写一次。
+    pub(crate) fn save_session_now(&self) {
+        self.save_queue_session();
+        self.save_progress();
     }
 
     pub(crate) fn toggle(&mut self, cx: &mut Context<Self>) {
+        // 冷启动恢复后首次播放：先解析 URL 再播（并 seek 回上次进度）
+        if self.needs_resolve {
+            if let Some(song) = self.player.state().song {
+                self.resolve_and_play(song, cx);
+                return;
+            }
+        }
         self.player.toggle();
+        self.save_progress();
         cx.notify();
     }
 
@@ -501,6 +595,7 @@ impl Playback {
             PlayMode::Shuffle
         };
         self.player.set_mode(mode);
+        self.save_queue_session();
         cx.notify();
     }
 
@@ -512,6 +607,7 @@ impl Playback {
             PlayMode::SingleLoop
         };
         self.player.set_mode(mode);
+        self.save_queue_session();
         cx.notify();
     }
 
@@ -528,6 +624,8 @@ impl Playback {
 
     fn resolve_and_play(&mut self, song: Song, cx: &mut Context<Self>) {
         log::info!("解析并播放 id={} name={}", song.id, song.name);
+        // 队列/下标已变化：落盘队列会话
+        self.save_queue_session();
         // 打卡上报：结束上一首（按实际播放时长），并开始新一首。
         self.finish_previous();
         let client_report = self.client.clone();
@@ -683,7 +781,12 @@ impl Playback {
                     Some(url) => {
                         log::info!("播放地址解析成功 id={}", song.id);
                         this.player.play_url(&url);
+                        this.needs_resolve = false;
+                        if let Some(pos) = this.resume_ms.take() {
+                            this.player.seek_ms(pos);
+                        }
                         this.status = format!("播放中：{}", song.name).into();
+                        this.save_progress();
                     }
                     None => {
                         log::warn!("无可用播放地址 id={}", song.id);
@@ -706,6 +809,7 @@ impl Playback {
         }
         let ms = (fraction.clamp(0.0, 1.0) as f64 * state.duration_ms as f64) as i64;
         self.player.seek_ms(ms);
+        self.save_progress();
         cx.notify();
     }
 
