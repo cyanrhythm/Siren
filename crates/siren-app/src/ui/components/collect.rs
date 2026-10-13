@@ -5,6 +5,7 @@ use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::Input;
 use gpui_kit::*;
 
+use super::super::session::Session;
 use super::super::{Root, Route};
 use crate::theme;
 
@@ -52,7 +53,7 @@ impl Root {
         self.picker_song = Some(song_id);
         self.picker_playlists.clear();
         cx.notify();
-        let Some(uid) = self.account.as_ref().map(|(_, _, uid)| *uid) else {
+        let Some(uid) = Session::uid(cx) else {
             return;
         };
         let client = self.services.client.clone();

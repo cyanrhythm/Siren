@@ -13,6 +13,7 @@ use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_kit::component::Icon;
 use gpui_kit::*;
 
+use super::super::session::Session;
 use super::super::{icon, PageEvent, Root, Route};
 use crate::theme;
 
@@ -27,15 +28,15 @@ impl Root {
 
         // 账号按钮：已登录显示圆形头像，未登录显示人形占位（对齐 Melodia）。
         // 用 Custom 变体避免 ghost 的 accent(红) hover/active 底，按钮与头像同尺寸的圆形。
-        let account = self.account.clone();
+        let account = Session::account(cx).cloned();
         let trigger = match &account {
-            Some((_, url, _)) => Button::new("account")
+            Some(acc) => Button::new("account")
                 .custom(ButtonCustomVariant::new(cx))
                 .w(px(32.0))
                 .h(px(32.0))
                 .p(px(0.0))
                 .rounded_full()
-                .child(self.services.covers.image_round(url, 32.0)),
+                .child(self.services.covers.image_round(&acc.avatar_url, 32.0)),
             None => Button::new("account")
                 .custom(
                     ButtonCustomVariant::new(cx)
@@ -53,10 +54,10 @@ impl Root {
         let account_button = trigger.dropdown_menu(move |menu, _window, _cx| {
             let mut menu = menu;
             match &account {
-                Some((nick, _url, uid)) => {
-                    let uid = *uid;
+                Some(acc) => {
+                    let uid = acc.uid;
                     // 头部：仅昵称文本，不可点击
-                    menu = menu.label(nick.clone());
+                    menu = menu.label(acc.nickname.clone());
                     menu = menu.separator();
                     let weak = weak_account.clone();
                     menu = menu.item(PopupMenuItem::new("个人主页").icon(Icon::new(IconName::User)).on_click(

@@ -11,6 +11,7 @@ pub mod login_dialog;
 pub mod pages;
 mod playback;
 mod services;
+mod session;
 mod settings_store;
 
 use std::sync::Arc;
@@ -31,6 +32,7 @@ use covers::CoverLoader;
 use pages::{AlbumPage, HomePage, LibraryPage, PlaylistPage, RecentPage, SearchPage};
 use playback::Playback;
 use services::Services;
+use session::Session;
 use settings_store::SettingsStore;
 
 /// 当前页面（音乐库为常驻侧栏，不在此列）。
@@ -69,12 +71,8 @@ pub(crate) enum PageEvent {
         name: String,
     },
     Back,
-    /// 登录成功：上报 uid、昵称与头像，供标题栏账号区展示。
-    Account {
-        uid: i64,
-        nickname: String,
-        avatar_url: String,
-    },
+    /// 登录成功（账号信息经 [`Session`] 全局读取）。
+    SignedIn,
     /// 未登录 / 已退出登录。
     LoggedOut,
     /// 请求打开登录弹窗。
@@ -183,8 +181,6 @@ pub struct Root {
     /// 歌手专辑 / 相似歌手卡片的当前页码。
     np_album_page: usize,
     np_simi_page: usize,
-    /// 登录后的账号信息（昵称、头像 URL、uid）；未登录为 None。
-    account: Option<(SharedString, String, i64)>,
     /// 已为哪首歌预取过播放封面（避免重复预取）。
     cover_song: Option<i64>,
     // ── 登录弹窗状态 ───────────────────────────────────────────
@@ -221,8 +217,9 @@ pub struct Root {
 impl Root {
     pub fn new(window: &mut Window, cx: &mut App, runtime: tokio::runtime::Runtime) -> Entity<Self> {
         siren_platform::prepare_native_environment();
-        // 设置唯一真源（全局）
+        // 全局唯一真源：设置 + 会话
         SettingsStore::init(cx);
+        Session::init(cx);
         let cookie = std::env::var("SIREN_COOKIE")
             .ok()
             .filter(|s| !s.trim().is_empty())
@@ -349,7 +346,6 @@ impl Root {
                 np_width_slider,
                 np_album_page: 0,
                 np_simi_page: 0,
-                account: None,
                 cover_song: None,
                 login_open: false,
                 login_tab: login_dialog::LoginTab::Scan,
@@ -397,12 +393,8 @@ impl Root {
             PageEvent::OpenPlaylist { id, name } => self.open_playlist(*id, name.clone(), cx),
             PageEvent::OpenAlbum { id, name } => self.open_album(*id, name.clone(), cx),
             PageEvent::Back => self.back(cx),
-            PageEvent::Account {
-                uid,
-                nickname,
-                avatar_url,
-            } => self.set_account(Some((*uid, nickname.clone(), avatar_url.clone())), cx),
-            PageEvent::LoggedOut => self.set_account(None, cx),
+            PageEvent::SignedIn => self.on_signed_in(cx),
+            PageEvent::LoggedOut => self.on_signed_out(cx),
             PageEvent::OpenLogin => self.open_login(cx),
             PageEvent::OpenProfile { uid } => self.navigate(Route::Profile { uid: *uid }, cx),
             PageEvent::OpenRecentPlay => {
@@ -469,18 +461,20 @@ impl Root {
         cx.notify();
     }
 
-    /// 更新标题栏账号区（登录成功 / 退出登录）。
-    fn set_account(&mut self, account: Option<(i64, String, String)>, cx: &mut Context<Self>) {
-        match &account {
-            Some((uid, _, url)) => {
-                self.services.covers.prefetch([url.clone()], 32.0, cx);
-                let uid = *uid;
-                self.playback.update(cx, |pb, cx| pb.load_likes(uid, cx));
-                self.recent.update(cx, |page, cx| page.load(cx));
-            }
-            None => self.playback.update(cx, |pb, cx| pb.clear_likes(cx)),
+    /// 登录成功：预取头像、加载喜欢列表与最近播放（账号真源是 [`Session`]）。
+    fn on_signed_in(&mut self, cx: &mut Context<Self>) {
+        if let Some(account) = Session::account(cx).cloned() {
+            self.services.covers.prefetch([account.avatar_url.clone()], 32.0, cx);
+            let uid = account.uid;
+            self.playback.update(cx, |pb, cx| pb.load_likes(uid, cx));
+            self.recent.update(cx, |page, cx| page.load(cx));
         }
-        self.account = account.map(|(uid, nick, url)| (nick.into(), url, uid));
+        cx.notify();
+    }
+
+    /// 退出登录：清除喜欢列表。
+    fn on_signed_out(&mut self, cx: &mut Context<Self>) {
+        self.playback.update(cx, |pb, cx| pb.clear_likes(cx));
         cx.notify();
     }
 
@@ -488,7 +482,7 @@ impl Root {
         self.nav.push(Route::Playlist { id, name: name.clone() });
         let filter = self.pl_filter_input.clone();
         let add_input = self.pl_add_input.clone();
-        let my_uid = self.account.as_ref().map(|(_, _, uid)| *uid);
+        let my_uid = Session::uid(cx);
         let page = cx.new(|cx| {
             PlaylistPage::new(
                 cx,

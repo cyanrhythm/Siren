@@ -14,18 +14,16 @@ use gpui_kit::*;
 use siren_core::model::Playlist;
 
 use super::super::services::Services;
+use super::super::session::{Account, Session};
 use super::super::{icon, PageEvent};
 use crate::theme;
 
 pub(crate) struct LibraryPage {
     services: Services,
-    logged_in: bool,
-    nickname: SharedString,
-    avatar_url: String,
+    /// 登录表单输入与状态（视图态；账号身份存于 [`Session`]）。
     login_input: Entity<InputState>,
     login_status: SharedString,
     my_playlists: Arc<Vec<Playlist>>,
-    uid: Option<i64>,
     _login_sub: Subscription,
 }
 
@@ -41,13 +39,9 @@ impl LibraryPage {
         });
         let mut page = Self {
             services,
-            logged_in: false,
-            nickname: "未登录".into(),
-            avatar_url: String::new(),
             login_input,
             login_status: "未登录".into(),
             my_playlists: Arc::new(Vec::new()),
-            uid: None,
             _login_sub,
         };
         page.refresh_account(cx);
@@ -68,14 +62,11 @@ impl LibraryPage {
         self.refresh_account(cx);
     }
 
-    /// 退出登录：清除 Cookie 并回到未登录态。
+    /// 退出登录：清除 Cookie 与会话，回到未登录态。
     pub(crate) fn logout(&mut self, cx: &mut Context<Self>) {
         siren_core::auth::clear_cookie();
         self.services.client.set_cookie(None);
-        self.logged_in = false;
-        self.uid = None;
-        self.nickname = "未登录".into();
-        self.avatar_url.clear();
+        Session::set(cx, None);
         self.login_status = "未登录".into();
         self.my_playlists = Arc::new(Vec::new());
         cx.emit(PageEvent::LoggedOut);
@@ -115,22 +106,22 @@ impl LibraryPage {
                 });
                 match profile {
                     Some((uid, nick)) => {
-                        this.logged_in = true;
-                        this.uid = Some(uid);
-                        this.nickname = nick.unwrap_or_else(|| "已登录".to_string()).into();
-                        this.avatar_url = avatar.clone();
-                        this.login_status = format!("已登录：{}", this.nickname).into();
-                        log::info!("已登录：{} (uid={uid})", this.nickname);
-                        cx.emit(PageEvent::Account {
-                            uid,
-                            nickname: this.nickname.to_string(),
-                            avatar_url: avatar,
-                        });
+                        let nickname: SharedString = nick.unwrap_or_else(|| "已登录".to_string()).into();
+                        Session::set(
+                            cx,
+                            Some(Account {
+                                uid,
+                                nickname: nickname.clone(),
+                                avatar_url: avatar,
+                            }),
+                        );
+                        this.login_status = format!("已登录：{nickname}").into();
+                        log::info!("已登录：{nickname} (uid={uid})");
+                        cx.emit(PageEvent::SignedIn);
                         this.load_my_playlists(cx);
                     }
                     None => {
-                        this.logged_in = false;
-                        this.avatar_url.clear();
+                        Session::set(cx, None);
                         this.login_status = "未登录（Cookie 无效或已过期）".into();
                         cx.emit(PageEvent::LoggedOut);
                     }
@@ -143,7 +134,7 @@ impl LibraryPage {
     }
 
     fn load_my_playlists(&mut self, cx: &mut Context<Self>) {
-        let Some(uid) = self.uid else {
+        let Some(uid) = Session::uid(cx) else {
             return;
         };
         let client = self.services.client.clone();
@@ -250,8 +241,9 @@ impl LibraryPage {
 
 impl Render for LibraryPage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let logged_in = Session::account(cx).is_some();
         let content: AnyElement =
-            if self.logged_in {
+            if logged_in {
                 let playlists = self.my_playlists.clone();
                 let count = playlists.len();
                 let covers = self.services.covers.clone();
