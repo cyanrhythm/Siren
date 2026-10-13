@@ -395,7 +395,7 @@ impl Playback {
 
     fn start_tick_timer(&mut self, window: &Window, cx: &mut Context<Self>) {
         cx.spawn_in(window, async move |this, cx| loop {
-            cx.background_executor().timer(Duration::from_millis(100)).await;
+            cx.background_executor().timer(Duration::from_millis(50)).await;
             if this.update_in(cx, |this, window, cx| this.tick(window, cx)).is_err() {
                 break;
             }
@@ -418,16 +418,13 @@ impl Playback {
             self.progress_slider
                 .update(cx, |s, cx| s.set_value(frac.clamp(0.0, 1.0), window, cx));
         }
-        // 外壳只在关键状态变化或显示秒变化时重绘（避免每 tick 全量重绘导致卡顿）
+        // 进度条 Slider 在 Root render 中创建，只有 Root 重绘才会前进：
+        // 每次 tick 都重绘（100ms）以获得平滑进度；系统媒体推送节流到秒变化。
         let sec = state.position_ms / 1000;
-        let key_changed = state.song != self.mirrored.song
-            || state.playing != self.mirrored.playing
-            || state.mode != self.mirrored.mode
-            || state.duration_ms != self.mirrored.duration_ms;
         self.mirrored = state;
-        if key_changed || sec != self.last_sec {
+        cx.notify();
+        if sec != self.last_sec {
             self.last_sec = sec;
-            cx.notify();
             self.push_media_state();
         }
         while let Ok(command) = self.media_cmds.try_recv() {
