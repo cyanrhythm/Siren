@@ -106,9 +106,9 @@ impl Playback {
             let _progress_sub = cx.subscribe(
                 &progress_slider,
                 |this: &mut Playback, _slider, event: &SliderEvent, cx| match event {
-                    SliderEvent::Change(SliderValue::Single(f)) => {
+                    SliderEvent::Change(SliderValue::Single(_f)) => {
+                        // 拖动中只标记预览（由 Slider 自身显示位置），不发 seek，避免连续 seek 噪音
                         this.seeking = true;
-                        this.seek_fraction(*f, cx);
                     }
                     SliderEvent::Release(SliderValue::Single(f)) => {
                         this.seek_fraction(*f, cx);
