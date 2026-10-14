@@ -194,6 +194,10 @@ fn setup_tray(hwnd: u64, cx: &mut App) {
                 }
                 siren_platform::TrayEvent::Quit => {
                     QUITTING.store(true, Ordering::SeqCst);
+                    // 托盘退出走 PostQuitMessage，不触发 WM_CLOSE，故在此保存窗口矩形。
+                    if let Some((x, y, w, h)) = siren_platform::window_physical_rect(hwnd) {
+                        siren_core::settings::save_window_bounds(x as f32, y as f32, w as f32, h as f32);
+                    }
                     cx.update(|cx| {
                         ui::flush_playback_session(cx);
                     });
