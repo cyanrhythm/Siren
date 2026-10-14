@@ -2,8 +2,10 @@
 //!
 //! 目前落地「音质」档位选择；其余分节按 `docs/08-功能对照与清单.md` 的里程碑补齐。
 
+use std::time::Duration;
+
 use gpui_kit::assets::IconName;
-use gpui_kit::base::StyledExt;
+use gpui_kit::base::{transition, ElementExt, StyledExt, Transition};
 use gpui_kit::component::slider::Slider;
 use gpui_kit::component::switch::Switch;
 use gpui_kit::prelude::FluentBuilder as _;
@@ -58,7 +60,12 @@ fn card_keys(root: &Root, cx: &App) -> Vec<String> {
 }
 
 impl Root {
-    pub(crate) fn settings_page(&self, weak: WeakEntity<Self>, cx: &App) -> AnyElement {
+    pub(crate) fn settings_page(
+        &self,
+        weak: WeakEntity<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let current = self.playback.read(cx).quality(cx);
         let media_on = self.playback.read(cx).media_keys_enabled(cx);
 
@@ -109,17 +116,57 @@ impl Root {
             .child(section(
                 "正在播放卡片",
                 "右侧面板卡片的顺序与显隐",
-                self.cards_control(weak, cx),
+                self.cards_control(weak.clone(), cx),
             ));
 
-        // 设置较多，窗口不够高时需滚动查看。
+        // 自管理平滑滚动：滚轮只更新「目标偏移」，渲染期用 transition 缓动逼近，内容用
+        // `.top(-offset)` 位移。不依赖 gpui 内建滚动，避免与原生滚动相互打架。
+        let offset = transition(
+            ("settings-scroll", "offset"),
+            self.settings_scroll_target,
+            Transition::new(Duration::from_millis(140)).ease(motion::ease_out()),
+            window,
+            cx,
+        );
+
+        let measure = weak.clone();
+        let container_measure = weak.clone();
+        let weak_wheel = weak.clone();
         let scroll = div()
             .id("settings-scroll")
+            .relative()
             .flex_1()
             .min_w(px(0.0))
             .min_h(px(0.0))
-            .overflow_y_scroll()
-            .child(content);
+            .overflow_hidden()
+            .on_prepaint(move |bounds, _window, cx| {
+                let h = f32::from(bounds.size.height);
+                let _ = container_measure.update(cx, |root, _cx| root.settings_scroll_viewport = h);
+            })
+            .on_scroll_wheel(move |event, window, cx| {
+                cx.stop_propagation();
+                let dy = f32::from(event.delta.pixel_delta(window.line_height()).y);
+                let _ = weak_wheel.update(cx, |root, cx| {
+                    let max = (root.settings_scroll_content - root.settings_scroll_viewport).max(0.0);
+                    let next = (root.settings_scroll_target + dy).clamp(0.0, max);
+                    if next != root.settings_scroll_target {
+                        root.settings_scroll_target = next;
+                        cx.notify();
+                    }
+                });
+            })
+            .child(
+                div()
+                    .absolute()
+                    .top(px(-offset))
+                    .left(px(0.0))
+                    .right(px(0.0))
+                    .on_prepaint(move |bounds, _window, cx| {
+                        let h = f32::from(bounds.size.height);
+                        let _ = measure.update(cx, |root, _cx| root.settings_scroll_content = h);
+                    })
+                    .child(content),
+            );
 
         page_shell("设置".to_string(), scroll.into_any_element()).into_any_element()
     }

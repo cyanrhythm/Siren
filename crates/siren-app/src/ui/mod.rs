@@ -331,6 +331,10 @@ pub struct Root {
     drag_flip: std::collections::HashMap<String, (f32, u32)>,
     /// 播放队列滚动句柄（拖动排序换算目标下标时需补偿滚动偏移）。
     queue_scroll: ScrollHandle,
+    /// 设置页自管理平滑滚动：目标偏移 + 内容高/视口高（prepaint 时更新）。
+    settings_scroll_target: f32,
+    settings_scroll_content: f32,
+    settings_scroll_viewport: f32,
     np: NowPlayingUi,
     np_width_slider: Entity<SliderState>,
     login: LoginDialogState,
@@ -487,6 +491,9 @@ impl Root {
                 queue_drag_from: None,
                 drag_flip: std::collections::HashMap::new(),
                 queue_scroll: ScrollHandle::new(),
+                settings_scroll_target: 0.0,
+                settings_scroll_content: 0.0,
+                settings_scroll_viewport: 0.0,
                 np: NowPlayingUi {
                     open: true,
                     album_page: 0,
@@ -843,7 +850,7 @@ impl Root {
         self.search.update(cx, |page, cx| page.search(keyword, cx));
     }
 
-    fn page(&self, weak: WeakEntity<Self>, cx: &App) -> AnyElement {
+    fn page(&self, weak: WeakEntity<Self>, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         match self.route() {
             Route::Home => self.home.clone().into_any_element(),
             Route::Search => self.search.clone().into_any_element(),
@@ -862,7 +869,7 @@ impl Root {
                 .as_ref()
                 .map(|p| p.clone().into_any_element())
                 .unwrap_or_else(|| div().into_any_element()),
-            Route::Settings => self.settings_page(weak, cx),
+            Route::Settings => self.settings_page(weak, window, cx),
             Route::Account => self
                 .account_page
                 .as_ref()
@@ -939,7 +946,7 @@ impl Render for Root {
                             .flex_none()
                             .h_full()
                             .overflow_hidden()
-                            .child(self.page(weak_page, cx)),
+                            .child(self.page(weak_page, window, cx)),
                     )
                     .child(self.now_playing(weak.clone(), cx)),
             )
