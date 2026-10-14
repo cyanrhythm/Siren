@@ -5,9 +5,9 @@ use windows::Win32::UI::HiDpi::{
     GetDpiForSystem, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetWindowRect, IsWindowVisible, SetForegroundWindow, SetWindowPos, ShowWindowAsync, SystemParametersInfoW,
-    SET_WINDOW_POS_FLAGS, SPI_GETWORKAREA, SWP_NOACTIVATE, SWP_NOZORDER, SW_HIDE, SW_RESTORE, SW_SHOW,
-    SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+    GetWindowRect, IsIconic, IsWindowVisible, SetForegroundWindow, SetWindowPos, ShowWindowAsync,
+    SystemParametersInfoW, SET_WINDOW_POS_FLAGS, SPI_GETWORKAREA, SWP_NOACTIVATE, SWP_NOZORDER, SW_HIDE, SW_RESTORE,
+    SW_SHOW, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
 };
 
 fn raw_work_area() -> Option<RECT> {
@@ -83,6 +83,12 @@ pub fn hide_window(hwnd: u64) {
 pub fn is_window_visible(hwnd: u64) -> bool {
     let handle = HWND(hwnd as usize as *mut core::ffi::c_void);
     unsafe { IsWindowVisible(handle).as_bool() }
+}
+
+/// 窗口是否处于最小化（最小化时 `GetWindowRect` 会返回屏幕外坐标，不可用于记忆位置）。
+pub fn is_window_minimized(hwnd: u64) -> bool {
+    let handle = HWND(hwnd as usize as *mut core::ffi::c_void);
+    unsafe { IsIconic(handle).as_bool() }
 }
 
 /// 切换窗口显隐；返回切换后是否可见。

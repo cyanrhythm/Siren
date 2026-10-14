@@ -147,6 +147,14 @@ pub fn is_window_visible(_hwnd: u64) -> bool {
     false
 }
 
+/// 窗口是否最小化（非 Windows 恒 `false`）。
+#[cfg(target_os = "windows")]
+pub use windows::display::is_window_minimized;
+#[cfg(not(target_os = "windows"))]
+pub fn is_window_minimized(_hwnd: u64) -> bool {
+    false
+}
+
 /// 切换窗口显隐，返回切换后是否可见（非 Windows 无操作）。
 #[cfg(target_os = "windows")]
 pub use windows::display::toggle_window;
