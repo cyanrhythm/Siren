@@ -41,3 +41,7 @@ resources/native/**/*.dll
 resources/native/**/*.so
 resources/native/**/*.so.*
 resources/native/**/*.dylib
+assets/native/**/*.dll
+assets/native/**/*.so
+assets/native/**/*.so.*
+assets/native/**/*.dylib

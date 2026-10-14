@@ -34,6 +34,14 @@ category = "Music"
 description = "网易云音乐第三方桌面客户端（Rust + GPUI）"
 authors = ["cyanrhythm"]
 icons = ["../../assets/icons/siren.ico"]
-resources = ["../../resources/native/windows/bin/libmpv-2.dll"]
+resources = ["../../assets/native/windows/bin/libmpv-2.dll"]
 before-packaging-command = "cargo build --release -p siren-app"
 formats = ["nsis"]
+
+[package.metadata.packager.nsis]
+# 安装包图标（由 assets/icons/package.svg 生成的多尺寸 ico）。
+installer-icon = "../../assets/icons/package.ico"
+# 安装界面语言：简体中文优先（可加 "English" 作备选）。
+languages = ["SimpChinese"]
+# 自定义模板：在默认模板基础上开启 ManifestDPIAware，解决高 DPI 下界面发糊。
+template = "packaging/installer.nsi"
