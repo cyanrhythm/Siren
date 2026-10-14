@@ -21,7 +21,11 @@ impl Root {
             .map(|s| s.name.clone())
             .unwrap_or_else(|| "未在播放".to_string());
         let artist = state.song.as_ref().map(|s| s.artists.clone()).unwrap_or_default();
-        let pos_label = fmt_time(state.position_ms);
+        // 拖动进度条时左侧时间跟随预览位置。
+        let pos_label = pb
+            .seek_preview_ms()
+            .map(fmt_time)
+            .unwrap_or_else(|| fmt_time(state.position_ms));
         let dur_label = fmt_time(state.duration_ms);
         let progress_w = (vw - 210.0 - 300.0 - 240.0 - 64.0).max(160.0);
         let cover: AnyElement = match &state.song {

@@ -51,6 +51,8 @@ pub(crate) struct Playback {
     status: SharedString,
     mirrored: PlaybackState,
     seeking: bool,
+    /// 拖动进度条时的预览比例（0..1）；未拖动为 `None`。
+    seek_preview: Option<f32>,
     /// 已喜欢的歌曲 ID 集合。
     liked: HashSet<i64>,
     /// 当前播放歌曲的详情（含发行时间等，来自 `song_detail`）。
@@ -166,13 +168,17 @@ impl Playback {
             let _progress_sub = cx.subscribe(
                 &progress_slider,
                 |this: &mut Playback, _slider, event: &SliderEvent, cx| match event {
-                    SliderEvent::Change(SliderValue::Single(_f)) => {
-                        // 拖动中只标记预览（由 Slider 自身显示位置），不发 seek，避免连续 seek 噪音
+                    SliderEvent::Change(SliderValue::Single(f)) => {
+                        // 拖动中只预览（不 seek，避免连续 seek 噪音）；左侧时间标签同步跟随。
                         this.seeking = true;
+                        this.seek_preview = Some(*f);
+                        cx.notify();
                     }
                     SliderEvent::Release(SliderValue::Single(f)) => {
                         this.seek_fraction(*f, cx);
                         this.seeking = false;
+                        this.seek_preview = None;
+                        cx.notify();
                     }
                     _ => {}
                 },
@@ -196,6 +202,7 @@ impl Playback {
                 status: "就绪".into(),
                 mirrored: PlaybackState::default(),
                 seeking: false,
+                seek_preview: None,
                 liked: HashSet::new(),
                 detail: None,
                 lyrics: Vec::new(),
@@ -568,6 +575,13 @@ impl Playback {
 
     pub(crate) fn progress_slider(&self) -> &Entity<SliderState> {
         &self.progress_slider
+    }
+
+    /// 拖动进度条时的预览位置（毫秒）；未拖动返回 `None`。
+    pub(crate) fn seek_preview_ms(&self) -> Option<i64> {
+        let f = self.seek_preview?;
+        let dur = self.player.state().duration_ms.max(0);
+        Some((f.clamp(0.0, 1.0) as f64 * dur as f64) as i64)
     }
 
     pub(crate) fn volume_slider(&self) -> &Entity<SliderState> {
