@@ -94,6 +94,9 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
 ; installer icon
 !if "${INSTALLERICON}" != ""
   !define MUI_ICON "${INSTALLERICON}"
+  ; 卸载程序图标：取安装图标同目录下的 uninstall.ico（cargo-packager 无该字段，故在此推导）。
+  !searchreplace INSTALLERICONDIR "${INSTALLERICON}" "installer.ico" ""
+  !define MUI_UNICON "${INSTALLERICONDIR}uninstall.ico"
 !endif
 
 ; installer sidebar image

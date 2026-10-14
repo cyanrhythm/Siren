@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 150 57" width="150" height="57">
+  <!-- 满幅纯色背景 -->
+  <rect x="0" y="0" width="150" height="57" fill="#17181C" />
+
+  <!-- 左侧图标，白色填充 -->
+  <g transform="translate(10, 12) scale(0.032)">
+    <path d="M894.72 264.608l-352-192.608a63.52 63.52 0 0 0-61.44 0l-352 192.672A64 64 0 0 0 96 320.672v382.56a64 64 0 0 0 33.28 56l352 192.672a63.52 63.52 0 0 0 61.44 0l352-192.64a64 64 0 0 0 33.28-56V320.704a64 64 0 0 0-33.28-56.128zM512 128l321.376 176-119.104 65.184-321.408-176L512 128z m0 352L190.624 304l135.616-74.24 321.376 176L512 480zM160 360l320 175.136v343.136L160 703.264V360z m704 343.136l-320 175.136V535.264l128-70.016V608a32 32 0 0 0 64 0v-177.792l128-70.208v343.136z" fill="#ffffff"></path>
+  </g>
+
+  <!-- 右侧欢迎文字 -->
+  <text x="55" y="30" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="13" font-weight="600" opacity="0.95">Welcome</text>
+  <text x="55" y="45" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="10" opacity="0.75">Installer</text>
+</svg>

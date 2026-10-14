@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="256" height="256">
   <!-- 纯色圆角矩形背景 -->
-  <rect x="0" y="0" width="1024" height="1024" rx="180" ry="180" fill="#1296db" />
+  <rect x="0" y="0" width="1024" height="1024" rx="180" ry="180" fill="#17181C" />
 
   <!-- 原图标路径，缩放并居中，白色填充，无阴影 -->
   <g transform="translate(112, 112) scale(0.78)">
