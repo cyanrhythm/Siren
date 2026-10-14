@@ -150,22 +150,69 @@ impl PlaylistPage {
         let id = self.id;
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.services.handle.spawn(async move {
+            let t_all = std::time::Instant::now();
+            let t = std::time::Instant::now();
             let mut detail = siren_core::network::api::playlist_detail(&client, id)
                 .await
                 .ok()
                 .flatten();
+            log::info!("[playlist] id={id} playlist/detail 用时 {:?}", t.elapsed());
             // 曲目被截断时，按 trackIds 分批补全（对齐 Melodia PlaylistTrackPaging）
             if let Some(d) = &mut detail {
                 if !d.track_ids.is_empty() && d.track_ids.len() > d.tracks.len() {
-                    let mut all = Vec::new();
-                    for chunk in d.track_ids.chunks(500) {
-                        if let Ok(mut songs) = siren_core::network::api::song_details(&client, chunk).await {
-                            all.append(&mut songs);
+                    // 只补 detail 未包含的曲目，且分批并发拉取（对齐 Melodia PlaylistTrackPaging）。
+                    let have: std::collections::HashSet<i64> = d.tracks.iter().map(|t| t.id).collect();
+                    let missing: Vec<i64> = d.track_ids.iter().copied().filter(|id| !have.contains(id)).collect();
+                    let batches: Vec<Vec<i64>> = missing.chunks(500).map(|c| c.to_vec()).collect();
+                    log::info!(
+                        "[playlist] id={id} track_ids={} tracks={} 待补 {} 首，分 {} 批并发（限并发 4）",
+                        d.track_ids.len(),
+                        d.tracks.len(),
+                        missing.len(),
+                        batches.len()
+                    );
+                    let t_page = std::time::Instant::now();
+                    let mut all: Vec<Song> = Vec::with_capacity(missing.len());
+                    let mut set = tokio::task::JoinSet::new();
+                    let mut iter = batches.into_iter();
+                    const LIMIT: usize = 4;
+                    for _ in 0..LIMIT {
+                        if let Some(chunk) = iter.next() {
+                            spawn_song_batch(&mut set, &client, chunk);
                         }
                     }
-                    let mut map: std::collections::HashMap<i64, Song> = all.into_iter().map(|s| (s.id, s)).collect();
+                    while let Some(joined) = set.join_next().await {
+                        match joined {
+                            Ok((n, elapsed, Ok(mut songs))) => {
+                                log::debug!("[playlist] id={id} 批 n={n} 返回 {} 用时 {:?}", songs.len(), elapsed);
+                                all.append(&mut songs);
+                            }
+                            Ok((n, elapsed, Err(e))) => {
+                                log::warn!("[playlist] id={id} 批 n={n} 失败：{e} 用时 {:?}", elapsed)
+                            }
+                            Err(e) => log::warn!("[playlist] id={id} 批任务失败：{e}"),
+                        }
+                        if let Some(chunk) = iter.next() {
+                            spawn_song_batch(&mut set, &client, chunk);
+                        }
+                    }
+                    log::debug!(
+                        "[playlist] id={id} 分批补全完成：总用时 {:?}，累计 {} 首",
+                        t_page.elapsed(),
+                        all.len()
+                    );
+                    // 合并 detail 已含曲目 + 补拉结果，再按 track_ids 顺序重排。
+                    let mut map: std::collections::HashMap<i64, Song> = d.tracks.drain(..).map(|s| (s.id, s)).collect();
+                    map.extend(all.into_iter().map(|s| (s.id, s)));
                     d.tracks = d.track_ids.iter().filter_map(|id| map.remove(id)).collect();
                 }
+                log::info!(
+                    "[playlist] id={id} 拉取完成：最终 {} 首，总用时 {:?}",
+                    d.tracks.len(),
+                    t_all.elapsed()
+                );
+            } else {
+                log::warn!("[playlist] id={id} 加载失败或为空，用时 {:?}", t_all.elapsed());
             }
             let _ = tx.send(detail);
         });
@@ -182,6 +229,7 @@ impl PlaylistPage {
                 this.detail = detail.map(Arc::new);
                 if let Some(d) = &this.detail {
                     let urls: Vec<String> = d.tracks.iter().map(|t| t.cover_url.clone()).collect();
+                    log::info!("[playlist] id={} 预取封面 {} 张（40px）", this.id, urls.len());
                     this.services.covers.prefetch(urls, 40.0, cx);
                     this.services.covers.prefetch([d.cover_url.clone()], 200.0, cx);
                     if !d.creator_avatar.is_empty() {
@@ -1200,4 +1248,19 @@ fn pill(
                 .child(label.to_string()),
         )
         .on_click(on_click)
+}
+
+/// 并发分批拉取：向 `JoinSet` 投递一首歌详情任务，返回 `(本批数量, 用时, 结果)`。
+fn spawn_song_batch(
+    set: &mut tokio::task::JoinSet<(usize, std::time::Duration, siren_core::error::Result<Vec<Song>>)>,
+    client: &siren_core::network::client::NeteaseClient,
+    chunk: Vec<i64>,
+) {
+    let client = client.clone();
+    let n = chunk.len();
+    set.spawn(async move {
+        let started = std::time::Instant::now();
+        let result = siren_core::network::api::song_details(&client, &chunk).await;
+        (n, started.elapsed(), result)
+    });
 }
