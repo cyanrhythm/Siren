@@ -12,6 +12,7 @@ use siren_core::model::{RecentAlbum, RecentPlaylist, RecentSong};
 use super::super::components::like_button;
 use super::super::playback::Playback;
 use super::super::services::Services;
+use super::super::smooth_scroll::smooth_scroll;
 use super::super::{fmt_day_label, page_shell_with_header, PageEvent};
 use crate::theme;
 
@@ -267,7 +268,7 @@ impl RecentPage {
 }
 
 impl Render for RecentPage {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let now_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_millis() as i64)
@@ -278,14 +279,7 @@ impl Render for RecentPage {
             .child(self.status.to_string())
             .into_any_element();
 
-        let mut body = div()
-            .id("recent-scroll")
-            .v_flex()
-            .flex_1()
-            .min_w(px(0.0))
-            .p(px(16.0))
-            .gap(px(12.0))
-            .overflow_y_scroll();
+        let mut body = div().v_flex().w_full().p(px(16.0)).gap(px(12.0));
 
         let playlist_items: Vec<(i64, String, String)> = self
             .playlists
@@ -323,7 +317,10 @@ impl Render for RecentPage {
 
         body = body.child(section("最近播放歌曲", self.songs_grouped(now_ms, cx)));
 
-        page_shell_with_header(header, body.into_any_element())
+        page_shell_with_header(
+            header,
+            smooth_scroll("recent-scroll", body, window, cx).into_any_element(),
+        )
     }
 }
 

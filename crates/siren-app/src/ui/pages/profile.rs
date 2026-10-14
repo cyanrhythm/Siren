@@ -11,6 +11,7 @@ use gpui_kit::*;
 use siren_core::model::{Playlist, UserBrief, UserProfile};
 
 use super::super::services::Services;
+use super::super::smooth_scroll::smooth_scroll;
 use super::super::{icon, page_shell_with_header, PageEvent};
 use crate::theme;
 
@@ -315,16 +316,9 @@ impl ProfilePage {
 }
 
 impl Render for ProfilePage {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let header = self.header(cx);
-        let mut body = div()
-            .id("profile-scroll")
-            .v_flex()
-            .flex_1()
-            .min_w(px(0.0))
-            .p(px(16.0))
-            .gap(px(18.0))
-            .overflow_y_scroll();
+        let mut body = div().v_flex().w_full().p(px(16.0)).gap(px(18.0));
 
         body = body.child(section(
             "歌单",
@@ -351,7 +345,10 @@ impl Render for ProfilePage {
             },
         ));
 
-        page_shell_with_header(header, body.into_any_element())
+        page_shell_with_header(
+            header,
+            smooth_scroll("profile-scroll", body, window, cx).into_any_element(),
+        )
     }
 }
 

@@ -17,6 +17,7 @@ use siren_core::model::{HomeCard, HomeShelf, Playlist, RecentPlaylist, Song};
 
 use super::super::playback::Playback;
 use super::super::services::Services;
+use super::super::smooth_scroll::smooth_scroll;
 use super::super::{fmt_month_day, icon, PageEvent, PageLayout};
 use crate::theme;
 
@@ -520,17 +521,10 @@ impl HomePage {
 }
 
 impl Render for HomePage {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let body: AnyElement = match self.tab {
             HomeTab::All => {
-                let mut col = div()
-                    .id("home-scroll")
-                    .v_flex()
-                    .flex_1()
-                    .min_w(px(0.0))
-                    .gap(px(28.0))
-                    .p(px(24.0))
-                    .overflow_y_scroll();
+                let mut col = div().v_flex().w_full().gap(px(28.0)).p(px(24.0));
                 if !self.recent.is_empty() {
                     col = col.child(self.recent_section(cx));
                 }
@@ -544,7 +538,7 @@ impl Render for HomePage {
                 } else if !self.playlists.is_empty() {
                     col = col.child(section_title("推荐歌单")).child(self.playlist_grid(cx));
                 }
-                col.into_any_element()
+                smooth_scroll("home-scroll", col, window, cx).into_any_element()
             }
             HomeTab::Music | HomeTab::Podcast => div()
                 .flex_1()

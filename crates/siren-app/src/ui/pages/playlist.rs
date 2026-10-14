@@ -17,6 +17,7 @@ use siren_core::model::{PlaylistDetail, Song};
 use super::super::components::like_button;
 use super::super::playback::Playback;
 use super::super::services::Services;
+use super::super::smooth_scroll::smooth_scroll;
 use super::super::{fmt_time, icon, page_shell_with_header, PageEvent};
 use crate::theme;
 use siren_core::player::{PlaySource, PlaySourceKind};
@@ -654,16 +655,9 @@ impl PlaylistPage {
     }
 
     /// 添加歌曲浮层。
-    fn add_overlay(&self, weak: WeakEntity<Self>) -> AnyElement {
+    fn add_overlay(&self, weak: WeakEntity<Self>, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let weak_close = weak.clone();
-        let mut list = div()
-            .id("add-scroll")
-            .v_flex()
-            .flex_1()
-            .min_h(px(0.0))
-            .w_full()
-            .gap(px(2.0))
-            .overflow_y_scroll();
+        let mut list = div().v_flex().w_full().gap(px(2.0));
         for song in &self.add_results {
             let weak = weak.clone();
             let sid = song.id;
@@ -743,7 +737,7 @@ impl PlaylistPage {
                             .child("添加歌曲"),
                     )
                     .child(Input::new(&self.add_input))
-                    .child(list)
+                    .child(smooth_scroll("add-scroll", list, window, cx))
                     .child(
                         div()
                             .flex()
@@ -778,7 +772,7 @@ impl PlaylistPage {
 }
 
 impl Render for PlaylistPage {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let weak_back = cx.weak_entity();
         let weak_star = cx.weak_entity();
         let weak_menu = cx.weak_entity();
@@ -1201,7 +1195,7 @@ impl Render for PlaylistPage {
         };
         let shell = page_shell_with_header(header.into_any_element(), body).into_any_element();
         let overlay = self.crop.is_some().then(|| self.crop_overlay(cx.weak_entity()));
-        let add_overlay = self.add_open.then(|| self.add_overlay(cx.weak_entity()));
+        let add_overlay = self.add_open.then(|| self.add_overlay(cx.weak_entity(), window, cx));
         div()
             .relative()
             .size_full()

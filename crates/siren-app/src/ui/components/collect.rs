@@ -6,6 +6,7 @@ use gpui_kit::component::input::Input;
 use gpui_kit::*;
 
 use super::super::session::Session;
+use super::super::smooth_scroll::smooth_scroll;
 use super::super::{Root, Route};
 use crate::theme;
 
@@ -173,17 +174,15 @@ impl Root {
     }
 
     /// 添加到歌单浮层。
-    pub(crate) fn picker_overlay(&self, weak: WeakEntity<Self>) -> AnyElement {
+    pub(crate) fn picker_overlay(
+        &self,
+        weak: WeakEntity<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let weak_close = weak.clone();
         let weak_create = weak.clone();
-        let mut list = div()
-            .id("picker-scroll")
-            .v_flex()
-            .flex_1()
-            .min_h(px(0.0))
-            .w_full()
-            .gap(px(4.0))
-            .overflow_y_scroll();
+        let mut list = div().v_flex().w_full().gap(px(4.0));
         for pl in &self.ops.picker_playlists {
             let weak = weak.clone();
             let pid = pl.id;
@@ -264,7 +263,7 @@ impl Root {
                                     }),
                             ),
                     )
-                    .child(list)
+                    .child(smooth_scroll("picker-scroll", list, window, cx))
                     .child(Button::new("picker-cancel").label("取消").on_click(move |_ev, _w, cx| {
                         weak_close.update(cx, |root, cx| root.close_picker(cx)).ok();
                     })),

@@ -13,6 +13,7 @@ use siren_core::model::{Artist, ArtistAlbum, ArtistDetail, Song};
 use super::super::components::like_button;
 use super::super::playback::Playback;
 use super::super::services::Services;
+use super::super::smooth_scroll::smooth_scroll;
 use super::super::{fmt_date, icon, page_shell_with_header, PageEvent};
 use crate::theme;
 
@@ -432,9 +433,9 @@ impl ArtistPage {
 }
 
 impl Render for ArtistPage {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let header = self.header(cx);
-        let mut body = div().v_flex().flex_1().min_w(px(0.0)).gap(px(18.0)).p(px(16.0));
+        let mut body = div().v_flex().w_full().gap(px(18.0)).p(px(16.0));
 
         body = body.child(section(
             "热门歌曲",
@@ -476,12 +477,7 @@ impl Render for ArtistPage {
         };
         body = body.child(section("简介", about));
 
-        let scroll = div()
-            .id("artist-scroll")
-            .flex_1()
-            .min_w(px(0.0))
-            .overflow_y_scroll()
-            .child(body);
+        let scroll = smooth_scroll("artist-scroll", body, window, cx);
         page_shell_with_header(header, scroll.into_any_element())
     }
 }

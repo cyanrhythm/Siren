@@ -894,7 +894,10 @@ impl Render for Root {
         let weak_create = cx.weak_entity();
         let weak_picker = cx.weak_entity();
         let create_overlay = self.ops.create_open.then(|| self.create_overlay(weak_create));
-        let picker_overlay = self.ops.picker_song.map(|_| self.picker_overlay(weak_picker));
+        let picker_overlay = self
+            .ops
+            .picker_song
+            .map(|_| self.picker_overlay(weak_picker, window, cx));
         let weak_rename = cx.weak_entity();
         let weak_delete = cx.weak_entity();
         let rename_overlay = self.ops.rename_pid.map(|_| self.rename_overlay(weak_rename));
