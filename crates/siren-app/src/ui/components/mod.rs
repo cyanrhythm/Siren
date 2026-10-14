@@ -7,6 +7,7 @@ mod comments;
 mod like;
 mod now_playing;
 mod player_bar;
+mod queue_layout;
 mod queue_panel;
 mod title_bar;
 

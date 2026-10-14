@@ -58,6 +58,15 @@ impl CoverLoader {
         cover_placeholder(size).into_any_element()
     }
 
+    /// 只读：取封面图片（供拖动预览等每帧自建元素的场景复用）。
+    pub(crate) fn image_arc(&self, url: &str, size: f32) -> Option<Arc<Image>> {
+        if url.is_empty() {
+            return None;
+        }
+        let key = sized_url(url, bucket(size));
+        self.cache.lock().unwrap().get(&key).cloned()
+    }
+
     /// 封面主色（未取到返回 None）。
     pub(crate) fn color(&self, url: &str) -> Option<Rgba> {
         let base = url.split('?').next().unwrap_or(url).to_string();

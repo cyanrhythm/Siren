@@ -8,6 +8,7 @@
 pub mod components;
 pub mod covers;
 pub mod login_dialog;
+mod motion;
 mod notifications;
 pub mod pages;
 mod playback;
@@ -318,6 +319,11 @@ pub struct Root {
     queue_open: bool,
     /// 播放队列拖动排序的源下标。
     queue_drag_from: Option<usize>,
+    /// 拖动重排的行位移补间：键 → （起始像素偏移, 代次）。
+    /// 渲染时把刚换过槽位的行从旧位置平滑滑到新位置（FLIP，对齐 Melodia `animateItem`）。
+    drag_flip: std::collections::HashMap<String, (f32, u32)>,
+    /// 播放队列滚动句柄（拖动排序换算目标下标时需补偿滚动偏移）。
+    queue_scroll: ScrollHandle,
     np: NowPlayingUi,
     np_width_slider: Entity<SliderState>,
     login: LoginDialogState,
@@ -472,6 +478,8 @@ impl Root {
                 card_drag_from: None,
                 queue_open: false,
                 queue_drag_from: None,
+                drag_flip: std::collections::HashMap::new(),
+                queue_scroll: ScrollHandle::new(),
                 np: NowPlayingUi {
                     open: true,
                     album_page: 0,
@@ -628,6 +636,43 @@ impl Root {
     /// 记录 / 清除队列拖动源下标。
     pub(crate) fn set_queue_drag_from(&mut self, idx: Option<usize>) {
         self.queue_drag_from = idx;
+    }
+
+    /// 拖动开始前清空上一次的位移补间。
+    pub(crate) fn clear_drag_flip(&mut self) {
+        self.drag_flip.clear();
+    }
+
+    /// 查询某行当前的归位补间（起始偏移 px，代次）。`None` 表示无需补间。
+    pub(crate) fn flip_of(&self, key: &str) -> Option<(f32, u32)> {
+        self.drag_flip.get(key).copied()
+    }
+
+    /// 一次重排后，为每个换了槽位的键写入起始偏移（屏幕内滑动归位）。
+    /// `skip` 传入被拖动的键：它由随光标的浮动预览代表，不再自列表内滑动。
+    pub(crate) fn flip_on_reorder(
+        &mut self,
+        old_keys: &[String],
+        new_keys: &[String],
+        stride: f32,
+        skip: Option<&str>,
+    ) {
+        let slots: std::collections::HashMap<&str, usize> =
+            old_keys.iter().enumerate().map(|(i, k)| (k.as_str(), i)).collect();
+        for (i, key) in new_keys.iter().enumerate() {
+            if skip == Some(key.as_str()) {
+                continue;
+            }
+            let Some(&old) = slots.get(key.as_str()) else {
+                continue;
+            };
+            if old == i {
+                continue;
+            }
+            let generation = self.drag_flip.get(key).map_or(1, |(_, g)| g + 1);
+            self.drag_flip
+                .insert(key.clone(), ((old as f32 - i as f32) * stride, generation));
+        }
     }
 
     /// 设置某卡片显隐（落盘）。

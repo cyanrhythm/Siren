@@ -2,6 +2,12 @@
 //!
 //! 按当前位置分「已播放 / 正在播放 / 接下来播放」三段：已播放压暗、当前曲高亮；
 //! 仅「接下来播放」可拖动排序；悬停行才显示拖动把手与移除按钮（对齐 Melodia `HoverReveal`）。
+//!
+//! 拖动动效（对齐 `docs/09`）：拾起时浮动预览淡入跟随光标；重排瞬间其余行从旧槽位
+//! 平滑滑到新槽位（FLIP）。二者经 `with_animation` 驱动，自动尊重系统「减少动态效果」。
+
+use std::collections::HashMap;
+use std::sync::Arc;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::base::StyledExt;
@@ -10,17 +16,9 @@ use gpui_kit::*;
 use siren_core::model::Song;
 
 use super::super::settings_store::SettingsStore;
-use super::super::{icon, Root};
+use super::super::{cover_placeholder, icon, motion, Root};
+use super::queue_layout::{reorder_target, GAP, PAD, ROW_H, SECTION_H, STRIDE};
 use crate::theme;
-
-/// 队列行高（拖动排序按此换算目标下标）。
-const ROW_H: f32 = 52.0;
-/// 分段标题行高。
-const SECTION_H: f32 = 28.0;
-/// 列表内元素间距。
-const GAP: f32 = 2.0;
-/// 列表内边距。
-const PAD: f32 = 8.0;
 
 impl Root {
     /// 播放队列浮层。
@@ -34,23 +32,27 @@ impl Root {
         let current = current.filter(|c| *c < n);
         let played_end = current.unwrap_or(0);
         let upcoming_start = current.map(|c| c + 1).unwrap_or(0);
+        let keys = queue_keys(&items);
 
         let mut list = div().v_flex().w_full().gap(px(GAP));
         if current.is_some() && played_end > 0 {
             list = list.child(section_label("已播放"));
             for (i, song) in items[..played_end].iter().enumerate() {
-                list = list.child(self.queue_row(song, i, false, true, false, &weak));
+                let flip = self.flip_of(&keys[i]);
+                list = list.child(self.queue_row(song, &keys[i], i, false, true, false, flip, &weak));
             }
         }
         if let Some(ci) = current {
             list = list.child(section_label("正在播放"));
-            list = list.child(self.queue_row(&items[ci], ci, true, false, false, &weak));
+            let flip = self.flip_of(&keys[ci]);
+            list = list.child(self.queue_row(&items[ci], &keys[ci], ci, true, false, false, flip, &weak));
         }
         if upcoming_start < n {
             list = list.child(section_label("接下来播放"));
             for (offset, song) in items[upcoming_start..].iter().enumerate() {
                 let i = upcoming_start + offset;
-                list = list.child(self.queue_row(song, i, false, false, true, &weak));
+                let flip = self.flip_of(&keys[i]);
+                list = list.child(self.queue_row(song, &keys[i], i, false, false, true, flip, &weak));
             }
         }
 
@@ -125,6 +127,7 @@ impl Root {
             .w_full()
             .p(px(PAD))
             .overflow_y_scroll()
+            .track_scroll(&self.queue_scroll)
             .on_drag_move::<usize>({
                 let weak = weak.clone();
                 move |event: &DragMoveEvent<usize>, _window, cx| {
@@ -154,11 +157,14 @@ impl Root {
                         top += SECTION_H;
                         kids += 1;
                         top += GAP * kids as f32;
-                        let stride = ROW_H + GAP;
-                        let target = (((y - top) / stride).floor().max(0.0) as usize) + upcoming_start;
-                        let to = target.clamp(upcoming_start, n - 1);
+                        let to = reorder_target(y, f32::from(root.queue_scroll.offset().y), top, upcoming_start, n);
                         if from >= upcoming_start && to != from {
+                            let old_keys = queue_keys(&items);
                             root.playback.update(cx, |pb, cx| pb.move_in_queue(from, to, cx));
+                            let (moved, _) = root.playback.read(cx).queue_snapshot();
+                            let new_keys = queue_keys(&moved);
+                            let drag_key = new_keys.get(to).cloned();
+                            root.flip_on_reorder(&old_keys, &new_keys, STRIDE, drag_key.as_deref());
                             root.set_queue_drag_from(Some(to));
                         }
                     })
@@ -182,23 +188,26 @@ impl Root {
             .into_any_element()
     }
 
-    /// 单条队列行。`upcoming` 决定是否可拖动；`is_played` 压暗；`is_current` 高亮标题。
+    /// 单条队列行。`upcoming` 决定是否可拖动；`is_played` 压暗；`is_current` 高亮标题；
+    /// `flip` 为重排归位补间（起始偏移, 代次）。
+    #[allow(clippy::too_many_arguments)]
     fn queue_row(
         &self,
         song: &Song,
+        key: &str,
         i: usize,
         is_current: bool,
         is_played: bool,
         upcoming: bool,
+        flip: Option<(f32, u32)>,
         weak: &WeakEntity<Self>,
     ) -> AnyElement {
         let group = format!("queue-row-{i}");
         let weak_row = weak.clone();
         let weak_x = weak.clone();
-        let weak_handle = weak.clone();
         let cover = self.services.covers.image(&song.cover_url, 40.0);
 
-        div()
+        let row = div()
             .id(group.clone())
             .group(group.clone())
             .w_full()
@@ -229,12 +238,23 @@ impl Root {
                     .opacity(0.0)
                     .group_hover(group.clone(), |s| s.opacity(1.0))
                     .when(upcoming, |el| {
+                        let name = song.name.clone();
+                        let artists = song.artists.clone();
+                        let cover = self.services.covers.image_arc(&song.cover_url, 40.0);
+                        let weak_handle = weak.clone();
                         el.cursor_pointer()
                             .on_drag(i, move |_v, _offset, _window, cx| {
                                 weak_handle
-                                    .update(cx, |root, _cx| root.set_queue_drag_from(Some(i)))
+                                    .update(cx, |root, _cx| {
+                                        root.clear_drag_flip();
+                                        root.set_queue_drag_from(Some(i));
+                                    })
                                     .ok();
-                                cx.new(|_| QueueDragGhost)
+                                cx.new(|_| QueueDragPreview {
+                                    name: name.clone(),
+                                    artists: artists.clone(),
+                                    cover: cover.clone(),
+                                })
                             })
                             .child(icon(IconName::GripVertical, 16.0, theme::text_gray()))
                     }),
@@ -286,8 +306,19 @@ impl Root {
                     })
                     .child(icon(IconName::X, 14.0, theme::text_gray())),
             )
-            .when(is_played, |el| el.opacity(0.5))
-            .into_any_element()
+            .when(is_played, |el| el.opacity(0.5));
+
+        // 重排归位：从旧槽位的偏移滑回 0（屏幕内移动 → 强 ease-in-out）。
+        match flip {
+            Some((from, generation)) if from != 0.0 => row
+                .with_animation(
+                    ElementId::Name(format!("queue-flip-{key}-{generation}").into()),
+                    Animation::new(motion::REORDER).with_easing(motion::ease_in_out()),
+                    move |el, delta| el.top(px(from * (1.0 - delta))),
+                )
+                .into_any_element(),
+            _ => row.into_any_element(),
+        }
     }
 }
 
@@ -304,11 +335,74 @@ fn section_label(text: &str) -> impl IntoElement {
         .child(text.to_string())
 }
 
-/// 队列拖动占位预览（行随重排实时移动，故预览极小）。
-struct QueueDragGhost;
+/// 队列稳定键：同一首歌重复入队时以出现次数区分。
+fn queue_keys(items: &[Song]) -> Vec<String> {
+    let mut seen: HashMap<i64, usize> = HashMap::new();
+    items
+        .iter()
+        .map(|song| {
+            let occurrence = seen.entry(song.id).or_insert(0);
+            let key = format!("q:{}:{}", song.id, *occurrence);
+            *occurrence += 1;
+            key
+        })
+        .collect()
+}
 
-impl Render for QueueDragGhost {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div().size(px(1.0))
+/// 拖动拾起时跟随光标的浮动行预览（拾起入场：淡入 + 轻微上浮）。
+struct QueueDragPreview {
+    name: String,
+    artists: String,
+    cover: Option<Arc<Image>>,
+}
+
+impl Render for QueueDragPreview {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let width = SettingsStore::of(cx).np_width();
+        let cover = match &self.cover {
+            Some(image) => img(image.clone())
+                .w(px(40.0))
+                .h(px(40.0))
+                .rounded(px(6.0))
+                .into_any_element(),
+            None => cover_placeholder(40.0).into_any_element(),
+        };
+        div()
+            .w(px(width))
+            .h(px(ROW_H))
+            .px(px(6.0))
+            .flex()
+            .items_center()
+            .gap(px(10.0))
+            .rounded(px(6.0))
+            .bg(theme::pane())
+            .shadow_lg()
+            .child(cover)
+            .child(
+                div()
+                    .v_flex()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .overflow_hidden()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(theme::text_primary())
+                            .truncate()
+                            .child(self.name.clone()),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme::text_gray())
+                            .truncate()
+                            .child(self.artists.clone()),
+                    ),
+            )
+            .with_animation(
+                "queue-drag-preview",
+                Animation::new(motion::DRAG_ENTER).with_easing(motion::ease_out()),
+                |el, delta| el.opacity(delta).top(px(-8.0 * (1.0 - delta))),
+            )
     }
 }
