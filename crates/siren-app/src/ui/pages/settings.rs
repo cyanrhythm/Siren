@@ -11,19 +11,49 @@ use gpui_kit::*;
 
 use siren_core::model::AudioQuality;
 
-use super::super::{icon, page_shell, Root};
+use super::super::{icon, motion, page_shell, Root};
 use crate::theme;
 
 /// 正在播放卡片编辑器行高。
 const CARD_ROW_H: f32 = 44.0;
 
-/// 拖动时的占位预览（行本身随重排实时移动，故预览极小）。
-struct DragGhost;
+/// 拖动拾起时跟随光标的浮动预览（拾起入场：淡入 + 轻微上浮）。
+struct CardDragPreview {
+    label: String,
+}
 
-impl Render for DragGhost {
+impl Render for CardDragPreview {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div().size(px(1.0))
+        div()
+            .h(px(CARD_ROW_H))
+            .px(px(14.0))
+            .flex()
+            .items_center()
+            .gap(px(8.0))
+            .rounded(px(8.0))
+            .bg(theme::card_surface())
+            .shadow_lg()
+            .child(icon(IconName::GripVertical, 18.0, theme::text_gray()))
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(theme::text_primary())
+                    .child(self.label.clone()),
+            )
+            .with_animation(
+                "card-drag-preview",
+                Animation::new(motion::DRAG_ENTER).with_easing(motion::ease_out()),
+                |el, delta| el.opacity(delta).top(px(-8.0 * (1.0 - delta))),
+            )
     }
+}
+
+/// 卡片编辑器当前顺序的稳定键（用于重排归位补间）。
+fn card_keys(root: &Root, cx: &App) -> Vec<String> {
+    root.editor_layout(cx)
+        .iter()
+        .map(|&(card, _)| format!("c:{}", card.code()))
+        .collect()
 }
 
 impl Root {
@@ -32,30 +62,15 @@ impl Root {
         let media_on = self.playback.read(cx).media_keys_enabled(cx);
 
         let weak_media = weak.clone();
-        let media_control = div()
-            .id("media-keys")
-            .w(px(56.0))
-            .flex()
-            .items_center()
-            .justify_center()
-            .px(px(12.0))
-            .py(px(6.0))
-            .rounded_full()
-            .cursor_pointer()
-            .bg(if media_on { theme::accent() } else { theme::pane() })
-            .on_click(move |_ev, _window, cx| {
+        let media_control = Switch::new("media-keys")
+            .checked(media_on)
+            .on_click(move |checked, _window, cx| {
                 weak_media
                     .update(cx, |root, cx| {
-                        root.playback.update(cx, |pb, cx| pb.set_media_keys(!media_on, cx));
+                        root.playback.update(cx, |pb, cx| pb.set_media_keys(*checked, cx));
                     })
                     .ok();
             })
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(theme::text_primary())
-                    .child(if media_on { "开" } else { "关" }),
-            )
             .into_any_element();
 
         let body = div()
@@ -90,48 +105,65 @@ impl Root {
         for (i, (card, visible)) in layout.iter().enumerate() {
             let card = *card;
             let visible = *visible;
+            let key = format!("c:{}", card.code());
+            let flip = self.flip_of(&key);
             let weak_handle = weak.clone();
             let weak_switch = weak.clone();
-            rows =
-                rows.child(
+            let row = div()
+                .w_full()
+                .h(px(CARD_ROW_H))
+                .flex()
+                .items_center()
+                .gap(px(8.0))
+                .child(
                     div()
-                        .w_full()
-                        .h(px(CARD_ROW_H))
+                        .id(("card-drag", i))
+                        .size(px(28.0))
+                        .flex_none()
                         .flex()
                         .items_center()
-                        .gap(px(8.0))
-                        .child(
-                            div()
-                                .id(("card-drag", i))
-                                .size(px(28.0))
-                                .flex_none()
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .cursor_pointer()
-                                .on_drag(i, move |_idx, _offset, _window, cx| {
-                                    weak_handle
-                                        .update(cx, |root, _cx| root.set_card_drag_from(Some(i)))
-                                        .ok();
-                                    cx.new(|_| DragGhost)
+                        .justify_center()
+                        .cursor_pointer()
+                        .on_drag(i, move |_idx, _offset, _window, cx| {
+                            let label = card.label().to_string();
+                            weak_handle
+                                .update(cx, |root, _cx| {
+                                    root.clear_drag_flip();
+                                    root.set_card_drag_from(Some(i));
                                 })
-                                .child(icon(IconName::GripVertical, 18.0, theme::text_gray())),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .text_sm()
-                                .text_color(theme::text_primary())
-                                .child(card.label()),
-                        )
-                        .child(Switch::new(("card-switch", i)).checked(visible).on_click(
-                            move |checked, _window, cx| {
-                                weak_switch
-                                    .update(cx, |root, cx| root.set_card_visible(card, *checked, cx))
-                                    .ok();
-                            },
-                        )),
+                                .ok();
+                            cx.new(|_| CardDragPreview { label: label.clone() })
+                        })
+                        .child(icon(IconName::GripVertical, 18.0, theme::text_gray())),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .text_sm()
+                        .text_color(theme::text_primary())
+                        .child(card.label()),
+                )
+                .child(
+                    Switch::new(("card-switch", i))
+                        .checked(visible)
+                        .on_click(move |checked, _window, cx| {
+                            weak_switch
+                                .update(cx, |root, cx| root.set_card_visible(card, *checked, cx))
+                                .ok();
+                        }),
                 );
+            // 重排归位：从旧槽位偏移滑回 0（屏幕内移动 → 强 ease-in-out）。
+            let row = match flip {
+                Some((from, generation)) if from != 0.0 => row
+                    .with_animation(
+                        ElementId::Name(format!("card-flip-{key}-{generation}").into()),
+                        Animation::new(motion::REORDER).with_easing(motion::ease_in_out()),
+                        move |el, delta| el.top(px(from * (1.0 - delta))),
+                    )
+                    .into_any_element(),
+                _ => row.into_any_element(),
+            };
+            rows = rows.child(row);
         }
 
         div()
@@ -152,7 +184,11 @@ impl Root {
                         }
                         let to = target.min(n - 1);
                         if to != from {
+                            let old_keys = card_keys(root, cx);
                             root.reorder_card(from, to, cx);
+                            let new_keys = card_keys(root, cx);
+                            let drag_key = new_keys.get(to).cloned();
+                            root.flip_on_reorder(&old_keys, &new_keys, CARD_ROW_H, drag_key.as_deref());
                             root.set_card_drag_from(Some(to));
                         }
                     })
