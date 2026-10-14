@@ -37,7 +37,9 @@ impl Root {
         let weak_prev = weak.clone();
         let weak_shuffle = weak.clone();
         let weak_repeat = weak.clone();
+        let weak_queue = weak.clone();
         let weak_next = weak;
+        let queue_open = self.queue_open;
         let shuffle_active = state.mode == PlayMode::Shuffle;
         let repeat_active = state.mode == PlayMode::SingleLoop;
         div()
@@ -206,6 +208,28 @@ impl Root {
                     .items_center()
                     .justify_end()
                     .gap(px(8.0))
+                    .child(
+                        div()
+                            .id("queue-btn")
+                            .cursor_pointer()
+                            .on_click(move |_ev, _window, cx| {
+                                weak_queue
+                                    .update(cx, |root, cx| {
+                                        root.queue_open = !root.queue_open;
+                                        cx.notify();
+                                    })
+                                    .ok();
+                            })
+                            .child(icon(
+                                IconName::ListMusic,
+                                18.0,
+                                if queue_open {
+                                    theme::accent()
+                                } else {
+                                    theme::text_gray()
+                                },
+                            )),
+                    )
                     .child(icon(IconName::Volume2, 18.0, theme::text_gray()))
                     .child(div().w(px(120.0)).child(Slider::new(pb.volume_slider()))),
             )

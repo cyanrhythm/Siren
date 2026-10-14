@@ -314,6 +314,10 @@ pub struct Root {
     account_page: Option<Entity<AccountPage>>,
     /// 正在播放卡片编辑器的拖拽源索引。
     card_drag_from: Option<usize>,
+    /// 播放队列浮层是否打开。
+    queue_open: bool,
+    /// 播放队列拖动排序的源下标。
+    queue_drag_from: Option<usize>,
     np: NowPlayingUi,
     np_width_slider: Entity<SliderState>,
     login: LoginDialogState,
@@ -466,6 +470,8 @@ impl Root {
                 profile_page: None,
                 account_page: None,
                 card_drag_from: None,
+                queue_open: false,
+                queue_drag_from: None,
                 np: NowPlayingUi {
                     open: true,
                     album_page: 0,
@@ -612,6 +618,16 @@ impl Root {
     /// 记录 / 清除拖拽源索引。
     pub(crate) fn set_card_drag_from(&mut self, idx: Option<usize>) {
         self.card_drag_from = idx;
+    }
+
+    /// 队列拖动源下标。
+    pub(crate) fn queue_drag_from(&self) -> Option<usize> {
+        self.queue_drag_from
+    }
+
+    /// 记录 / 清除队列拖动源下标。
+    pub(crate) fn set_queue_drag_from(&mut self, idx: Option<usize>) {
+        self.queue_drag_from = idx;
     }
 
     /// 设置某卡片显隐（落盘）。
@@ -823,6 +839,8 @@ impl Render for Root {
         let delete_overlay = self.ops.delete_pid.map(|_| self.delete_overlay(weak_delete));
         let weak_desc = cx.weak_entity();
         let desc_overlay = self.ops.desc_pid.map(|_| self.desc_overlay(weak_desc));
+        let weak_queue = cx.weak_entity();
+        let queue_overlay = self.queue_open.then(|| self.queue_overlay(weak_queue, cx));
         // 中间列显式分配宽度，规避 gpui `flex_1` 的横向过度伸展。
         // 右侧栏严格取设置的宽度；空间不足时中间列收缩（不产生横向溢出）。
         let np_w = if self.np.open {
@@ -875,6 +893,7 @@ impl Render for Root {
             .when_some(rename_overlay, |this, overlay| this.child(overlay))
             .when_some(delete_overlay, |this, overlay| this.child(overlay))
             .when_some(desc_overlay, |this, overlay| this.child(overlay))
+            .when_some(queue_overlay, |this, overlay| this.child(overlay))
             .child(self.notifications_overlay(cx))
     }
 }

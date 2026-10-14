@@ -794,6 +794,44 @@ impl Playback {
         }
     }
 
+    /// 播放队列快照与当前下标（供队列面板渲染）。
+    pub(crate) fn queue_snapshot(&self) -> (Vec<Song>, Option<usize>) {
+        (self.player.queue_items(), self.player.current_index())
+    }
+
+    /// 播放队列中指定下标的曲目。
+    pub(crate) fn play_queue_at(&mut self, index: usize, cx: &mut Context<Self>) {
+        if let Some(song) = self.player.play_at(index) {
+            self.resolve_and_play(song, cx);
+        }
+    }
+
+    /// 从队列移除指定下标；若移除的是当前曲，则重载新的当前曲。
+    pub(crate) fn remove_queue_at(&mut self, index: usize, cx: &mut Context<Self>) {
+        let before = self.player.state().song.map(|s| s.id);
+        self.player.remove_at(index);
+        let after = self.player.state().song.map(|s| s.id);
+        if before != after {
+            if let Some(song) = self.player.state().song {
+                self.resolve_and_play(song, cx);
+            }
+        } else {
+            cx.notify();
+        }
+    }
+
+    /// 队列内拖动排序。
+    pub(crate) fn move_in_queue(&mut self, from: usize, to: usize, cx: &mut Context<Self>) {
+        self.player.move_in_queue(from, to);
+        cx.notify();
+    }
+
+    /// 清空队列（保留当前曲）。
+    pub(crate) fn clear_queue(&mut self, cx: &mut Context<Self>) {
+        self.player.clear_queue();
+        cx.notify();
+    }
+
     /// 切换随机播放。
     pub(crate) fn toggle_shuffle(&mut self, cx: &mut Context<Self>) {
         let mode = if self.player.mode() == PlayMode::Shuffle {

@@ -107,6 +107,32 @@ impl Player {
         self.queue.items().to_vec()
     }
 
+    /// 当前曲目下标。
+    pub fn current_index(&self) -> Option<usize> {
+        self.queue.current_index()
+    }
+
+    /// 从队列移除指定下标（不重载引擎；调用方按需处理当前曲变化）。
+    pub fn remove_at(&mut self, index: usize) {
+        self.queue.remove(index);
+        self.sync_queue();
+        self.publish();
+    }
+
+    /// 队列内移动（拖动排序）。
+    pub fn move_in_queue(&mut self, from: usize, to: usize) {
+        self.queue.move_item(from, to);
+        self.sync_queue();
+        self.publish();
+    }
+
+    /// 清空队列，仅保留当前曲。
+    pub fn clear_queue(&mut self) {
+        self.queue.clear_keep_current();
+        self.sync_queue();
+        self.publish();
+    }
+
     /// 队列来源容器。
     pub fn source(&self) -> Option<&crate::player::PlaySource> {
         self.queue.source()

@@ -213,6 +213,61 @@ impl PlayerQueue {
         self.items.extend(items);
     }
 
+    /// 移除指定下标的曲目，并让当前下标继续指向同一首歌（或顺延）。
+    pub fn remove(&mut self, index: usize) {
+        if index >= self.items.len() {
+            return;
+        }
+        self.items.remove(index);
+        self.current = match self.current {
+            None => None,
+            Some(_) if self.items.is_empty() => None,
+            Some(c) if index < c => Some(c - 1),
+            Some(c) if index == c => Some(c.min(self.items.len() - 1)),
+            Some(c) => Some(c),
+        };
+    }
+
+    /// 把 `from` 处的曲目移动到 `to` 处（当前下标继续指向同一首歌）。
+    pub fn move_item(&mut self, from: usize, to: usize) {
+        let len = self.items.len();
+        if from >= len || to >= len || from == to {
+            return;
+        }
+        let item = self.items.remove(from);
+        self.items.insert(to, item);
+        if let Some(c) = self.current {
+            let nc = if c == from {
+                to
+            } else {
+                let mut nc = c;
+                if from < c {
+                    nc -= 1;
+                }
+                if to <= nc {
+                    nc += 1;
+                }
+                nc
+            };
+            self.current = Some(nc.min(len - 1));
+        }
+    }
+
+    /// 清空队列，仅保留正在播放的曲目。
+    pub fn clear_keep_current(&mut self) {
+        match self.current {
+            Some(c) => {
+                let current = self.items[c].clone();
+                self.items = vec![current];
+                self.current = Some(0);
+            }
+            None => {
+                self.items.clear();
+                self.current = None;
+            }
+        }
+    }
+
     /// 按模式推进到下一首，返回新的当前曲。
     pub fn advance(&mut self) -> Option<&Song> {
         if let Some(i) = self.auto_next_index() {
@@ -325,5 +380,37 @@ mod tests {
         assert_eq!(q.advance().unwrap().id, 1);
         assert_eq!(q.advance().unwrap().id, 2);
         assert_eq!(q.advance().unwrap().id, 0);
+    }
+
+    #[test]
+    fn remove_keeps_current_on_same_song() {
+        let mut q = queue_with(4);
+        q.select(2);
+        q.remove(0);
+        assert_eq!(q.current().unwrap().id, 2);
+        assert_eq!(q.current_index(), Some(1));
+        q.remove(1); // 移除当前曲
+        assert_eq!(q.current().unwrap().id, 3);
+    }
+
+    #[test]
+    fn move_item_keeps_current_on_same_song() {
+        let mut q = queue_with(4);
+        q.select(2);
+        q.move_item(0, 3);
+        assert_eq!(q.current().unwrap().id, 2);
+        let idx = q.current_index().unwrap();
+        q.move_item(idx, 0); // 移动当前曲自身
+        assert_eq!(q.current().unwrap().id, 2);
+        assert_eq!(q.current_index(), Some(0));
+    }
+
+    #[test]
+    fn clear_keeps_only_current() {
+        let mut q = queue_with(4);
+        q.select(2);
+        q.clear_keep_current();
+        assert_eq!(q.len(), 1);
+        assert_eq!(q.current().unwrap().id, 2);
     }
 }
