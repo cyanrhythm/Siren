@@ -1,36 +1,39 @@
-//! 通用平滑滚动容器。
+//! 通用平滑滚动。
 //!
-//! Windows 滚轮是离散的 `Lines(3)` 步进、gpui 又直接瞬跳，观感很「顿」。做法：自己维护
-//! 「目标偏移」，渲染期用 `transition` 缓动逼近，可被下一格增量打断；内容用 `.top(-offset)`
-//! 位移，不与 gpui 内建滚动耦合（避免「拦了原生又不走自己」）。
+//! Windows 滚轮是离散的 `Lines(3)` 步进、gpui 又直接瞬跳，观感很「顿」。统一做法：自己维护
+//! 「目标偏移」，渲染期用 `transition` 缓动逼近，可被下一格增量打断。两个入口：
+//!
+//! - [`smooth_scroll`]：把任意内容包成容器（内容 `.top(-offset)` 位移）；
+//! - [`smooth_virtual_list`]：可平滑的虚拟化列表（只渲染可见行，替代无法驱动的 `uniform_list`）。
 //!
 //! 用法（在 `render` 等有 `window` 的地方）：
 //! ```ignore
 //! smooth_scroll("my-scroll", content, window, cx)
+//! smooth_virtual_list("my-list", item_count, 52.0, move |range, w, cx| rows, window, cx)
 //! ```
-//! - `id` 需在窗口内唯一且稳定；
-//! - 容器以 `flex_1` 占满父级剩余高度（父级应为 flex 布局）。
-//!
-//! 注：`uniform_list`（虚拟化列表）不走这套——它自管偏移，且其滚动上限不经我们可用的
-//! 句柄暴露，当前无法用同样方式平滑；那类列表仍用原生滚动。
+//! `id` 需在窗口内唯一且稳定；容器以 `flex_1` 占满父级剩余高度（父级应为 flex 布局）。
 
 use std::collections::HashMap;
 use std::ops::Range;
 use std::time::Duration;
 
 use gpui_kit::base::{transition, ElementExt, StyledExt as _, Transition};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::motion;
+use crate::theme;
 
-/// 单个滚动区的偏移状态。
+/// 单个滚动区的状态。
 #[derive(Default)]
 struct Entry {
     /// 目标偏移（正数：内容上移多少像素）。
     target: f32,
-    /// 内容高（`smooth_scroll` 在 prepaint 量得）。
+    /// 上一次渲染实际使用的偏移（缓动后的值；供拖动排序等做坐标补偿）。
+    offset: f32,
+    /// 内容高（`smooth_scroll` 在 prepaint 量得；虚拟列表按行高×数量直接给）。
     content: f32,
-    /// 视口高（`smooth_scroll` 在 prepaint 量得）。
+    /// 视口高（prepaint 量得）。
     viewport: f32,
     /// 最大可滚偏移（正的像素数）。
     max: f32,
@@ -46,6 +49,35 @@ fn ensure_registry(cx: &mut App) {
     if cx.try_global::<Registry>().is_none() {
         cx.set_global(Registry::default());
     }
+}
+
+/// 读取某滚动区当前偏移（缓动后的值）；未注册返回 0。
+pub(crate) fn smooth_scroll_offset(id: impl Into<ElementId>, cx: &App) -> f32 {
+    cx.try_global::<Registry>()
+        .and_then(|registry| registry.0.get(&id.into()).map(|entry| entry.offset))
+        .unwrap_or(0.0)
+}
+
+/// 右侧细滚动条：`offset/max` 决定滑块位置，`viewport/content` 决定滑块长度。
+fn scrollbar(offset: f32, max: f32, viewport: f32) -> Option<impl IntoElement> {
+    if max <= 0.5 || viewport <= 0.0 {
+        return None;
+    }
+    let content = viewport + max;
+    let thumb_h = (viewport * viewport / content).clamp(24.0, viewport);
+    let travel = (viewport - thumb_h).max(0.0);
+    let top = (offset / max).clamp(0.0, 1.0) * travel;
+    Some(
+        div()
+            .absolute()
+            .top(px(top))
+            .right(px(2.0))
+            .w(px(4.0))
+            .h(px(thumb_h))
+            .rounded(px(2.0))
+            .bg(theme::text_gray())
+            .opacity(0.5),
+    )
 }
 
 /// 把 `content` 包成平滑滚动容器。
@@ -64,7 +96,12 @@ pub(crate) fn smooth_scroll(
         .map(|entry| (entry.target, entry.content, entry.viewport))
         .unwrap_or((0.0, 0.0, 0.0));
     let max = (content_h - viewport_h).max(0.0);
-    cx.global_mut::<Registry>().0.entry(id.clone()).or_default().max = max;
+    {
+        let registry = cx.global_mut::<Registry>();
+        let entry = registry.0.entry(id.clone()).or_default();
+        entry.max = max;
+        entry.target = entry.target.clamp(0.0, max);
+    }
     let offset = transition(
         (id.clone(), "scroll"),
         target.clamp(0.0, max),
@@ -72,10 +109,12 @@ pub(crate) fn smooth_scroll(
         window,
         cx,
     );
+    cx.global_mut::<Registry>().0.entry(id.clone()).or_default().offset = offset;
 
     let wheel_id = id.clone();
     let viewport_id = id.clone();
     let content_id = id.clone();
+    let bar = scrollbar(offset, max, viewport_h);
 
     div()
         .id(id)
@@ -121,11 +160,12 @@ pub(crate) fn smooth_scroll(
                 })
                 .child(content),
         )
+        .when_some(bar, |el, bar| el.child(bar))
 }
 
 /// 可平滑滚动的**虚拟列表**：只渲染可见行，偏移由自己维护（因此能套 `transition` 缓动）。
 ///
-/// 用于替代 `uniform_list`（后者自管偏移、无法被驱动）。`row_height` 为等高的行高；
+/// 用于替代 `uniform_list`（后者自管偏移、无法被驱动）。`row_height` 为等高行高；
 /// `render_range` 与 `uniform_list` 的闭包一致，返回该范围的行元素。
 pub(crate) fn smooth_virtual_list(
     id: impl Into<ElementId>,
@@ -143,6 +183,7 @@ pub(crate) fn smooth_virtual_list(
     let target = {
         let registry = cx.global_mut::<Registry>();
         let entry = registry.0.entry(id.clone()).or_default();
+        entry.content = content_h;
         entry.max = max;
         entry.target.clamp(0.0, max)
     };
@@ -153,6 +194,7 @@ pub(crate) fn smooth_virtual_list(
         window,
         cx,
     );
+    cx.global_mut::<Registry>().0.entry(id.clone()).or_default().offset = offset;
 
     // 仅渲染可见范围（首行 + 视口内行数，多预读 2 行）。
     let first = (offset / row_height).floor().max(0.0) as usize;
@@ -173,6 +215,8 @@ pub(crate) fn smooth_virtual_list(
 
     let wheel_id = id.clone();
     let viewport_id = id.clone();
+    let bar = scrollbar(offset, max, viewport_h);
+
     div()
         .id(id)
         .relative()
@@ -200,4 +244,5 @@ pub(crate) fn smooth_virtual_list(
                 .viewport = h;
         })
         .child(content)
+        .when_some(bar, |el, bar| el.child(bar))
 }

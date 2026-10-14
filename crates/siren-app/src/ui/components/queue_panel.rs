@@ -16,13 +16,19 @@ use gpui_kit::*;
 use siren_core::model::Song;
 
 use super::super::settings_store::SettingsStore;
+use super::super::smooth_scroll::{smooth_scroll, smooth_scroll_offset};
 use super::super::{cover_placeholder, icon, motion, Root};
 use super::queue_layout::{reorder_target, GAP, PAD, ROW_H, SECTION_H, STRIDE};
 use crate::theme;
 
 impl Root {
     /// 播放队列浮层。
-    pub(crate) fn queue_overlay(&self, weak: WeakEntity<Self>, cx: &mut Context<Self>) -> AnyElement {
+    pub(crate) fn queue_overlay(
+        &self,
+        weak: WeakEntity<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let (items, current) = self.playback.read(cx).queue_snapshot();
         // 封面按 40px（bucket 64）渲染，需先预取（命中缓存前每次渲染幂等）。
         self.services
@@ -119,20 +125,20 @@ impl Root {
                     .child(icon(IconName::X, 16.0, theme::text_gray())),
             );
 
+        // 内容（带内边距的列表）交给平滑滚动容器；拖动排序挂在包裹层上（用当前滚动偏移做坐标补偿）。
+        let content = div().v_flex().w_full().p(px(PAD)).child(list);
+        let weak_drag = weak.clone();
         let body = div()
-            .id("queue-scroll")
+            .id("queue-body")
             .v_flex()
             .flex_1()
             .min_h(px(0.0))
             .w_full()
-            .p(px(PAD))
-            .overflow_y_scroll()
-            .track_scroll(&self.queue_scroll)
-            .on_drag_move::<usize>({
-                let weak = weak.clone();
-                move |event: &DragMoveEvent<usize>, _window, cx| {
-                    let y = f32::from(event.event.position.y - event.bounds.origin.y);
-                    weak.update(cx, |root, cx| {
+            .on_drag_move::<usize>(move |event: &DragMoveEvent<usize>, _window, cx| {
+                let y = f32::from(event.event.position.y - event.bounds.origin.y);
+                let scroll = smooth_scroll_offset("queue-scroll", cx);
+                weak_drag
+                    .update(cx, |root, cx| {
                         let Some(from) = root.queue_drag_from() else {
                             return;
                         };
@@ -157,7 +163,7 @@ impl Root {
                         top += SECTION_H;
                         kids += 1;
                         top += GAP * kids as f32;
-                        let to = reorder_target(y, f32::from(root.queue_scroll.offset().y), top, upcoming_start, n);
+                        let to = reorder_target(y, -scroll, top, upcoming_start, n);
                         if from >= upcoming_start && to != from {
                             let old_keys = queue_keys(&items);
                             root.playback.update(cx, |pb, cx| pb.move_in_queue(from, to, cx));
@@ -169,9 +175,8 @@ impl Root {
                         }
                     })
                     .ok();
-                }
             })
-            .child(list);
+            .child(smooth_scroll("queue-scroll", content, window, cx));
 
         div()
             .absolute()

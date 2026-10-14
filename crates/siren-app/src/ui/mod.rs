@@ -331,7 +331,6 @@ pub struct Root {
     /// 渲染时把刚换过槽位的行从旧位置平滑滑到新位置（FLIP，对齐 Melodia `animateItem`）。
     drag_flip: std::collections::HashMap<String, (f32, u32)>,
     /// 播放队列滚动句柄（拖动排序换算目标下标时需补偿滚动偏移）。
-    queue_scroll: ScrollHandle,
     np: NowPlayingUi,
     np_width_slider: Entity<SliderState>,
     login: LoginDialogState,
@@ -487,7 +486,6 @@ impl Root {
                 queue_open: false,
                 queue_drag_from: None,
                 drag_flip: std::collections::HashMap::new(),
-                queue_scroll: ScrollHandle::new(),
                 np: NowPlayingUi {
                     open: true,
                     album_page: 0,
@@ -905,7 +903,7 @@ impl Render for Root {
         let weak_desc = cx.weak_entity();
         let desc_overlay = self.ops.desc_pid.map(|_| self.desc_overlay(weak_desc));
         let weak_queue = cx.weak_entity();
-        let queue_overlay = self.queue_open.then(|| self.queue_overlay(weak_queue, cx));
+        let queue_overlay = self.queue_open.then(|| self.queue_overlay(weak_queue, window, cx));
         // 中间列显式分配宽度，规避 gpui `flex_1` 的横向过度伸展。
         // 右侧栏严格取设置的宽度；空间不足时中间列收缩（不产生横向溢出）。
         let np_w = if self.np.open {
