@@ -197,7 +197,10 @@ impl Root {
                         weak_search.update(cx, |root, cx| root.navigate(Route::Search, cx)).ok();
                     })
                     .child(icon(IconName::Search, 18.0, theme::text_gray()))
-                    .child(div().flex_1().child(Input::new(&self.search_input))),
+                    .child(div()
+                            .flex_1()
+                            // 去掉输入框自带的边框/背景/聚焦红框，融入外层搜索胶囊。
+                            .child(Input::new(&self.search_input).appearance(false))),
             );
 
         // 右：下载、账户、窗口按钮
