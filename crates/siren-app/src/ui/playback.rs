@@ -73,6 +73,8 @@ pub(crate) struct Playback {
     last_sec: i64,
     /// 冷启动恢复的待播放进度（URL 加载后 seek 到此处后清除）。
     resume_ms: Option<i64>,
+    /// 冷启动恢复进度归属的歌曲 id：只对该曲生效，用户改播其它曲即丢弃。
+    resume_song_id: Option<i64>,
     /// 已恢复但尚未解析 URL（首次播放需先解析）。
     needs_resolve: bool,
     /// 上次进度落盘时刻（节流，5s）。
@@ -114,6 +116,7 @@ impl Playback {
         let mut player = Player::new(engine);
         // 冷启动恢复上次队列/当前曲/进度（不自动播放；首次播放时解析 URL 并 seek 回进度）
         let mut resume_ms: Option<i64> = None;
+        let mut resume_song_id: Option<i64> = None;
         let mut needs_resolve = false;
         if let Some(queue_session) = siren_core::playback_session::QueueSession::load() {
             let index = queue_session.index;
@@ -136,6 +139,7 @@ impl Playback {
                 .is_some()
             {
                 resume_ms = (position_ms > 0).then_some(position_ms);
+                resume_song_id = current_id;
                 needs_resolve = true;
             }
         }
@@ -215,6 +219,7 @@ impl Playback {
                 artist_fans: 0,
                 last_sec: 0,
                 resume_ms,
+                resume_song_id,
                 needs_resolve,
                 last_progress_save: Instant::now(),
                 anchor_pos: 0,
@@ -1047,11 +1052,13 @@ impl Playback {
         cx.spawn(async move |this, cx| {
             let url = rx.await.ok().flatten();
             this.update(cx, |this, cx| {
+                // 冷启动进度只归属恢复出的那首歌；用户改播其它曲则丢弃，避免强锁到旧进度。
+                let resume = this.resume_ms.take().filter(|_| Some(song.id) == this.resume_song_id);
+                this.resume_song_id = None;
                 match url {
                     Some(url) => {
                         log::info!("播放地址解析成功 id={}", song.id);
                         // 冷启动恢复：让引擎加载完成后自动跳到上次进度，避免加载前 seek 被丢弃。
-                        let resume = this.resume_ms.take();
                         this.player.play_url_from(&url, resume);
                         this.needs_resolve = false;
                         this.status = format!("播放中：{}", song.name).into();
@@ -1077,6 +1084,10 @@ impl Playback {
             return;
         }
         let ms = (fraction.clamp(0.0, 1.0) as f64 * state.duration_ms as f64) as i64;
+        // 冷启动恢复曲尚未加载 URL：把拖动结果记为起播进度，按压播放时据此起播，否则会被旧进度覆盖。
+        if self.needs_resolve {
+            self.resume_ms = Some(ms);
+        }
         self.player.seek_ms(ms);
         self.save_progress();
         cx.notify();
