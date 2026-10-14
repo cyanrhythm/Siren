@@ -172,9 +172,9 @@ fn scroll_bar(name: &'static str, thumb_h: f32, thumb_top: f32, opacity: f32) ->
         .opacity(opacity);
 
     let top_base = base.clone();
-    let hover_base = base.clone();
     let down_base = base.clone();
-    let drag_base = base;
+    let drag_base = base.clone();
+    let exit_base = base;
 
     div()
         .id(ElementId::Name(format!("{name}-bar").into()))
@@ -194,19 +194,9 @@ fn scroll_bar(name: &'static str, thumb_h: f32, thumb_top: f32, opacity: f32) ->
             entry.bar_top = f32::from(bounds.origin.y);
             entry.bar_bottom = f32::from(bounds.origin.y + bounds.size.height);
         })
-        // 悬停显形。gpui 在重绘后会补发一次 hover=false，故以真实光标位置为准，避免抖动。
-        .on_hover(move |hovered, window, cx| {
-            let pos = window.mouse_position();
-            let entry = cx
-                .global_mut::<Registry>()
-                .0
-                .entry(hover_base.clone())
-                .or_default();
-            let want = *hovered || entry.hits_bar(pos);
-            if entry.bar_hover != want {
-                entry.bar_hover = want;
-                window.refresh();
-            }
+        // 仅用于在悬停变化时请求重绘；显形与否由 render 依真实光标位置判定。
+        .on_hover(move |_hovered, window, _cx| {
+            window.refresh();
         })
         // 按下：若在滑块上则抓取该点，否则以滑块中心跳转（QQ/系统惯例）。
         .on_mouse_down(MouseButton::Left, move |event, window, cx| {
@@ -257,6 +247,18 @@ fn scroll_bar(name: &'static str, thumb_h: f32, thumb_top: f32, opacity: f32) ->
         })
         .on_mouse_up_out(MouseButton::Left, move |_event, window, cx| {
             end_drag(name, window, cx);
+        })
+        // 指针离开窗口时强制收回（否则离开瞬间光标停在滚动条上会一直常驻）。
+        .on_mouse_exit(move |_event, window, cx| {
+            let entry = cx
+                .global_mut::<Registry>()
+                .0
+                .entry(exit_base.clone())
+                .or_default();
+            entry.bar_hover = false;
+            entry.dragging = false;
+            entry.drag_grab = None;
+            window.refresh();
         })
         .child(thumb)
 }
@@ -357,12 +359,16 @@ pub(crate) fn smooth_scroll(
         window,
         cx,
     );
+    let mouse = window.mouse_position();
+    let active = window.is_window_active();
     let (bar_visible, thumb_top, thumb_h) = {
         let entry = cx.global_mut::<Registry>().0.entry(id.clone()).or_default();
         entry.offset = offset;
         let (thumb_h, travel) = thumb_geometry(viewport_h, content_h);
         entry.thumb_h = thumb_h;
         entry.travel = travel;
+        // 以真实光标位置为准（离开窗口后不再更新，故结合窗口是否激活）。
+        entry.bar_hover = entry.dragging || (active && entry.hits_bar(mouse));
         (entry.bar_visible(), entry.thumb_top(), thumb_h)
     };
     let opacity = transition(
@@ -373,11 +379,20 @@ pub(crate) fn smooth_scroll(
         cx,
     );
 
+    let content_id = id.clone();
     let body = div()
         .absolute()
         .top(px(-offset))
         .left(px(0.0))
         .right(px(0.0))
+        .on_prepaint(move |bounds, _window, cx| {
+            let h = f32::from(bounds.size.height);
+            cx.global_mut::<Registry>()
+                .0
+                .entry(content_id.clone())
+                .or_default()
+                .content = h;
+        })
         .child(content)
         .into_any_element();
     let bar = (max > 0.5).then(|| scroll_bar(name, thumb_h, thumb_top, opacity).into_any_element());
@@ -438,12 +453,16 @@ pub(crate) fn smooth_virtual_list(
         .children(rows)
         .into_any_element();
 
+    let mouse = window.mouse_position();
+    let active = window.is_window_active();
     let (bar_visible, thumb_top, thumb_h) = {
         let entry = cx.global_mut::<Registry>().0.entry(id.clone()).or_default();
         entry.offset = offset;
         let (thumb_h, travel) = thumb_geometry(viewport_h, content_h);
         entry.thumb_h = thumb_h;
         entry.travel = travel;
+        // 以真实光标位置为准（离开窗口后不再更新，故结合窗口是否激活）。
+        entry.bar_hover = entry.dragging || (active && entry.hits_bar(mouse));
         (entry.bar_visible(), entry.thumb_top(), thumb_h)
     };
     let opacity = transition(
