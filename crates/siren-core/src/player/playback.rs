@@ -213,17 +213,26 @@ impl Player {
 
     /// 引擎加载并开始播放指定地址。
     pub fn play_url(&mut self, url: &str) {
+        self.play_url_from(url, None);
+    }
+
+    /// 引擎加载并开始播放指定地址，可从 `start_ms` 起播（冷启动恢复上次进度）。
+    pub fn play_url_from(&mut self, url: &str, start_ms: Option<i64>) {
         log::info!(
-            "加载播放地址 song={:?} len={}",
+            "加载播放地址 song={:?} len={} start={:?}",
             self.state.song.as_ref().map(|s| s.id),
-            url.len()
+            url.len(),
+            start_ms
         );
-        self.engine.load(url);
+        self.engine.load_from(url, start_ms);
         self.engine.set_paused(false);
         log::debug!("引擎已加载新文件，恢复进度同步");
         // 新文件已交给引擎，之后读到的是新曲进度，可恢复位置/时长同步。
         self.awaiting_load = false;
         self.state.playing = true;
+        if let Some(ms) = start_ms {
+            self.state.position_ms = ms.max(0);
+        }
         self.publish();
     }
 

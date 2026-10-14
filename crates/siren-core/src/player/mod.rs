@@ -29,6 +29,14 @@ pub use silent::SilentEngine;
 pub trait PlaybackController: Send + Sync {
     /// 加载并播放地址。
     fn load(&self, url: &str);
+    /// 加载地址并从指定位置开始播放（`None` = 从头）。
+    ///
+    /// 引擎不支持时退化为 [`load`](Self::load)。实现应让引擎在**加载完成后**再跳转，
+    /// 避免加载前 seek 被丢弃（冷启动恢复进度即依赖此语义）。
+    fn load_from(&self, url: &str, start_ms: Option<i64>) {
+        let _ = start_ms;
+        self.load(url);
+    }
     /// 设置暂停状态。
     fn set_paused(&self, paused: bool);
     /// 停止播放。

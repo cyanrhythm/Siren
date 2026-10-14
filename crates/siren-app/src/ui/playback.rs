@@ -998,11 +998,10 @@ impl Playback {
                 match url {
                     Some(url) => {
                         log::info!("播放地址解析成功 id={}", song.id);
-                        this.player.play_url(&url);
+                        // 冷启动恢复：让引擎加载完成后自动跳到上次进度，避免加载前 seek 被丢弃。
+                        let resume = this.resume_ms.take();
+                        this.player.play_url_from(&url, resume);
                         this.needs_resolve = false;
-                        if let Some(pos) = this.resume_ms.take() {
-                            this.player.seek_ms(pos);
-                        }
                         this.status = format!("播放中：{}", song.name).into();
                         this.save_progress();
                     }

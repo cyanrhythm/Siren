@@ -139,6 +139,17 @@ impl Mpv {
         self.command(&["loadfile", url, "replace"]);
     }
 
+    /// 加载地址并从 `start_ms` 开始（借助 `loadfile` 的 `start=` 选项，加载完成后自动跳转）。
+    pub fn load_file_from(&self, url: &str, start_ms: Option<i64>) {
+        match start_ms {
+            Some(ms) if ms > 0 => {
+                let opt = format!("start={:.3}", ms as f64 / 1000.0);
+                self.command(&["loadfile", url, "replace", "-1", &opt]);
+            }
+            _ => self.load_file(url),
+        }
+    }
+
     pub fn set_paused(&self, paused: bool) {
         self.set_property("pause", if paused { "yes" } else { "no" });
     }
@@ -298,6 +309,10 @@ impl Drop for Mpv {
 impl crate::player::PlaybackController for Mpv {
     fn load(&self, url: &str) {
         self.load_file(url);
+    }
+
+    fn load_from(&self, url: &str, start_ms: Option<i64>) {
+        self.load_file_from(url, start_ms);
     }
 
     fn set_paused(&self, paused: bool) {
