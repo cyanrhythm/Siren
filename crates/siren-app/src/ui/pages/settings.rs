@@ -84,10 +84,8 @@ impl Root {
             })
             .into_any_element();
 
-        let body = div()
+        let content = div()
             .v_flex()
-            .flex_1()
-            .min_w(px(0.0))
             .w_full()
             .gap(px(16.0))
             .p(px(16.0))
@@ -112,10 +110,18 @@ impl Root {
                 "正在播放卡片",
                 "右侧面板卡片的顺序与显隐",
                 self.cards_control(weak, cx),
-            ))
-            .into_any_element();
+            ));
 
-        page_shell("设置".to_string(), body).into_any_element()
+        // 设置较多，窗口不够高时需滚动查看。
+        let scroll = div()
+            .id("settings-scroll")
+            .flex_1()
+            .min_w(px(0.0))
+            .min_h(px(0.0))
+            .overflow_y_scroll()
+            .child(content);
+
+        page_shell("设置".to_string(), scroll.into_any_element()).into_any_element()
     }
 
     /// 关闭到托盘设置当前值。
