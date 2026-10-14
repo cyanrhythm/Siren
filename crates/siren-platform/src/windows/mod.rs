@@ -23,3 +23,5 @@ pub mod display;
 pub mod icon;
 pub mod media;
 pub mod native;
+pub mod single_instance;
+pub mod tray;

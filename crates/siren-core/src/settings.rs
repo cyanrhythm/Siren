@@ -25,6 +25,8 @@ pub struct Settings {
     quality: Option<String>,
     /// 是否启用系统媒体控制（SMTC / MPRIS），默认开启。
     media_keys: Option<bool>,
+    /// 关闭主窗口时最小化到系统托盘（而非退出），默认开启。
+    close_to_tray: Option<bool>,
     /// 正在播放卡片顺序（代码列表，见 [`DEFAULT_CARDS`]）。
     cards: Option<Vec<String>>,
     /// 正在播放面板中隐藏的卡片（代码）。
@@ -93,6 +95,17 @@ impl Settings {
     /// 设置系统媒体控制开关并落盘。
     pub fn set_media_keys(&mut self, enabled: bool) {
         self.media_keys = Some(enabled);
+        self.save();
+    }
+
+    /// 关闭主窗口时是否最小化到托盘（默认开启）。
+    pub fn close_to_tray(&self) -> bool {
+        self.close_to_tray.unwrap_or(true)
+    }
+
+    /// 设置关闭到托盘并落盘。
+    pub fn set_close_to_tray(&mut self, enabled: bool) {
+        self.close_to_tray = Some(enabled);
         self.save();
     }
 

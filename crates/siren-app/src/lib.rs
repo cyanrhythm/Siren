@@ -15,6 +15,8 @@ pub mod theme;
 pub mod ui;
 
 use std::borrow::Cow;
+use std::cell::RefCell;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use gpui_kit::*;
 
@@ -26,6 +28,15 @@ const MI_SANS: &[u8] = include_bytes!("../../../assets/fonts/MiSans-Regular.ttf"
 const DEFAULT_W: f32 = 1100.0;
 const DEFAULT_H: f32 = 760.0;
 
+thread_local! {
+    /// 托盘句柄（保活；须与创建它的主线程同处）。
+    static TRAY: RefCell<Option<siren_platform::PlatformTray>> = const { RefCell::new(None) };
+}
+/// 托盘是否就绪（决定「关闭到托盘」是否生效）。
+static TRAY_READY: AtomicBool = AtomicBool::new(false);
+/// 是否正在退出（退出时关闭窗口不再拦为托盘最小化）。
+static QUITTING: AtomicBool = AtomicBool::new(false);
+
 /// 应用入口：初始化 tokio 运行时与 GPUI 主循环。
 pub fn run() {
     // 尽早初始化日志（文件 + 可选标准错误镜像）
@@ -33,6 +44,12 @@ pub fn run() {
 
     // 注册 AppUserModelID：让系统媒体浮层显示应用名而非“未知应用”
     siren_platform::set_app_user_model_id("com.cyanrhythm.Siren");
+
+    // 单实例：已有实例则唤起其窗口并退出本进程（避免多开）。
+    if !siren_platform::ensure_single_instance("com.cyanrhythm.Siren") {
+        log::info!("检测到已有实例，已唤起其窗口；本进程退出");
+        return;
+    }
 
     let runtime = tokio::runtime::Runtime::new().expect("创建 tokio 运行时失败");
 
@@ -93,9 +110,18 @@ pub fn run() {
                 },
                 cx,
                 move |window, cx| {
-                    // 关闭时保存窗口的物理矩形，供下次启动跨屏恢复
+                    // 关闭：默认最小化到托盘（托盘可用且设置开启时）；否则真正退出。
                     window.on_window_should_close(cx, |window, cx| {
-                        // 退出时同步落盘播放会话（队列/当前曲/进度）
+                        if !QUITTING.load(Ordering::SeqCst)
+                            && TRAY_READY.load(Ordering::SeqCst)
+                            && ui::close_to_tray(cx)
+                        {
+                            if let Some(hwnd) = siren_platform::window_hwnd(window) {
+                                siren_platform::hide_window(hwnd);
+                            }
+                            return false;
+                        }
+                        // 真正退出：同步落盘播放会话（队列/当前曲/进度）+ 保存窗口物理矩形
                         ui::flush_playback_session(cx);
                         if let Some(hwnd) = siren_platform::window_hwnd(window) {
                             if let Some((x, y, w, h)) = siren_platform::window_physical_rect(hwnd) {
@@ -129,6 +155,8 @@ pub fn run() {
                             siren_platform::show_window(hwnd);
                         })
                         .detach();
+                        // 系统托盘（左键切换显隐 / 菜单退出）。
+                        setup_tray(hwnd, cx);
                     }
                     Root::new(window, cx, runtime)
                 },
@@ -139,4 +167,43 @@ pub fn run() {
 
 fn env_f32(key: &str, default: f32) -> f32 {
     std::env::var(key).ok().and_then(|s| s.parse().ok()).unwrap_or(default)
+}
+
+/// 初始化系统托盘并轮询其事件（左键切换主窗口显隐；菜单「退出」）。
+fn setup_tray(hwnd: u64, cx: &mut App) {
+    let Some(tray) = siren_platform::create_tray() else {
+        log::warn!("系统托盘创建失败：关闭窗口将直接退出");
+        return;
+    };
+    TRAY.with(|cell| *cell.borrow_mut() = Some(tray));
+    TRAY_READY.store(true, Ordering::SeqCst);
+    cx.spawn(async move |cx| loop {
+        cx.background_executor()
+            .timer(std::time::Duration::from_millis(120))
+            .await;
+        let mut events = Vec::new();
+        TRAY.with(|cell| {
+            if let Some(tray) = cell.borrow().as_ref() {
+                siren_platform::poll_tray_events(tray, &mut events);
+            }
+        });
+        for event in events {
+            match event {
+                siren_platform::TrayEvent::ToggleWindow => {
+                    siren_platform::toggle_window(hwnd);
+                }
+                siren_platform::TrayEvent::Quit => {
+                    QUITTING.store(true, Ordering::SeqCst);
+                    cx.update(|cx| {
+                        ui::flush_playback_session(cx);
+                    });
+                    cx.update(|cx| {
+                        cx.quit();
+                    });
+                    return;
+                }
+            }
+        }
+    })
+    .detach();
 }

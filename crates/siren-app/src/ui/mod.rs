@@ -67,6 +67,13 @@ pub(crate) fn min_window_size(np_width: f32) -> (f32, f32) {
     (w, w * 0.618)
 }
 
+/// 关闭主窗口时是否最小化到托盘（供引导期 `on_window_should_close` 使用；无 store 时按否）。
+pub(crate) fn close_to_tray(cx: &App) -> bool {
+    cx.try_global::<settings_store::SettingsStore>()
+        .map(|store| store.close_to_tray())
+        .unwrap_or(false)
+}
+
 /// 当前页面（音乐库为常驻侧栏，不在此列）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Route {
@@ -673,6 +680,12 @@ impl Root {
             self.drag_flip
                 .insert(key.clone(), ((old as f32 - i as f32) * stride, generation));
         }
+    }
+
+    /// 设置关闭主窗口时最小化到托盘（落盘）。
+    pub(crate) fn set_close_to_tray(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        cx.global_mut::<SettingsStore>().set_close_to_tray(enabled);
+        cx.notify();
     }
 
     /// 设置某卡片显隐（落盘）。

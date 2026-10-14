@@ -47,6 +47,16 @@ impl SettingsStore {
         self.data.set_media_keys(enabled);
     }
 
+    /// 关闭主窗口是否最小化到托盘。
+    pub(crate) fn close_to_tray(&self) -> bool {
+        self.data.close_to_tray()
+    }
+
+    /// 设置关闭到托盘（落盘）。
+    pub(crate) fn set_close_to_tray(&mut self, enabled: bool) {
+        self.data.set_close_to_tray(enabled);
+    }
+
     /// 正在播放卡片完整顺序（含隐藏项）。
     pub(crate) fn card_order(&self) -> Vec<String> {
         self.data.card_order()

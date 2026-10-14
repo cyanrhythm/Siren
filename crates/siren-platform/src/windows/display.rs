@@ -5,8 +5,9 @@ use windows::Win32::UI::HiDpi::{
     GetDpiForSystem, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetWindowRect, SetForegroundWindow, SetWindowPos, ShowWindowAsync, SystemParametersInfoW, SET_WINDOW_POS_FLAGS,
-    SPI_GETWORKAREA, SWP_NOACTIVATE, SWP_NOZORDER, SW_SHOW, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+    GetWindowRect, IsWindowVisible, SetForegroundWindow, SetWindowPos, ShowWindowAsync, SystemParametersInfoW,
+    SET_WINDOW_POS_FLAGS, SPI_GETWORKAREA, SWP_NOACTIVATE, SWP_NOZORDER, SW_HIDE, SW_RESTORE, SW_SHOW,
+    SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
 };
 
 fn raw_work_area() -> Option<RECT> {
@@ -58,6 +59,40 @@ pub fn show_window(hwnd: u64) {
     unsafe {
         let _ = ShowWindowAsync(handle, SW_SHOW);
         let _ = SetForegroundWindow(handle);
+    }
+}
+
+/// 恢复（若最小化则还原）窗口并置前。
+pub fn restore_window(hwnd: u64) {
+    let handle = HWND(hwnd as usize as *mut core::ffi::c_void);
+    unsafe {
+        let _ = ShowWindowAsync(handle, SW_RESTORE);
+        let _ = SetForegroundWindow(handle);
+    }
+}
+
+/// 隐藏窗口（最小化到托盘）。
+pub fn hide_window(hwnd: u64) {
+    let handle = HWND(hwnd as usize as *mut core::ffi::c_void);
+    unsafe {
+        let _ = ShowWindowAsync(handle, SW_HIDE);
+    }
+}
+
+/// 窗口当前是否可见。
+pub fn is_window_visible(hwnd: u64) -> bool {
+    let handle = HWND(hwnd as usize as *mut core::ffi::c_void);
+    unsafe { IsWindowVisible(handle).as_bool() }
+}
+
+/// 切换窗口显隐；返回切换后是否可见。
+pub fn toggle_window(hwnd: u64) -> bool {
+    if is_window_visible(hwnd) {
+        hide_window(hwnd);
+        false
+    } else {
+        restore_window(hwnd);
+        true
     }
 }
 

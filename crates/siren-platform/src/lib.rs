@@ -24,6 +24,7 @@ pub mod audio;
 pub mod lyric_window;
 pub mod media_session;
 pub mod native_library;
+pub mod tray;
 pub mod ui_scale;
 pub mod window;
 // pub mod tray;          // TODO: 若 tray-icon 不够用再自建
@@ -125,6 +126,58 @@ pub fn set_window_icon(_hwnd: u64) -> bool {
 pub use windows::display::show_window;
 #[cfg(not(target_os = "windows"))]
 pub fn show_window(_hwnd: u64) {}
+
+/// 恢复（最小化还原）并置前窗口（非 Windows 无操作）。
+#[cfg(target_os = "windows")]
+pub use windows::display::restore_window;
+#[cfg(not(target_os = "windows"))]
+pub fn restore_window(_hwnd: u64) {}
+
+/// 隐藏窗口（最小化到托盘；非 Windows 无操作）。
+#[cfg(target_os = "windows")]
+pub use windows::display::hide_window;
+#[cfg(not(target_os = "windows"))]
+pub fn hide_window(_hwnd: u64) {}
+
+/// 窗口是否可见（非 Windows 恒 `false`）。
+#[cfg(target_os = "windows")]
+pub use windows::display::is_window_visible;
+#[cfg(not(target_os = "windows"))]
+pub fn is_window_visible(_hwnd: u64) -> bool {
+    false
+}
+
+/// 切换窗口显隐，返回切换后是否可见（非 Windows 无操作）。
+#[cfg(target_os = "windows")]
+pub use windows::display::toggle_window;
+#[cfg(not(target_os = "windows"))]
+pub fn toggle_window(_hwnd: u64) -> bool {
+    false
+}
+
+/// 单实例：唯一实例返回 `true`；已有实例则唤起其窗口并返回 `false`。
+#[cfg(target_os = "windows")]
+pub use windows::single_instance::ensure_single_instance;
+/// TODO: Linux/macOS 实现；当前占位放行（不阻断启动）。
+#[cfg(not(target_os = "windows"))]
+pub fn ensure_single_instance(_id: &str) -> bool {
+    true
+}
+
+pub use tray::TrayEvent;
+
+/// 创建系统托盘（唯一入口；非 Windows 暂空）。
+#[cfg(target_os = "windows")]
+pub use windows::tray::{create_tray, poll_tray_events, Tray as PlatformTray};
+/// 非 Windows 的托盘占位类型。
+#[cfg(not(target_os = "windows"))]
+pub struct PlatformTray;
+#[cfg(not(target_os = "windows"))]
+pub fn create_tray() -> Option<PlatformTray> {
+    None
+}
+#[cfg(not(target_os = "windows"))]
+pub fn poll_tray_events(_tray: &PlatformTray, _out: &mut Vec<TrayEvent>) {}
 
 /// 窗口的物理矩形 `(x,y,w,h)`；非 Windows 返回 None。
 #[cfg(target_os = "windows")]

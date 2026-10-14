@@ -11,6 +11,7 @@ use gpui_kit::*;
 
 use siren_core::model::AudioQuality;
 
+use super::super::settings_store::SettingsStore;
 use super::super::{icon, motion, page_shell, Root};
 use crate::theme;
 
@@ -73,6 +74,16 @@ impl Root {
             })
             .into_any_element();
 
+        let weak_tray = weak.clone();
+        let tray_control = Switch::new("close-to-tray")
+            .checked(self.close_to_tray_setting(cx))
+            .on_click(move |checked, _window, cx| {
+                weak_tray
+                    .update(cx, |root, cx| root.set_close_to_tray(*checked, cx))
+                    .ok();
+            })
+            .into_any_element();
+
         let body = div()
             .v_flex()
             .flex_1()
@@ -85,7 +96,17 @@ impl Root {
                 "在线播放的音质档位（更高档位需登录 / 会员）",
                 quality_row(current, weak.clone()),
             ))
-            .child(section("系统", "系统媒体控制（媒体键与系统播放卡片）", media_control))
+            .child(section(
+                "系统",
+                "系统媒体控制与关闭行为",
+                div()
+                    .v_flex()
+                    .w_full()
+                    .gap(px(10.0))
+                    .child(toggle_row("系统媒体控制（媒体键与系统播放卡片）", media_control))
+                    .child(toggle_row("关闭主窗口时最小化到托盘（从托盘菜单退出）", tray_control))
+                    .into_any_element(),
+            ))
             .child(section("右侧栏", "正在播放栏宽度（300–800）", self.width_control(cx)))
             .child(section(
                 "正在播放卡片",
@@ -95,6 +116,11 @@ impl Root {
             .into_any_element();
 
         page_shell("设置".to_string(), body).into_any_element()
+    }
+
+    /// 关闭到托盘设置当前值。
+    fn close_to_tray_setting(&self, cx: &App) -> bool {
+        SettingsStore::of(cx).close_to_tray()
     }
 
     /// 正在播放卡片：拖动把手调整顺序，开关控制显隐（对齐 Melodia `CardLayoutEditor`）。
@@ -238,6 +264,25 @@ fn section(title: &str, subtitle: &str, control: AnyElement) -> AnyElement {
                 .text_xs()
                 .text_color(theme::text_gray())
                 .child(subtitle.to_string()),
+        )
+        .child(control)
+        .into_any_element()
+}
+
+/// 一行开关：左标签 + 右控件。
+fn toggle_row(label: &str, control: AnyElement) -> AnyElement {
+    div()
+        .w_full()
+        .flex()
+        .items_center()
+        .gap(px(12.0))
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.0))
+                .text_sm()
+                .text_color(theme::text_primary())
+                .child(label.to_string()),
         )
         .child(control)
         .into_any_element()
