@@ -12,6 +12,7 @@ use siren_core::model::{Album, Artist, Playlist, Song};
 use super::super::components::like_button;
 use super::super::playback::Playback;
 use super::super::services::Services;
+use super::super::smooth_scroll::smooth_virtual_list;
 use super::super::{page_shell, PageEvent};
 use crate::theme;
 
@@ -175,7 +176,7 @@ impl SearchPage {
 }
 
 impl Render for SearchPage {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let weak = cx.weak_entity();
         let tabs = {
             let mut row = div().flex().items_center().gap(px(8.0)).px(px(16.0)).pt(px(4.0));
@@ -201,10 +202,10 @@ impl Render for SearchPage {
         };
 
         let body: AnyElement = match self.kind {
-            SearchKind::Song => self.song_list(cx),
-            SearchKind::Album => self.album_list(cx),
-            SearchKind::Artist => self.artist_list(cx),
-            SearchKind::Playlist => self.playlist_list(cx),
+            SearchKind::Song => self.song_list(window, cx),
+            SearchKind::Album => self.album_list(window, cx),
+            SearchKind::Artist => self.artist_list(window, cx),
+            SearchKind::Playlist => self.playlist_list(window, cx),
         };
 
         let content = div().v_flex().flex_1().min_w(px(0.0)).w_full().child(tabs).child(body);
@@ -214,268 +215,284 @@ impl Render for SearchPage {
 }
 
 impl SearchPage {
-    fn song_list(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn song_list(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let songs = self.songs.clone();
         let count = songs.len();
         let selected = self.selected;
         let covers = self.services.covers.clone();
         let playback = self.playback.clone();
         let weak = cx.weak_entity();
-        uniform_list("search-songs", count, move |range, _window, cx| {
-            range
-                .map(|i| {
-                    let song = &songs[i];
-                    let marker = if selected == Some(i) { "▶ " } else { "" };
-                    let cover = covers.image(&song.cover_url, 40.0);
-                    let weak = weak.clone();
-                    let weak_ctx = weak.clone();
-                    let sid = song.id;
-                    let song_owned = song.clone();
-                    let liked = playback.read(cx).is_liked(sid);
-                    div()
-                        .id(format!("search-song-{}", song.id))
-                        .group(format!("search-song-{}", song.id))
-                        .w_full()
-                        .h(px(48.0))
-                        .px(px(16.0))
-                        .flex()
-                        .items_center()
-                        .gap(px(12.0))
-                        .rounded(px(6.0))
-                        .hover(|s| s.bg(theme::card_surface()))
-                        .cursor_pointer()
-                        .on_click(move |_ev, _window, cx| {
-                            weak.update(cx, |this, cx| {
-                                let items = this.songs.as_ref().clone();
-                                this.selected = Some(i);
-                                this.playback.update(cx, |pb, cx| pb.play_from(items, i, cx));
+        smooth_virtual_list(
+            "search-songs",
+            count,
+            48.0,
+            move |range, _window, cx| {
+                range
+                    .map(|i| {
+                        let song = &songs[i];
+                        let marker = if selected == Some(i) { "▶ " } else { "" };
+                        let cover = covers.image(&song.cover_url, 40.0);
+                        let weak = weak.clone();
+                        let weak_ctx = weak.clone();
+                        let sid = song.id;
+                        let song_owned = song.clone();
+                        let liked = playback.read(cx).is_liked(sid);
+                        div()
+                            .id(format!("search-song-{}", song.id))
+                            .group(format!("search-song-{}", song.id))
+                            .w_full()
+                            .h(px(48.0))
+                            .px(px(16.0))
+                            .flex()
+                            .items_center()
+                            .gap(px(12.0))
+                            .rounded(px(6.0))
+                            .hover(|s| s.bg(theme::card_surface()))
+                            .cursor_pointer()
+                            .on_click(move |_ev, _window, cx| {
+                                weak.update(cx, |this, cx| {
+                                    let items = this.songs.as_ref().clone();
+                                    this.selected = Some(i);
+                                    this.playback.update(cx, |pb, cx| pb.play_from(items, i, cx));
+                                })
+                                .ok();
                             })
-                            .ok();
-                        })
-                        .child(cover)
-                        .child(
-                            div()
-                                .v_flex()
-                                .flex_1()
-                                .min_w(px(0.0))
-                                .overflow_hidden()
-                                .child(
-                                    div()
-                                        .text_sm()
-                                        .text_color(theme::text_primary())
-                                        .truncate()
-                                        .child(format!("{marker}{}", song.name)),
-                                )
-                                .child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(theme::text_gray())
-                                        .truncate()
-                                        .child(song.artists.clone()),
-                                ),
-                        )
-                        .child(like_button(
-                            &playback,
-                            song.clone(),
-                            format!("search-song-{}", song.id),
-                            cx,
-                        ))
-                        .context_menu(move |menu, _w, _cx| {
-                            let weak_next = weak_ctx.clone();
-                            let weak_like = weak_ctx.clone();
-                            let weak_add = weak_ctx.clone();
-                            let song_next = song_owned.clone();
-                            let song_like = song_owned.clone();
-                            menu.item(PopupMenuItem::new("下一首播放").on_click(move |_ev, _w, cx| {
-                                weak_next
-                                    .update(cx, |page, cx| {
-                                        page.playback.update(cx, |pb, cx| pb.play_next(song_next.clone(), cx))
-                                    })
-                                    .ok();
-                            }))
-                            .item(PopupMenuItem::new(if liked { "取消喜欢" } else { "喜欢" }).on_click(
-                                move |_ev, _w, cx| {
-                                    weak_like
+                            .child(cover)
+                            .child(
+                                div()
+                                    .v_flex()
+                                    .flex_1()
+                                    .min_w(px(0.0))
+                                    .overflow_hidden()
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .text_color(theme::text_primary())
+                                            .truncate()
+                                            .child(format!("{marker}{}", song.name)),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(theme::text_gray())
+                                            .truncate()
+                                            .child(song.artists.clone()),
+                                    ),
+                            )
+                            .child(like_button(
+                                &playback,
+                                song.clone(),
+                                format!("search-song-{}", song.id),
+                                cx,
+                            ))
+                            .context_menu(move |menu, _w, _cx| {
+                                let weak_next = weak_ctx.clone();
+                                let weak_like = weak_ctx.clone();
+                                let weak_add = weak_ctx.clone();
+                                let song_next = song_owned.clone();
+                                let song_like = song_owned.clone();
+                                menu.item(PopupMenuItem::new("下一首播放").on_click(move |_ev, _w, cx| {
+                                    weak_next
                                         .update(cx, |page, cx| {
-                                            page.playback
-                                                .update(cx, |pb, cx| pb.toggle_like_song(song_like.clone(), cx))
+                                            page.playback.update(cx, |pb, cx| pb.play_next(song_next.clone(), cx))
                                         })
                                         .ok();
-                                },
-                            ))
-                            .item(PopupMenuItem::new("添加到歌单").on_click(move |_ev, _w, cx| {
-                                weak_add
-                                    .update(cx, |_page, cx| cx.emit(PageEvent::AddToPlaylist { song_id: sid }))
-                                    .ok();
-                            }))
-                        })
-                        .into_any_element()
-                })
-                .collect::<Vec<_>>()
-        })
-        .flex_1()
-        .w_full()
-        .min_w(px(0.0))
+                                }))
+                                .item(PopupMenuItem::new(if liked { "取消喜欢" } else { "喜欢" }).on_click(
+                                    move |_ev, _w, cx| {
+                                        weak_like
+                                            .update(cx, |page, cx| {
+                                                page.playback
+                                                    .update(cx, |pb, cx| pb.toggle_like_song(song_like.clone(), cx))
+                                            })
+                                            .ok();
+                                    },
+                                ))
+                                .item(PopupMenuItem::new("添加到歌单").on_click(move |_ev, _w, cx| {
+                                    weak_add
+                                        .update(cx, |_page, cx| cx.emit(PageEvent::AddToPlaylist { song_id: sid }))
+                                        .ok();
+                                }))
+                            })
+                            .into_any_element()
+                    })
+                    .collect::<Vec<_>>()
+            },
+            window,
+            cx,
+        )
         .into_any_element()
     }
 
-    fn album_list(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn album_list(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let items = self.albums.clone();
         let count = items.len();
         let covers = self.services.covers.clone();
         let weak = cx.weak_entity();
-        let render = uniform_list("search-albums", count, move |range, _window, _cx| {
-            range
-                .map(|i| {
-                    let album = &items[i];
-                    let cover = covers.image(&album.cover_url, 48.0);
-                    let weak = weak.clone();
-                    let id = album.id;
-                    let name = album.name.clone();
-                    div()
-                        .id(format!("search-album-{}", album.id))
-                        .w_full()
-                        .h(px(60.0))
-                        .px(px(16.0))
-                        .flex()
-                        .items_center()
-                        .gap(px(12.0))
-                        .rounded(px(6.0))
-                        .hover(|s| s.bg(theme::card_surface()))
-                        .cursor_pointer()
-                        .on_click(move |_ev, _window, cx| {
-                            weak.update(cx, |_page, cx| {
-                                cx.emit(PageEvent::OpenAlbum { id, name: name.clone() });
+        let render = smooth_virtual_list(
+            "search-albums",
+            count,
+            60.0,
+            move |range, _window, _cx| {
+                range
+                    .map(|i| {
+                        let album = &items[i];
+                        let cover = covers.image(&album.cover_url, 48.0);
+                        let weak = weak.clone();
+                        let id = album.id;
+                        let name = album.name.clone();
+                        div()
+                            .id(format!("search-album-{}", album.id))
+                            .w_full()
+                            .h(px(60.0))
+                            .px(px(16.0))
+                            .flex()
+                            .items_center()
+                            .gap(px(12.0))
+                            .rounded(px(6.0))
+                            .hover(|s| s.bg(theme::card_surface()))
+                            .cursor_pointer()
+                            .on_click(move |_ev, _window, cx| {
+                                weak.update(cx, |_page, cx| {
+                                    cx.emit(PageEvent::OpenAlbum { id, name: name.clone() });
+                                })
+                                .ok();
                             })
-                            .ok();
-                        })
-                        .child(cover)
-                        .child(
-                            div()
-                                .v_flex()
-                                .flex_1()
-                                .min_w(px(0.0))
-                                .overflow_hidden()
-                                .child(
-                                    div()
-                                        .text_sm()
-                                        .text_color(theme::text_primary())
-                                        .truncate()
-                                        .child(album.name.clone()),
-                                )
-                                .child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(theme::text_gray())
-                                        .truncate()
-                                        .child(album.artists.clone()),
-                                ),
-                        )
-                        .into_any_element()
-                })
-                .collect::<Vec<_>>()
-        })
-        .flex_1()
-        .w_full()
-        .min_w(px(0.0));
+                            .child(cover)
+                            .child(
+                                div()
+                                    .v_flex()
+                                    .flex_1()
+                                    .min_w(px(0.0))
+                                    .overflow_hidden()
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .text_color(theme::text_primary())
+                                            .truncate()
+                                            .child(album.name.clone()),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(theme::text_gray())
+                                            .truncate()
+                                            .child(album.artists.clone()),
+                                    ),
+                            )
+                            .into_any_element()
+                    })
+                    .collect::<Vec<_>>()
+            },
+            window,
+            cx,
+        );
         render.into_any_element()
     }
 
-    fn artist_list(&self, _cx: &mut Context<Self>) -> AnyElement {
+    fn artist_list(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let items = self.artists.clone();
         let count = items.len();
         let covers = self.services.covers.clone();
-        let render = uniform_list("search-artists", count, move |range, _window, _cx| {
-            range
-                .map(|i| {
-                    let artist = &items[i];
-                    let cover = covers.image_round(&artist.cover_url, 44.0);
-                    div()
-                        .id(format!("search-artist-{}", artist.id))
-                        .w_full()
-                        .h(px(56.0))
-                        .px(px(16.0))
-                        .flex()
-                        .items_center()
-                        .gap(px(12.0))
-                        .rounded(px(6.0))
-                        .hover(|s| s.bg(theme::card_surface()))
-                        .child(cover)
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(theme::text_primary())
-                                .truncate()
-                                .child(artist.name.clone()),
-                        )
-                        .into_any_element()
-                })
-                .collect::<Vec<_>>()
-        })
-        .flex_1()
-        .w_full()
-        .min_w(px(0.0));
+        let render = smooth_virtual_list(
+            "search-artists",
+            count,
+            56.0,
+            move |range, _window, _cx| {
+                range
+                    .map(|i| {
+                        let artist = &items[i];
+                        let cover = covers.image_round(&artist.cover_url, 44.0);
+                        div()
+                            .id(format!("search-artist-{}", artist.id))
+                            .w_full()
+                            .h(px(56.0))
+                            .px(px(16.0))
+                            .flex()
+                            .items_center()
+                            .gap(px(12.0))
+                            .rounded(px(6.0))
+                            .hover(|s| s.bg(theme::card_surface()))
+                            .child(cover)
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(theme::text_primary())
+                                    .truncate()
+                                    .child(artist.name.clone()),
+                            )
+                            .into_any_element()
+                    })
+                    .collect::<Vec<_>>()
+            },
+            window,
+            cx,
+        );
         render.into_any_element()
     }
 
-    fn playlist_list(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn playlist_list(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let items = self.playlists.clone();
         let count = items.len();
         let covers = self.services.covers.clone();
         let weak = cx.weak_entity();
-        let render = uniform_list("search-playlists", count, move |range, _window, _cx| {
-            range
-                .map(|i| {
-                    let pl = &items[i];
-                    let cover = covers.image(&pl.cover_url, 48.0);
-                    let weak = weak.clone();
-                    let id = pl.id;
-                    let name = pl.name.clone();
-                    div()
-                        .id(format!("search-playlist-{id}"))
-                        .w_full()
-                        .h(px(60.0))
-                        .px(px(16.0))
-                        .flex()
-                        .items_center()
-                        .gap(px(12.0))
-                        .rounded(px(6.0))
-                        .hover(|s| s.bg(theme::card_surface()))
-                        .cursor_pointer()
-                        .on_click(move |_ev, _window, cx| {
-                            weak.update(cx, |_page, cx| {
-                                cx.emit(PageEvent::OpenPlaylist { id, name: name.clone() });
+        let render = smooth_virtual_list(
+            "search-playlists",
+            count,
+            60.0,
+            move |range, _window, _cx| {
+                range
+                    .map(|i| {
+                        let pl = &items[i];
+                        let cover = covers.image(&pl.cover_url, 48.0);
+                        let weak = weak.clone();
+                        let id = pl.id;
+                        let name = pl.name.clone();
+                        div()
+                            .id(format!("search-playlist-{id}"))
+                            .w_full()
+                            .h(px(60.0))
+                            .px(px(16.0))
+                            .flex()
+                            .items_center()
+                            .gap(px(12.0))
+                            .rounded(px(6.0))
+                            .hover(|s| s.bg(theme::card_surface()))
+                            .cursor_pointer()
+                            .on_click(move |_ev, _window, cx| {
+                                weak.update(cx, |_page, cx| {
+                                    cx.emit(PageEvent::OpenPlaylist { id, name: name.clone() });
+                                })
+                                .ok();
                             })
-                            .ok();
-                        })
-                        .child(cover)
-                        .child(
-                            div()
-                                .v_flex()
-                                .flex_1()
-                                .min_w(px(0.0))
-                                .overflow_hidden()
-                                .child(
-                                    div()
-                                        .text_sm()
-                                        .text_color(theme::text_primary())
-                                        .truncate()
-                                        .child(pl.name.clone()),
-                                )
-                                .child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(theme::text_gray())
-                                        .child(format!("{} 首", pl.track_count)),
-                                ),
-                        )
-                        .into_any_element()
-                })
-                .collect::<Vec<_>>()
-        })
-        .flex_1()
-        .w_full()
-        .min_w(px(0.0));
+                            .child(cover)
+                            .child(
+                                div()
+                                    .v_flex()
+                                    .flex_1()
+                                    .min_w(px(0.0))
+                                    .overflow_hidden()
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .text_color(theme::text_primary())
+                                            .truncate()
+                                            .child(pl.name.clone()),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(theme::text_gray())
+                                            .child(format!("{} 首", pl.track_count)),
+                                    ),
+                            )
+                            .into_any_element()
+                    })
+                    .collect::<Vec<_>>()
+            },
+            window,
+            cx,
+        );
         render.into_any_element()
     }
 }

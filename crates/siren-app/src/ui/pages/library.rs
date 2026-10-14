@@ -14,6 +14,7 @@ use siren_core::model::{Album, Artist, Playlist};
 
 use super::super::services::Services;
 use super::super::session::{Account, Session};
+use super::super::smooth_scroll::smooth_virtual_list;
 use super::super::{icon, PageEvent};
 use crate::theme;
 
@@ -377,114 +378,122 @@ impl LibraryPage {
     }
 
     /// 收藏专辑列表。
-    fn album_list(&self, cx: &Context<Self>) -> AnyElement {
+    fn album_list(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let albums = self.albums.clone();
         let count = albums.len();
         let covers = self.services.covers.clone();
         let weak = cx.weak_entity();
-        uniform_list("lib-albums", count, move |range, _window, _cx| {
-            range
-                .map(|i| {
-                    let album = &albums[i];
-                    let cover = covers.image(&album.cover_url, 48.0);
-                    let weak = weak.clone();
-                    let (id, name) = (album.id, album.name.clone());
-                    div()
-                        .id(format!("lib-album-{id}"))
-                        .w_full()
-                        .h(px(56.0))
-                        .px(px(6.0))
-                        .flex()
-                        .items_center()
-                        .gap(px(12.0))
-                        .rounded(px(6.0))
-                        .hover(|s| s.bg(theme::card_surface()))
-                        .cursor_pointer()
-                        .on_click(move |_ev, _window, cx| {
-                            weak.update(cx, |_page, cx| {
-                                cx.emit(PageEvent::OpenAlbum { id, name: name.clone() });
+        smooth_virtual_list(
+            "lib-albums",
+            count,
+            56.0,
+            move |range, _window, _cx| {
+                range
+                    .map(|i| {
+                        let album = &albums[i];
+                        let cover = covers.image(&album.cover_url, 48.0);
+                        let weak = weak.clone();
+                        let (id, name) = (album.id, album.name.clone());
+                        div()
+                            .id(format!("lib-album-{id}"))
+                            .w_full()
+                            .h(px(56.0))
+                            .px(px(6.0))
+                            .flex()
+                            .items_center()
+                            .gap(px(12.0))
+                            .rounded(px(6.0))
+                            .hover(|s| s.bg(theme::card_surface()))
+                            .cursor_pointer()
+                            .on_click(move |_ev, _window, cx| {
+                                weak.update(cx, |_page, cx| {
+                                    cx.emit(PageEvent::OpenAlbum { id, name: name.clone() });
+                                })
+                                .ok();
                             })
-                            .ok();
-                        })
-                        .child(cover)
-                        .child(
-                            div()
-                                .v_flex()
-                                .flex_1()
-                                .min_w(px(0.0))
-                                .overflow_hidden()
-                                .child(
-                                    div()
-                                        .text_sm()
-                                        .text_color(theme::text_primary())
-                                        .truncate()
-                                        .child(album.name.clone()),
-                                )
-                                .child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(theme::text_gray())
-                                        .truncate()
-                                        .child(album.artists.clone()),
-                                ),
-                        )
-                        .into_any_element()
-                })
-                .collect::<Vec<_>>()
-        })
-        .flex_1()
-        .w_full()
-        .min_w(px(0.0))
+                            .child(cover)
+                            .child(
+                                div()
+                                    .v_flex()
+                                    .flex_1()
+                                    .min_w(px(0.0))
+                                    .overflow_hidden()
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .text_color(theme::text_primary())
+                                            .truncate()
+                                            .child(album.name.clone()),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(theme::text_gray())
+                                            .truncate()
+                                            .child(album.artists.clone()),
+                                    ),
+                            )
+                            .into_any_element()
+                    })
+                    .collect::<Vec<_>>()
+            },
+            window,
+            cx,
+        )
         .into_any_element()
     }
 
     /// 收藏歌手列表。
-    fn artist_list(&self, cx: &Context<Self>) -> AnyElement {
+    fn artist_list(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let artists = self.artists.clone();
         let count = artists.len();
         let covers = self.services.covers.clone();
         let weak = cx.weak_entity();
-        uniform_list("lib-artists", count, move |range, _window, _cx| {
-            range
-                .map(|i| {
-                    let artist = &artists[i];
-                    let cover = covers.image_round(&artist.cover_url, 40.0);
-                    let weak = weak.clone();
-                    let (id, name) = (artist.id, artist.name.clone());
-                    div()
-                        .id(format!("lib-artist-{id}"))
-                        .w_full()
-                        .h(px(56.0))
-                        .px(px(6.0))
-                        .flex()
-                        .items_center()
-                        .gap(px(12.0))
-                        .rounded(px(6.0))
-                        .hover(|s| s.bg(theme::card_surface()))
-                        .cursor_pointer()
-                        .on_click(move |_ev, _window, cx| {
-                            weak.update(cx, |_page, cx| {
-                                cx.emit(PageEvent::OpenArtist { id, name: name.clone() });
+        smooth_virtual_list(
+            "lib-artists",
+            count,
+            56.0,
+            move |range, _window, _cx| {
+                range
+                    .map(|i| {
+                        let artist = &artists[i];
+                        let cover = covers.image_round(&artist.cover_url, 40.0);
+                        let weak = weak.clone();
+                        let (id, name) = (artist.id, artist.name.clone());
+                        div()
+                            .id(format!("lib-artist-{id}"))
+                            .w_full()
+                            .h(px(56.0))
+                            .px(px(6.0))
+                            .flex()
+                            .items_center()
+                            .gap(px(12.0))
+                            .rounded(px(6.0))
+                            .hover(|s| s.bg(theme::card_surface()))
+                            .cursor_pointer()
+                            .on_click(move |_ev, _window, cx| {
+                                weak.update(cx, |_page, cx| {
+                                    cx.emit(PageEvent::OpenArtist { id, name: name.clone() });
+                                })
+                                .ok();
                             })
-                            .ok();
-                        })
-                        .child(cover)
-                        .child(
-                            div().flex_1().min_w(px(0.0)).overflow_hidden().child(
-                                div()
-                                    .text_sm()
-                                    .text_color(theme::text_primary())
-                                    .truncate()
-                                    .child(artist.name.clone()),
-                            ),
-                        )
-                        .into_any_element()
-                })
-                .collect::<Vec<_>>()
-        })
-        .flex_1()
-        .w_full()
-        .min_w(px(0.0))
+                            .child(cover)
+                            .child(
+                                div().flex_1().min_w(px(0.0)).overflow_hidden().child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(theme::text_primary())
+                                        .truncate()
+                                        .child(artist.name.clone()),
+                                ),
+                            )
+                            .into_any_element()
+                    })
+                    .collect::<Vec<_>>()
+            },
+            window,
+            cx,
+        )
         .into_any_element()
     }
 
@@ -535,97 +544,101 @@ impl LibraryPage {
     }
 
     /// 我的歌单列表。
-    fn playlist_list(&self, cx: &Context<Self>) -> AnyElement {
+    fn playlist_list(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let playlists = self.my_playlists.clone();
         let count = playlists.len();
         let covers = self.services.covers.clone();
         let weak = cx.weak_entity();
-        uniform_list("lib-playlists", count, move |range, _window, _cx| {
-            range
-                .map(|i| {
-                    let pl = &playlists[i];
-                    let cover = covers.image(&pl.cover_url, 48.0);
-                    let weak = weak.clone();
-                    let weak_ctx = weak.clone();
-                    let (id, name) = (pl.id, pl.name.clone());
-                    div()
-                        .id(format!("lib-playlist-{id}"))
-                        .w_full()
-                        .h(px(56.0))
-                        .px(px(6.0))
-                        .flex()
-                        .items_center()
-                        .gap(px(12.0))
-                        .rounded(px(6.0))
-                        .hover(|s| s.bg(theme::card_surface()))
-                        .cursor_pointer()
-                        .on_click(move |_ev, _window, cx| {
-                            weak.update(cx, |_page, cx| {
-                                cx.emit(PageEvent::OpenPlaylist { id, name: name.clone() });
+        smooth_virtual_list(
+            "lib-playlists",
+            count,
+            56.0,
+            move |range, _window, _cx| {
+                range
+                    .map(|i| {
+                        let pl = &playlists[i];
+                        let cover = covers.image(&pl.cover_url, 48.0);
+                        let weak = weak.clone();
+                        let weak_ctx = weak.clone();
+                        let (id, name) = (pl.id, pl.name.clone());
+                        div()
+                            .id(format!("lib-playlist-{id}"))
+                            .w_full()
+                            .h(px(56.0))
+                            .px(px(6.0))
+                            .flex()
+                            .items_center()
+                            .gap(px(12.0))
+                            .rounded(px(6.0))
+                            .hover(|s| s.bg(theme::card_surface()))
+                            .cursor_pointer()
+                            .on_click(move |_ev, _window, cx| {
+                                weak.update(cx, |_page, cx| {
+                                    cx.emit(PageEvent::OpenPlaylist { id, name: name.clone() });
+                                })
+                                .ok();
                             })
-                            .ok();
-                        })
-                        .context_menu(move |menu, _w, _cx| {
-                            let w_pin = weak_ctx.clone();
-                            let w_unpin = weak_ctx.clone();
-                            let w_up = weak_ctx.clone();
-                            let w_down = weak_ctx.clone();
-                            menu.item(PopupMenuItem::new("置顶").on_click(move |_e, _w, cx| {
-                                w_pin.update(cx, |page, cx| page.pin_playlist(id, true, cx)).ok();
-                            }))
-                            .item(PopupMenuItem::new("取消置顶").on_click(move |_e, _w, cx| {
-                                w_unpin.update(cx, |page, cx| page.pin_playlist(id, false, cx)).ok();
-                            }))
-                            .item(PopupMenuItem::new("上移").on_click(move |_e, _w, cx| {
-                                w_up.update(cx, |page, cx| page.move_playlist(id, -1, cx)).ok();
-                            }))
-                            .item(PopupMenuItem::new("下移").on_click(move |_e, _w, cx| {
-                                w_down.update(cx, |page, cx| page.move_playlist(id, 1, cx)).ok();
-                            }))
-                        })
-                        .child(cover)
-                        .child(
-                            div()
-                                .v_flex()
-                                .flex_1()
-                                .min_w(px(0.0))
-                                .overflow_hidden()
-                                .child(
-                                    div()
-                                        .text_sm()
-                                        .text_color(theme::text_primary())
-                                        .truncate()
-                                        .child(pl.name.clone()),
-                                )
-                                .child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(theme::text_gray())
-                                        .child(format!("{} 首", pl.track_count)),
-                                ),
-                        )
-                        .into_any_element()
-                })
-                .collect::<Vec<_>>()
-        })
-        .flex_1()
-        .w_full()
-        .min_w(px(0.0))
+                            .context_menu(move |menu, _w, _cx| {
+                                let w_pin = weak_ctx.clone();
+                                let w_unpin = weak_ctx.clone();
+                                let w_up = weak_ctx.clone();
+                                let w_down = weak_ctx.clone();
+                                menu.item(PopupMenuItem::new("置顶").on_click(move |_e, _w, cx| {
+                                    w_pin.update(cx, |page, cx| page.pin_playlist(id, true, cx)).ok();
+                                }))
+                                .item(PopupMenuItem::new("取消置顶").on_click(move |_e, _w, cx| {
+                                    w_unpin.update(cx, |page, cx| page.pin_playlist(id, false, cx)).ok();
+                                }))
+                                .item(PopupMenuItem::new("上移").on_click(move |_e, _w, cx| {
+                                    w_up.update(cx, |page, cx| page.move_playlist(id, -1, cx)).ok();
+                                }))
+                                .item(PopupMenuItem::new("下移").on_click(move |_e, _w, cx| {
+                                    w_down.update(cx, |page, cx| page.move_playlist(id, 1, cx)).ok();
+                                }))
+                            })
+                            .child(cover)
+                            .child(
+                                div()
+                                    .v_flex()
+                                    .flex_1()
+                                    .min_w(px(0.0))
+                                    .overflow_hidden()
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .text_color(theme::text_primary())
+                                            .truncate()
+                                            .child(pl.name.clone()),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(theme::text_gray())
+                                            .child(format!("{} 首", pl.track_count)),
+                                    ),
+                            )
+                            .into_any_element()
+                    })
+                    .collect::<Vec<_>>()
+            },
+            window,
+            cx,
+        )
         .into_any_element()
     }
 }
 
 impl Render for LibraryPage {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let logged_in = Session::account(cx).is_some();
         let content: AnyElement = if !logged_in {
             // 未登录：不显示提示卡片（登录入口在标题栏账号按钮）
             div().flex_1().w_full().into_any_element()
         } else {
             match self.tab {
-                LibraryTab::Playlist => self.playlist_list(cx),
-                LibraryTab::Album => self.album_list(cx),
-                LibraryTab::Artist => self.artist_list(cx),
+                LibraryTab::Playlist => self.playlist_list(window, cx),
+                LibraryTab::Album => self.album_list(window, cx),
+                LibraryTab::Artist => self.artist_list(window, cx),
             }
         };
 

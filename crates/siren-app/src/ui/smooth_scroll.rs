@@ -15,9 +15,10 @@
 //! 句柄暴露，当前无法用同样方式平滑；那类列表仍用原生滚动。
 
 use std::collections::HashMap;
+use std::ops::Range;
 use std::time::Duration;
 
-use gpui_kit::base::{transition, ElementExt, Transition};
+use gpui_kit::base::{transition, ElementExt, StyledExt as _, Transition};
 use gpui_kit::*;
 
 use super::motion;
@@ -120,4 +121,83 @@ pub(crate) fn smooth_scroll(
                 })
                 .child(content),
         )
+}
+
+/// 可平滑滚动的**虚拟列表**：只渲染可见行，偏移由自己维护（因此能套 `transition` 缓动）。
+///
+/// 用于替代 `uniform_list`（后者自管偏移、无法被驱动）。`row_height` 为等高的行高；
+/// `render_range` 与 `uniform_list` 的闭包一致，返回该范围的行元素。
+pub(crate) fn smooth_virtual_list(
+    id: impl Into<ElementId>,
+    item_count: usize,
+    row_height: f32,
+    render_range: impl Fn(Range<usize>, &mut Window, &mut App) -> Vec<AnyElement> + 'static,
+    window: &mut Window,
+    cx: &mut App,
+) -> impl IntoElement {
+    let id = id.into();
+    ensure_registry(cx);
+    let content_h = item_count as f32 * row_height;
+    let viewport_h = cx.global::<Registry>().0.get(&id).map_or(0.0, |e| e.viewport);
+    let max = (content_h - viewport_h).max(0.0);
+    let target = {
+        let registry = cx.global_mut::<Registry>();
+        let entry = registry.0.entry(id.clone()).or_default();
+        entry.max = max;
+        entry.target.clamp(0.0, max)
+    };
+    let offset = transition(
+        (id.clone(), "scroll"),
+        target,
+        Transition::new(Duration::from_millis(140)).ease(motion::ease_out()),
+        window,
+        cx,
+    );
+
+    // 仅渲染可见范围（首行 + 视口内行数，多预读 2 行）。
+    let first = (offset / row_height).floor().max(0.0) as usize;
+    let visible = (viewport_h / row_height).ceil() as usize + 2;
+    let last = (first + visible).min(item_count);
+    let rows = if item_count == 0 || first >= last {
+        Vec::new()
+    } else {
+        render_range(first..last, window, cx)
+    };
+    let content = div()
+        .absolute()
+        .top(px(first as f32 * row_height - offset))
+        .left(px(0.0))
+        .right(px(0.0))
+        .v_flex()
+        .children(rows);
+
+    let wheel_id = id.clone();
+    let viewport_id = id.clone();
+    div()
+        .id(id)
+        .relative()
+        .flex_1()
+        .w_full()
+        .min_w(px(0.0))
+        .min_h(px(0.0))
+        .overflow_hidden()
+        .on_scroll_wheel(move |event, window, cx| {
+            cx.stop_propagation();
+            let dy = f32::from(event.delta.pixel_delta(window.line_height()).y);
+            let entry = cx.global_mut::<Registry>().0.entry(wheel_id.clone()).or_default();
+            let next = (entry.target - dy).clamp(0.0, entry.max);
+            if next != entry.target {
+                entry.target = next;
+                window.refresh();
+            }
+        })
+        .on_prepaint(move |bounds, _window, cx| {
+            let h = f32::from(bounds.size.height);
+            cx.global_mut::<Registry>()
+                .0
+                .entry(viewport_id.clone())
+                .or_default()
+                .viewport = h;
+        })
+        .child(content)
 }
