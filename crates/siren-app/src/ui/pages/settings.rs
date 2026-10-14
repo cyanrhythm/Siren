@@ -148,7 +148,8 @@ impl Root {
                 let dy = f32::from(event.delta.pixel_delta(window.line_height()).y);
                 let _ = weak_wheel.update(cx, |root, cx| {
                     let max = (root.settings_scroll_content - root.settings_scroll_viewport).max(0.0);
-                    let next = (root.settings_scroll_target + dy).clamp(0.0, max);
+                    // 与 gpui 原生一致：滚轮向上为正增量、应减小偏移（offset 向下为负）。
+                    let next = (root.settings_scroll_target - dy).clamp(0.0, max);
                     if next != root.settings_scroll_target {
                         root.settings_scroll_target = next;
                         cx.notify();
