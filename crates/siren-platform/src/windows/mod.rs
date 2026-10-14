@@ -20,5 +20,6 @@
 
 pub mod appmodel;
 pub mod display;
+pub mod icon;
 pub mod media;
 pub mod native;

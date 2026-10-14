@@ -13,12 +13,14 @@ use gpui_kit::*;
 
 use siren_core::model::{Song, SongWiki};
 
+use super::super::settings_store::SettingsStore;
 use super::super::{cover_placeholder, fmt_date, icon, NpCard, Root};
 use crate::theme;
+use siren_core::player::{PlaySource, PlaySourceKind};
 
 impl Root {
     pub(crate) fn now_playing(&self, weak: WeakEntity<Self>, cx: &App) -> impl IntoElement {
-        if !self.now_playing_open {
+        if !self.np.open {
             let weak_expand = weak;
             return div()
                 .v_flex()
@@ -36,13 +38,16 @@ impl Root {
         }
 
         let state = self.playback.read(cx).state();
+        let source = self.playback.read(cx).source().cloned();
+        let context = self.playback.read(cx).context().map(str::to_string);
         let song = state.song.clone();
         let (title, artist) = match &song {
             Some(s) => (s.name.clone(), s.artists.clone()),
             None => ("未在播放".to_string(), String::new()),
         };
         // 封面随面板宽度放大（封顶 420，对齐 Melodia NowPlayingMaxWidth）；无歌曲时用小占位。
-        let cover_size = (self.np_width - 28.0).clamp(220.0, 420.0);
+        let np_width = SettingsStore::of(cx).np_width();
+        let cover_size = (np_width - 28.0).clamp(220.0, 420.0);
         let cover: AnyElement = match &song {
             Some(s) => self.services.covers.image(&s.cover_url, cover_size),
             None => cover_placeholder(200.0).into_any_element(),
@@ -84,7 +89,8 @@ impl Root {
         let fans = self.playback.read(cx).artist_fans();
         let albums = self.playback.read(cx).artist_albums().to_vec();
         let simi = self.playback.read(cx).similar_artists().to_vec();
-        for card in &self.np_cards {
+        let np_cards = self.np_cards(cx);
+        for card in &np_cards {
             let el: Option<AnyElement> = match card {
                 NpCard::Lyrics => {
                     if lyrics.is_empty() {
@@ -110,7 +116,7 @@ impl Root {
                         Some(artist_albums_card(
                             &albums,
                             &name,
-                            self.np_album_page,
+                            self.np.album_page,
                             &self.services.covers,
                             weak.clone(),
                         ))
@@ -122,7 +128,7 @@ impl Root {
                     } else {
                         Some(similar_artists_card(
                             &simi,
-                            self.np_simi_page,
+                            self.np.simi_page,
                             &self.services.covers,
                             weak.clone(),
                         ))
@@ -136,8 +142,8 @@ impl Root {
 
         div()
             .v_flex()
-            .w(px(self.np_width))
-            .min_w(px(self.np_width))
+            .w(px(np_width))
+            .min_w(px(np_width))
             .h_full()
             .flex_none()
             .flex_shrink_0()
@@ -150,8 +156,9 @@ impl Root {
                     .w_full()
                     .flex()
                     .items_center()
-                    .justify_between()
-                    .child(now_playing_menu(weak.clone(), cx))
+                    .gap(px(8.0))
+                    .child(now_playing_menu(weak.clone(), context, cx))
+                    .child(div().flex_1().min_w(px(0.0)).child(source_title(source, weak.clone())))
                     .child(toggle_button("np-collapse", IconName::ChevronRight, weak)),
             )
             .child(body)
@@ -159,39 +166,99 @@ impl Root {
     }
 }
 
-/// 头部「…」菜单：心动模式 / 相似歌曲漫游。
-fn now_playing_menu(weak: WeakEntity<Root>, cx: &App) -> impl IntoElement {
+/// 头部「…」菜单：心动模式 / 相似歌曲漫游（处于特殊上下文时可退出）。
+fn now_playing_menu(weak: WeakEntity<Root>, context: Option<String>, cx: &App) -> impl IntoElement {
     let weak_i = weak.clone();
     let weak_s = weak.clone();
+    let weak_e = weak.clone();
+    let in_special = context
+        .as_deref()
+        .map(|c| c == super::super::playback::CONTEXT_INTELLIGENCE || c == super::super::playback::CONTEXT_ROAMING)
+        .unwrap_or(false);
+    let exit_label = if context.as_deref() == Some(super::super::playback::CONTEXT_ROAMING) {
+        "退出相似漫游"
+    } else {
+        "退出心动模式"
+    };
     Button::new("np-more")
         .custom(ButtonCustomVariant::new(cx))
         .icon(IconName::Ellipsis)
         .dropdown_menu(move |menu, _window, _cx| {
             let weak_i = weak_i.clone();
             let weak_s = weak_s.clone();
-            menu.item(
-                PopupMenuItem::new("心动模式")
-                    .icon(Icon::new(IconName::Sparkles))
-                    .on_click(move |_ev, _window, cx| {
-                        weak_i
+            let weak_e = weak_e.clone();
+            let mut menu = menu;
+            if in_special {
+                menu = menu.item(PopupMenuItem::new(exit_label).icon(Icon::new(IconName::X)).on_click(
+                    move |_ev, _window, cx| {
+                        weak_e
                             .update(cx, |root, cx| {
-                                root.playback.update(cx, |pb, cx| pb.start_intelligence(cx))
+                                root.playback.update(cx, |pb, cx| pb.exit_special_context(cx))
                             })
                             .ok();
-                    }),
-            )
-            .item(
-                PopupMenuItem::new("相似歌曲漫游")
-                    .icon(Icon::new(IconName::Compass))
-                    .on_click(move |_ev, _window, cx| {
-                        weak_s
-                            .update(cx, |root, cx| {
-                                root.playback.update(cx, |pb, cx| pb.play_similar_roaming(cx))
-                            })
-                            .ok();
-                    }),
-            )
+                    },
+                ));
+            }
+            menu = menu
+                .item(
+                    PopupMenuItem::new("心动模式")
+                        .icon(Icon::new(IconName::Sparkles))
+                        .on_click(move |_ev, _window, cx| {
+                            weak_i
+                                .update(cx, |root, cx| {
+                                    root.playback.update(cx, |pb, cx| pb.start_intelligence(cx))
+                                })
+                                .ok();
+                        }),
+                )
+                .item(
+                    PopupMenuItem::new("相似歌曲漫游")
+                        .icon(Icon::new(IconName::Compass))
+                        .on_click(move |_ev, _window, cx| {
+                            weak_s
+                                .update(cx, |root, cx| {
+                                    root.playback.update(cx, |pb, cx| pb.play_similar_roaming(cx))
+                                })
+                                .ok();
+                        }),
+                );
+            menu
         })
+}
+
+/// 来源标题：显示播放来源的歌单/专辑名（可点击跳转），否则显示「正在播放」。
+fn source_title(source: Option<PlaySource>, weak: WeakEntity<Root>) -> AnyElement {
+    let Some(source) = source else {
+        return div()
+            .text_sm()
+            .font_weight(FontWeight::BOLD)
+            .text_color(theme::text_primary())
+            .truncate()
+            .child("正在播放")
+            .into_any_element();
+    };
+    let label = source.name.clone();
+    let (is_album, id, name) = (source.kind == PlaySourceKind::Album, source.id, source.name.clone());
+    div()
+        .id("np-source")
+        .text_sm()
+        .font_weight(FontWeight::BOLD)
+        .text_color(theme::text_primary())
+        .truncate()
+        .cursor_pointer()
+        .hover(|s| s.text_color(theme::accent()))
+        .on_click(move |_ev, _window, cx| {
+            weak.update(cx, |root, cx| {
+                if is_album {
+                    root.open_album(id, name.clone(), cx);
+                } else {
+                    root.open_playlist(id, name.clone(), cx);
+                }
+            })
+            .ok();
+        })
+        .child(label)
+        .into_any_element()
 }
 
 /// 信息卡外壳：圆角底 + 标题 + 内容（对齐 `InfoCard`）。
@@ -436,8 +503,8 @@ fn artist_albums_card(
         title,
         p,
         pages,
-        |root, cx| root.set_np_page(true, root.np_album_page.wrapping_sub(1), cx),
-        |root, cx| root.set_np_page(true, root.np_album_page + 1, cx),
+        |root, cx| root.set_np_page(true, root.np.album_page.wrapping_sub(1), cx),
+        |root, cx| root.set_np_page(true, root.np.album_page + 1, cx),
         row.into_any_element(),
         weak,
     )
@@ -477,8 +544,8 @@ fn similar_artists_card(
         "探索类似艺人".to_string(),
         p,
         pages,
-        |root, cx| root.set_np_page(false, root.np_simi_page.wrapping_sub(1), cx),
-        |root, cx| root.set_np_page(false, root.np_simi_page + 1, cx),
+        |root, cx| root.set_np_page(false, root.np.simi_page.wrapping_sub(1), cx),
+        |root, cx| root.set_np_page(false, root.np.simi_page + 1, cx),
         row.into_any_element(),
         weak,
     )
@@ -569,9 +636,9 @@ impl Root {
     /// 设置歌手专辑 / 相似歌手卡片页码。
     pub(crate) fn set_np_page(&mut self, album: bool, page: usize, cx: &mut Context<Self>) {
         if album {
-            self.np_album_page = page;
+            self.np.album_page = page;
         } else {
-            self.np_simi_page = page;
+            self.np.simi_page = page;
         }
         cx.notify();
     }

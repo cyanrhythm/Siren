@@ -11,15 +11,23 @@
 pub mod theme;
 pub mod ui;
 
+use std::borrow::Cow;
+
 use gpui_kit::*;
 
 use ui::Root;
+
+/// 内嵌的应用字体（MiSans）。
+const MI_SANS: &[u8] = include_bytes!("../../../assets/fonts/MiSans-Regular.ttf");
 
 const DEFAULT_W: f32 = 1100.0;
 const DEFAULT_H: f32 = 760.0;
 
 /// 应用入口：初始化 tokio 运行时与 GPUI 主循环。
 pub fn run() {
+    // 尽早初始化日志（文件 + 可选标准错误镜像）
+    siren_core::logging::init();
+
     // 注册 AppUserModelID：让系统媒体浮层显示应用名而非“未知应用”
     siren_platform::set_app_user_model_id("com.cyanrhythm.Siren");
 
@@ -48,11 +56,19 @@ pub fn run() {
         (80.0, 80.0, DEFAULT_W, DEFAULT_H)
     };
 
+    // 最小窗口尺寸：容纳「左栏 + 中间两个卡片 + 右栏」，高度取宽度的 0.618
+    let (min_w, min_h) = ui::min_window_size(siren_core::settings::Settings::load().np_width());
+
     gpui_kit::application()
         .with_assets(gpui_kit::assets::AllAssets)
         .run(move |cx| {
             gpui_kit::init(cx);
+            // 注册应用字体并作为默认字体系
+            if cx.text_system().add_fonts(vec![Cow::Borrowed(MI_SANS)]).is_ok() {
+                log::info!("已注册字体 MiSans");
+            }
             gpui_kit::component::Theme::change(gpui_kit::component::ThemeMode::Dark, None, cx);
+            cx.global_mut::<gpui_kit::component::Theme>().font_family = "MiSans".into();
             crate::theme::install(cx);
             gpui_kit::open_window(
                 WindowOptions {
@@ -69,12 +85,15 @@ pub fn run() {
                     // 先隐藏创建，移动到目标位置后再显示，避免可见的跳动
                     show: false,
                     focus: true,
+                    window_min_size: Some(size(px(min_w), px(min_h))),
                     ..Default::default()
                 },
                 cx,
                 move |window, cx| {
                     // 关闭时保存窗口的物理矩形，供下次启动跨屏恢复
-                    window.on_window_should_close(cx, |window, _cx| {
+                    window.on_window_should_close(cx, |window, cx| {
+                        // 退出时同步落盘播放会话（队列/当前曲/进度）
+                        ui::flush_playback_session(cx);
                         if let Some(hwnd) = siren_platform::window_hwnd(window) {
                             if let Some((x, y, w, h)) = siren_platform::window_physical_rect(hwnd) {
                                 siren_core::settings::save_window_bounds(x as f32, y as f32, w as f32, h as f32);
@@ -102,6 +121,8 @@ pub fn run() {
                             if let Some(t) = target {
                                 siren_platform::move_window(hwnd, t.0, t.1, t.2, t.3);
                             }
+                            let icon_ok = siren_platform::set_window_icon(hwnd);
+                            log::info!("set_window_icon -> {icon_ok} (hwnd={hwnd})");
                             siren_platform::show_window(hwnd);
                         })
                         .detach();

@@ -3,7 +3,7 @@
 use serde_json::{json, Value};
 
 use crate::error::{Error, Result};
-use crate::model::{parse_search_songs, AlbumDetail, Playlist, PlaylistDetail, Song};
+use crate::model::{parse_search_songs, Album, AlbumDetail, Artist, Playlist, PlaylistDetail, Song};
 use crate::network::client::NeteaseClient;
 use crate::network::endpoints::path;
 
@@ -153,6 +153,29 @@ pub async fn recent_songs(client: &NeteaseClient) -> Result<Vec<Song>> {
     let value = client.weapi_post(path::RECENT_SONGS, &json!({ "limit": 100 })).await?;
     validate(&value)?;
     Ok(parse_recent_songs(&value))
+}
+
+/// 最近播放歌曲（含播放时间）。
+pub async fn recent_songs_with_time(client: &NeteaseClient) -> Result<Vec<crate::model::RecentSong>> {
+    let value = client.weapi_post(path::RECENT_SONGS, &json!({ "limit": 100 })).await?;
+    validate(&value)?;
+    Ok(crate::model::parse_recent_songs_with_time(&value))
+}
+
+/// 最近播放歌单（EAPI，需登录）。
+pub async fn recent_playlists(client: &NeteaseClient) -> Result<Vec<crate::model::RecentPlaylist>> {
+    let value = client
+        .eapi_post(path::RECENT_PLAYLISTS, &json!({ "limit": 100 }))
+        .await?;
+    validate(&value)?;
+    Ok(crate::model::parse_recent_playlists(&value))
+}
+
+/// 最近播放专辑（WEAPI，需登录）。
+pub async fn recent_albums(client: &NeteaseClient) -> Result<Vec<crate::model::RecentAlbum>> {
+    let value = client.weapi_post(path::RECENT_ALBUMS, &json!({ "limit": 100 })).await?;
+    validate(&value)?;
+    Ok(crate::model::parse_recent_albums(&value))
 }
 
 /// 从最近播放返回体取歌曲（`data.list[].data`）。
@@ -444,6 +467,207 @@ pub async fn comment_floor(
     validate(&value)?;
     let data = value.get("data").cloned().unwrap_or(serde_json::Value::Null);
     Ok(crate::model::parse_comments_v2(&json!({ "data": data })))
+}
+
+/// 首页货架（EAPI）。
+pub async fn home_shelves(client: &NeteaseClient) -> Result<Vec<crate::model::HomeShelf>> {
+    let value = client.eapi_post(path::HOME_BLOCK_PAGE, &json!({})).await?;
+    validate(&value)?;
+    Ok(crate::model::parse_home_shelves(&value))
+}
+
+/// 每日推荐歌曲（EAPI）。
+pub async fn daily_recommend_songs(client: &NeteaseClient) -> Result<Vec<Song>> {
+    let value = client.eapi_post(path::DAILY_RECOMMEND, &json!({})).await?;
+    validate(&value)?;
+    Ok(value
+        .get("data")
+        .and_then(|d| d.get("dailySongs"))
+        .and_then(Value::as_array)
+        .map(|items| items.iter().map(crate::model::parse_song).collect())
+        .unwrap_or_default())
+}
+
+/// 用户详情（WEAPI）。
+pub async fn user_detail(client: &NeteaseClient, uid: i64) -> Result<Option<crate::model::UserProfile>> {
+    let url = format!("{}{uid}", path::USER_DETAIL);
+    let value = client.weapi_post(&url, &json!({})).await?;
+    validate(&value)?;
+    Ok(crate::model::parse_user_profile(&value))
+}
+
+/// 用户等级（EAPI）。
+pub async fn user_level(client: &NeteaseClient) -> Result<crate::model::UserLevel> {
+    let value = client.eapi_post(path::USER_LEVEL, &json!({})).await?;
+    validate(&value)?;
+    Ok(crate::model::parse_user_level(&value).unwrap_or_default())
+}
+
+/// VIP 状态信息（WEAPI）。
+pub async fn vip_info(client: &NeteaseClient) -> Result<crate::model::VipInfo> {
+    let value = client.weapi_post(path::VIP_INFO, &json!({})).await?;
+    validate(&value)?;
+    Ok(crate::model::parse_vip_info(&value).unwrap_or_default())
+}
+
+/// 账号第三方绑定列表（WEAPI；该接口可能不可用，失败由调用方降级）。
+pub async fn user_bindings(client: &NeteaseClient, uid: i64) -> Result<Vec<crate::model::AccountBinding>> {
+    let value = client.weapi_post(path::USER_BINDING, &json!({ "uid": uid })).await?;
+    validate(&value)?;
+    Ok(crate::model::parse_bindings(&value))
+}
+
+/// 修改用户资料（EAPI，目前仅昵称与个性签名）。
+pub async fn update_user_profile(client: &NeteaseClient, nickname: &str, signature: &str) -> Result<()> {
+    let value = client
+        .eapi_post(
+            path::USER_UPDATE,
+            &json!({
+                "nickname": nickname,
+                "gender": 1,
+                "birthday": 0,
+                "province": 110000,
+                "city": 110101,
+                "signature": signature,
+            }),
+        )
+        .await?;
+    validate(&value)?;
+    Ok(())
+}
+
+/// 昵称查重（EAPI），返回是否已被占用。
+pub async fn check_nickname(client: &NeteaseClient, nickname: &str) -> Result<bool> {
+    let value = client
+        .eapi_post(path::NICKNAME_CHECK, &json!({ "nickname": nickname }))
+        .await?;
+    Ok(value.get("duplicated").and_then(Value::as_bool).unwrap_or(false))
+}
+
+/// 每日签到（EAPI），返回获得的积分；重复签到（`code=-2`）返回 0。
+pub async fn daily_signin(client: &NeteaseClient, kind: i64) -> Result<i64> {
+    let value = client.eapi_post(path::DAILY_TASK, &json!({ "type": kind })).await?;
+    let code = value.get("code").and_then(Value::as_i64).unwrap_or(200);
+    if code != 200 && code != -2 {
+        let message = value.get("msg").and_then(Value::as_str).unwrap_or_default();
+        return Err(Error::from_code(code, message));
+    }
+    Ok(value.get("point").and_then(Value::as_i64).unwrap_or(0))
+}
+
+/// 更换头像（WEAPI multipart），返回新头像地址。
+pub async fn upload_avatar(client: &NeteaseClient, bytes: Vec<u8>, filename: &str) -> Result<String> {
+    let value = client
+        .weapi_multipart(path::AVATAR_UPLOAD, "imgFile", filename, "image/jpeg", bytes)
+        .await?;
+    validate(&value)?;
+    Ok(value
+        .get("data")
+        .and_then(|d| d.get("avatarUrl"))
+        .or_else(|| value.get("url"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string())
+}
+
+/// 关注 / 取消关注用户。
+pub async fn user_follow(client: &NeteaseClient, uid: i64, follow: bool) -> Result<()> {
+    let url = if follow {
+        format!("{}{uid}", path::USER_FOLLOW)
+    } else {
+        format!("{}{uid}", path::USER_DELFOLLOW)
+    };
+    let value = client.weapi_post(&url, &json!({})).await?;
+    validate(&value)?;
+    Ok(())
+}
+
+/// 用户关注列表。
+pub async fn user_follows(client: &NeteaseClient, uid: i64, limit: u32) -> Result<Vec<crate::model::UserBrief>> {
+    let url = format!("{}{uid}", path::USER_FOLLOWS);
+    let value = client
+        .weapi_post(&url, &json!({ "offset": 0, "limit": limit, "order": true }))
+        .await?;
+    validate(&value)?;
+    Ok(crate::model::parse_user_follow_list(&value))
+}
+
+/// 用户粉丝列表。
+pub async fn user_followeds(client: &NeteaseClient, uid: i64, limit: u32) -> Result<Vec<crate::model::UserBrief>> {
+    let url = format!("{}{uid}", path::USER_FOLLOWEDS);
+    let value = client
+        .weapi_post(
+            &url,
+            &json!({ "userId": uid, "time": "0", "limit": limit, "offset": 0, "getcounts": "true" }),
+        )
+        .await?;
+    validate(&value)?;
+    Ok(crate::model::parse_user_follow_list(&value))
+}
+
+/// 更新用户歌单排序（`ids` 为完整顺序，逗号分隔）。
+pub async fn playlist_order_update(client: &NeteaseClient, ids: &[i64]) -> Result<()> {
+    let joined = ids.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(",");
+    let value = client
+        .weapi_post(path::PLAYLIST_ORDER, &json!({ "ids": joined }))
+        .await?;
+    validate(&value)?;
+    Ok(())
+}
+
+/// 置顶 / 取消置顶自建歌单。
+pub async fn playlist_top(client: &NeteaseClient, id: i64, top: bool) -> Result<()> {
+    let url = if top {
+        path::PLAYLIST_TOP.to_string()
+    } else {
+        format!("{}/cancel", path::PLAYLIST_TOP)
+    };
+    let value = client.weapi_post(&url, &json!({ "id": id })).await?;
+    validate(&value)?;
+    Ok(())
+}
+
+/// 收藏专辑列表（EAPI）。
+pub async fn album_sublist(client: &NeteaseClient) -> Result<Vec<Album>> {
+    let value = client
+        .eapi_post(
+            path::ALBUM_SUBLIST,
+            &json!({ "limit": 1000, "offset": 0, "total": true }),
+        )
+        .await?;
+    validate(&value)?;
+    Ok(crate::model::parse_album_sublist(&value))
+}
+
+/// 收藏歌手列表（EAPI，显式分页取全；服务端默认仅返回 25 条）。
+pub async fn artist_sublist(client: &NeteaseClient) -> Result<Vec<Artist>> {
+    const PAGE: u32 = 100;
+    let mut out = Vec::new();
+    let mut offset = 0u32;
+    loop {
+        let value = client
+            .eapi_post(
+                path::ARTIST_SUBLIST,
+                &json!({ "limit": PAGE, "offset": offset, "total": true }),
+            )
+            .await?;
+        validate(&value)?;
+        let page = crate::model::parse_artist_sublist(&value);
+        let got = page.len();
+        out.extend(page);
+        if got < PAGE as usize || out.len() >= 2000 {
+            break;
+        }
+        offset += PAGE;
+    }
+    Ok(out)
+}
+
+/// 歌手热门歌曲（WEAPI）。
+pub async fn artist_top_songs(client: &NeteaseClient, id: i64) -> Result<Vec<Song>> {
+    let value = client.weapi_post(path::ARTIST_TOP_SONGS, &json!({ "id": id })).await?;
+    validate(&value)?;
+    Ok(crate::model::parse_artist_top_songs(&value))
 }
 
 /// 歌手详情（EAPI）。

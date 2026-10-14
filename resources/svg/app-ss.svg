@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" role="img" aria-label="Siren">
+  <title>Siren</title>
+  <desc>音乐播放器图标：深海蓝黑渐变底上的冷白音符</desc>
+
+  <defs>
+
+    <linearGradient id="bg" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#0A2A43"/>
+      <stop offset="55%" stop-color="#061829"/>
+      <stop offset="100%" stop-color="#010409"/>
+    </linearGradient>
+
+    <!-- 左上角极淡的冷光，模拟水面透下的微弱光线 -->
+    <radialGradient id="surfaceLight" cx="22%" cy="0%" r="70%">
+      <stop offset="0%" stop-color="#38BDF8" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#38BDF8" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect x="0" y="0" width="1024" height="1024" rx="224" ry="224" fill="url(#bg)"/>
+  <rect x="0" y="0" width="1024" height="1024" rx="224" ry="224" fill="url(#surfaceLight)"/>
+
+  <!--
+    音乐播放符号（缩小并居中）
+    以 512,512 为缩放中心，缩放比例约为 0.7
+  -->
+  <g fill="#DCEBF7" transform="translate(512 512) scale(0.7) translate(-512 -512)">
+    <path d="M512 960A448 448 0 1 1 802.133333 170.666667a42.666667 42.666667 0 0 1-55.466666 65.493333 362.666667 362.666667 0 1 0 112 170.666667l-226.346667 226.133333a170.666667 170.666667 0 1 1 44.16-164.906667l165.546667-167.04a42.666667 42.666667 0 0 1 37.333333-13.653333 42.666667 42.666667 0 0 1 32.426667 23.04A448 448 0 0 1 512 960z m0-533.333333a85.333333 85.333333 0 0 0-60.373333 145.706666 87.466667 87.466667 0 0 0 120.746666 0l2.133334-2.133333 1.066666-1.493333A85.333333 85.333333 0 0 0 512 426.666667z" fill="#DCEBF7"/>
+  </g>
+</svg>

@@ -52,6 +52,8 @@ pub struct Player {
     /// 此窗口内引擎仍在报告**上一首**的 `time-pos`/`duration`，必须忽略，
     /// 否则会把刚重置的进度又覆盖回旧曲尾部（表现为进度条尾部来回跳动）。
     awaiting_load: bool,
+    /// 上一次观察到的 eof 状态（仅用于日志）。
+    last_eof: bool,
 }
 
 impl Player {
@@ -65,6 +67,7 @@ impl Player {
             tx,
             eof_latched: false,
             awaiting_load: false,
+            last_eof: false,
         }
     }
 
@@ -99,6 +102,102 @@ impl Player {
     }
 
     /// 下一首（手动，顺序回绕）；返回需要加载的歌曲。
+    /// 当前队列快照（用于持久化）。
+    pub fn queue_items(&self) -> Vec<Song> {
+        self.queue.items().to_vec()
+    }
+
+    /// 队列来源容器。
+    pub fn source(&self) -> Option<&crate::player::PlaySource> {
+        self.queue.source()
+    }
+
+    /// 设置队列来源容器。
+    pub fn set_source(&mut self, source: Option<crate::player::PlaySource>) {
+        self.queue.set_source(source);
+    }
+
+    /// 播放上下文标签。
+    pub fn context(&self) -> Option<&str> {
+        self.queue.context()
+    }
+
+    /// 把 `song` 插到当前曲之后（「下一首播放」）。
+    pub fn insert_next(&mut self, song: Song) {
+        self.queue.insert_next(song);
+        self.sync_queue();
+        self.publish();
+    }
+
+    /// 用 `items` 替换 `index` 之后的曲目（漫游续接）。
+    pub fn append_after(&mut self, index: usize, items: Vec<Song>) {
+        self.queue.append_after(index, items);
+        self.sync_queue();
+        self.publish();
+    }
+
+    /// 设置播放上下文标签。
+    pub fn set_context(&mut self, context: Option<String>) {
+        self.queue.set_context(context);
+    }
+
+    /// 备份当前队列（进入心动/漫游前）。
+    pub fn take_snapshot(&mut self) {
+        self.queue.take_snapshot();
+    }
+
+    /// 丢弃队列备份（正常播放新队列时）。
+    pub fn clear_snapshot(&mut self) {
+        self.queue.clear_snapshot();
+    }
+
+    /// 是否处于可退出的特殊上下文（有备份或带上下文标签）。
+    pub fn in_special_context(&self) -> bool {
+        self.queue.context().is_some()
+    }
+
+    /// 退出特殊上下文：还原备份队列（若有），返回退出前的当前曲 id。
+    pub fn exit_special_context(&mut self) -> Option<i64> {
+        let playing = self.state.song.as_ref().map(|s| s.id);
+        self.queue.exit_special_context();
+        self.sync_queue();
+        self.publish();
+        playing
+    }
+
+    /// 恢复队列/当前曲/进度（不加载音频；等待调用方解析 URL 后 [`Player::play_url`]）。
+    ///
+    /// 恢复后进入「等待加载」窗口：引擎尚未加载新文件，期间跳过进度同步。
+    #[allow(clippy::too_many_arguments)]
+    pub fn restore(
+        &mut self,
+        queue: Vec<Song>,
+        index: usize,
+        mode: PlayMode,
+        position_ms: i64,
+        duration_ms: i64,
+        source: Option<crate::player::PlaySource>,
+        context: Option<String>,
+    ) -> Option<Song> {
+        if queue.is_empty() {
+            return None;
+        }
+        self.queue.set_items(queue);
+        self.queue.set_mode(mode);
+        self.queue.set_source(source);
+        self.queue.set_context(context);
+        let idx = index.min(self.queue.len().saturating_sub(1));
+        self.queue.select(idx);
+        self.sync_queue();
+        self.state.position_ms = position_ms.max(0);
+        self.state.duration_ms = duration_ms.max(0);
+        self.state.playing = false;
+        self.awaiting_load = true;
+        self.eof_latched = false;
+        self.publish();
+        self.state.song.clone()
+    }
+
     pub fn next_track(&mut self) -> Option<Song> {
         let index = self.queue.next_index()?;
         self.queue.select(index);
@@ -114,11 +213,26 @@ impl Player {
 
     /// 引擎加载并开始播放指定地址。
     pub fn play_url(&mut self, url: &str) {
-        self.engine.load(url);
+        self.play_url_from(url, None);
+    }
+
+    /// 引擎加载并开始播放指定地址，可从 `start_ms` 起播（冷启动恢复上次进度）。
+    pub fn play_url_from(&mut self, url: &str, start_ms: Option<i64>) {
+        log::info!(
+            "加载播放地址 song={:?} len={} start={:?}",
+            self.state.song.as_ref().map(|s| s.id),
+            url.len(),
+            start_ms
+        );
+        self.engine.load_from(url, start_ms);
         self.engine.set_paused(false);
+        log::debug!("引擎已加载新文件，恢复进度同步");
         // 新文件已交给引擎，之后读到的是新曲进度，可恢复位置/时长同步。
         self.awaiting_load = false;
         self.state.playing = true;
+        if let Some(ms) = start_ms {
+            self.state.position_ms = ms.max(0);
+        }
         self.publish();
     }
 
@@ -204,6 +318,17 @@ impl Player {
 
         let mut pending = None;
         let eof = self.engine.eof_reached().unwrap_or(false);
+        if eof != self.last_eof {
+            log::debug!(
+                "eof={eof} pos={} dur={} playing={} song={:?} latched={}",
+                self.state.position_ms,
+                self.state.duration_ms,
+                self.state.playing,
+                self.state.song.as_ref().map(|s| s.id),
+                self.eof_latched,
+            );
+            self.last_eof = eof;
+        }
         if !eof {
             // mpv 已开始播放新文件，解除闩锁
             self.eof_latched = false;
@@ -211,8 +336,12 @@ impl Player {
         if self.state.song.is_some() && eof && !self.eof_latched {
             // 只推进一次；在新文件真正播放（eof 变假）前不再重复推进
             self.eof_latched = true;
-            if let Some(song) = self.advance_auto() {
-                pending = Some(song);
+            match self.advance_auto() {
+                Some(song) => {
+                    log::info!("自然播完，自动切歌 -> song={}", song.id);
+                    pending = Some(song);
+                }
+                None => log::warn!("自然播完但队列已到末尾，无下一首"),
             }
             dirty = true;
         }

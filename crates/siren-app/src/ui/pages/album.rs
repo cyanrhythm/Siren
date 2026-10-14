@@ -4,14 +4,17 @@ use std::sync::Arc;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::base::StyledExt;
+use gpui_kit::component::menu::{ContextMenuExt, PopupMenuItem};
 use gpui_kit::*;
 
 use siren_core::model::AlbumDetail;
 
+use super::super::components::like_button;
 use super::super::playback::Playback;
 use super::super::services::Services;
 use super::super::{fmt_time, icon, page_shell_with_header, PageEvent};
 use crate::theme;
+use siren_core::player::{PlaySource, PlaySourceKind};
 
 pub(crate) struct AlbumPage {
     services: Services,
@@ -20,6 +23,7 @@ pub(crate) struct AlbumPage {
     name: String,
     detail: Option<Arc<AlbumDetail>>,
     subscribed: bool,
+    load_gen: u64,
 }
 
 impl EventEmitter<PageEvent> for AlbumPage {}
@@ -39,12 +43,25 @@ impl AlbumPage {
             name,
             detail: None,
             subscribed: false,
+            load_gen: 0,
         };
         page.load(cx);
         page
     }
 
+    /// 队列来源容器。
+    fn source(&self) -> PlaySource {
+        PlaySource {
+            kind: PlaySourceKind::Album,
+            id: self.id,
+            name: self.name.clone(),
+            cover_url: self.detail.as_ref().map(|d| d.cover_url.clone()).unwrap_or_default(),
+        }
+    }
+
     fn load(&mut self, cx: &mut Context<Self>) {
+        self.load_gen = self.load_gen.wrapping_add(1);
+        let gen = self.load_gen;
         let client = self.services.client.clone();
         let id = self.id;
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -56,6 +73,9 @@ impl AlbumPage {
         cx.spawn(async move |this, cx| {
             let detail = rx.await.ok().flatten();
             this.update(cx, |this, cx| {
+                if this.load_gen != gen {
+                    return;
+                }
                 if let Some(d) = &detail {
                     let urls: Vec<String> = d.songs.iter().map(|s| s.cover_url.clone()).collect();
                     this.services.covers.prefetch(urls, 40.0, cx);
@@ -75,9 +95,34 @@ impl AlbumPage {
         cx.notify();
         let client = self.services.client.clone();
         let id = self.id;
+        let (tx, rx) = tokio::sync::oneshot::channel();
         self.services.handle.spawn(async move {
-            let _ = siren_core::network::api::album_subscribe(&client, id, subscribe).await;
+            let ok = siren_core::network::api::album_subscribe(&client, id, subscribe)
+                .await
+                .is_ok();
+            let _ = tx.send(ok);
         });
+        cx.spawn(async move |this, cx| {
+            let ok = rx.await.unwrap_or(false);
+            this.update(cx, |this, cx| {
+                if ok {
+                    this.services.toast(
+                        if subscribe {
+                            "已收藏专辑"
+                        } else {
+                            "已取消收藏"
+                        },
+                        cx,
+                    );
+                } else {
+                    this.subscribed = !subscribe;
+                    this.services.toast_error("操作失败", cx);
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 }
 
@@ -143,14 +188,19 @@ impl Render for AlbumPage {
                 let count = songs.len();
                 let covers = self.services.covers.clone();
                 let weak = cx.weak_entity();
-                let rows = uniform_list("album-tracks", count, move |range, _window, _cx| {
+                let playback = self.playback.clone();
+                let rows = uniform_list("album-tracks", count, move |range, _window, cx| {
                     range
                         .map(|i| {
                             let song = &songs[i];
                             let cover = covers.image(&song.cover_url, 40.0);
                             let weak = weak.clone();
+                            let weak_ctx = weak.clone();
+                            let song_owned = song.clone();
+                            let liked = playback.read(cx).is_liked(song.id);
                             div()
                                 .id(format!("album-track-{}", song.id))
+                                .group(format!("album-track-{}", song.id))
                                 .w_full()
                                 .h(px(52.0))
                                 .px(px(16.0))
@@ -163,9 +213,37 @@ impl Render for AlbumPage {
                                 .on_click(move |_ev, _window, cx| {
                                     weak.update(cx, |this, cx| {
                                         let items = this.detail.as_ref().map(|d| d.songs.clone()).unwrap_or_default();
-                                        this.playback.update(cx, |pb, cx| pb.play_from(items, i, cx));
+                                        let source = this.source();
+                                        this.playback
+                                            .update(cx, |pb, cx| pb.play_from_source(items, i, Some(source), cx));
                                     })
                                     .ok();
+                                })
+                                .context_menu(move |menu, _w, _cx| {
+                                    let w_next = weak_ctx.clone();
+                                    let w_like = weak_ctx.clone();
+                                    let s_next = song_owned.clone();
+                                    let s_like = song_owned.clone();
+                                    menu.item(PopupMenuItem::new("下一首播放").on_click(move |_e, _w, cx| {
+                                        w_next
+                                            .update(cx, |page, cx| {
+                                                page.playback.update(cx, |pb, cx| pb.play_next(s_next.clone(), cx))
+                                            })
+                                            .ok();
+                                    }))
+                                    .item(
+                                        PopupMenuItem::new(if liked { "取消喜欢" } else { "喜欢" }).on_click(
+                                            move |_e, _w, cx| {
+                                                w_like
+                                                    .update(cx, |page, cx| {
+                                                        page.playback.update(cx, |pb, cx| {
+                                                            pb.toggle_like_song(s_like.clone(), cx)
+                                                        })
+                                                    })
+                                                    .ok();
+                                            },
+                                        ),
+                                    )
                                 })
                                 .child(
                                     div()
@@ -196,6 +274,12 @@ impl Render for AlbumPage {
                                                 .child(song.artists.clone()),
                                         ),
                                 )
+                                .child(like_button(
+                                    &playback,
+                                    song.clone(),
+                                    format!("album-track-{}", song.id),
+                                    cx,
+                                ))
                                 .child(
                                     div()
                                         .w(px(56.0))

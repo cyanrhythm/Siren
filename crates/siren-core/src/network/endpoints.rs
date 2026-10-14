@@ -41,6 +41,10 @@ pub mod path {
     pub const CLOUD_SEARCH: &str = "/eapi/cloudsearch/pc";
     /// 最近播放歌曲（WEAPI，需登录）。
     pub const RECENT_SONGS: &str = "/weapi/play-record/song/list";
+    /// 最近播放歌单（EAPI，需登录）。
+    pub const RECENT_PLAYLISTS: &str = "/eapi/play-record/playlist/list";
+    /// 最近播放专辑（WEAPI，需登录）。
+    pub const RECENT_ALBUMS: &str = "/weapi/play-record/album/list";
     /// 打卡上报（EAPI）。
     pub const WEBLOG: &str = "/eapi/feedback/weblog";
     /// 歌曲详情（EAPI，`c=[{"id":..}]`）。
@@ -75,6 +79,30 @@ pub mod path {
     pub const INTELLIGENCE: &str = "/eapi/playmode/intelligence/list";
     /// 专辑详情（WEAPI，后接 `{id}`）。
     pub const ALBUM_DETAIL: &str = "/weapi/v1/album/";
+    /// 用户详情（WEAPI，后接 `{uid}`）。
+    pub const USER_DETAIL: &str = "/weapi/v1/user/detail/";
+    /// 关注用户（WEAPI，后接 `{id}`）。
+    pub const USER_FOLLOW: &str = "/weapi/user/follow/";
+    /// 取消关注用户（WEAPI，后接 `{id}`）。
+    pub const USER_DELFOLLOW: &str = "/weapi/user/delfollow/";
+    /// 用户关注列表（WEAPI，后接 `{uid}`）。
+    pub const USER_FOLLOWS: &str = "/weapi/user/getfollows/";
+    /// 用户粉丝列表（WEAPI，后接 `{uid}`）。
+    pub const USER_FOLLOWEDS: &str = "/weapi/user/getfolloweds/";
+    /// 首页区块（EAPI）。
+    pub const HOME_BLOCK_PAGE: &str = "/eapi/homepage/block/page";
+    /// 每日推荐歌曲（EAPI）。
+    pub const DAILY_RECOMMEND: &str = "/eapi/v3/discovery/recommend/songs";
+    /// 收藏专辑列表（EAPI）。
+    pub const ALBUM_SUBLIST: &str = "/eapi/album/sublist";
+    /// 更新用户歌单排序（WEAPI）。
+    pub const PLAYLIST_ORDER: &str = "/weapi/playlist/order/update";
+    /// 置顶/取消置顶自建歌单（WEAPI，后接 `top` / `top/cancel`）。
+    pub const PLAYLIST_TOP: &str = "/weapi/user/playlist/top";
+    /// 收藏歌手列表（EAPI）。
+    pub const ARTIST_SUBLIST: &str = "/eapi/artist/sublist";
+    /// 歌手热门歌曲（WEAPI）。
+    pub const ARTIST_TOP_SONGS: &str = "/weapi/artist/top/song";
     /// 歌单增删歌曲（EAPI）。
     pub const PLAYLIST_MANIPULATE: &str = "/eapi/playlist/manipulate/tracks";
     /// 歌单收藏/取消（EAPI，后接 `subscribe` / `unsubscribe`）。
@@ -95,4 +123,18 @@ pub mod path {
     pub const NOS_TOKEN_ALLOC: &str = "/weapi/nos/token/alloc";
     /// 登记歌单封面（WEAPI）。
     pub const PLAYLIST_COVER_UPDATE: &str = "/weapi/playlist/cover/update";
+    /// 用户等级（EAPI）。
+    pub const USER_LEVEL: &str = "/eapi/user/level";
+    /// VIP 状态（WEAPI）。
+    pub const VIP_INFO: &str = "/weapi/music-vip-membership/client/vip/info";
+    /// 账号第三方绑定（WEAPI）。
+    pub const USER_BINDING: &str = "/weapi/v1/user/binding";
+    /// 修改用户资料（EAPI）。
+    pub const USER_UPDATE: &str = "/eapi/user/update";
+    /// 昵称可用性检查（EAPI）。
+    pub const NICKNAME_CHECK: &str = "/eapi/nickname/check";
+    /// 每日签到（EAPI，`type` 0=安卓 1=web）。
+    pub const DAILY_TASK: &str = "/eapi/point/dailyTask";
+    /// 更换头像（WEAPI，multipart，字段 `imgFile`）。
+    pub const AVATAR_UPLOAD: &str = "/weapi/user/avatar/upload/v1";
 }

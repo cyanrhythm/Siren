@@ -13,6 +13,7 @@ siren-core.workspace = true
 siren-platform.workspace = true
 gpui-kit.workspace = true
 tokio.workspace = true
+log.workspace = true
 
 # 封面取色（解码封面主色）
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }

@@ -9,6 +9,7 @@ use gpui_kit::*;
 
 use siren_core::model::{Album, Artist, Playlist, Song};
 
+use super::super::components::like_button;
 use super::super::playback::Playback;
 use super::super::services::Services;
 use super::super::{page_shell, PageEvent};
@@ -61,6 +62,7 @@ pub(crate) struct SearchPage {
     playlists: Arc<Vec<Playlist>>,
     selected: Option<usize>,
     status: SharedString,
+    run_gen: u64,
 }
 
 impl EventEmitter<PageEvent> for SearchPage {}
@@ -78,6 +80,7 @@ impl SearchPage {
             playlists: Arc::new(Vec::new()),
             selected: None,
             status: "在顶部搜索框输入关键词并回车".into(),
+            run_gen: 0,
         }
     }
 
@@ -104,6 +107,8 @@ impl SearchPage {
         if self.keyword.is_empty() {
             return;
         }
+        self.run_gen = self.run_gen.wrapping_add(1);
+        let gen = self.run_gen;
         let kind = self.kind;
         let keyword = self.keyword.clone();
         self.status = format!("搜索中：{keyword}").into();
@@ -121,6 +126,9 @@ impl SearchPage {
         cx.spawn(async move |this, cx| {
             let value = rx.await.ok().flatten();
             this.update(cx, |this, cx| {
+                if this.run_gen != gen {
+                    return;
+                }
                 let Some(value) = value else {
                     this.status = format!("{} · 0 条", kind.label()).into();
                     cx.notify();
@@ -211,8 +219,9 @@ impl SearchPage {
         let count = songs.len();
         let selected = self.selected;
         let covers = self.services.covers.clone();
+        let playback = self.playback.clone();
         let weak = cx.weak_entity();
-        uniform_list("search-songs", count, move |range, _window, _cx| {
+        uniform_list("search-songs", count, move |range, _window, cx| {
             range
                 .map(|i| {
                     let song = &songs[i];
@@ -221,8 +230,11 @@ impl SearchPage {
                     let weak = weak.clone();
                     let weak_ctx = weak.clone();
                     let sid = song.id;
+                    let song_owned = song.clone();
+                    let liked = playback.read(cx).is_liked(sid);
                     div()
                         .id(format!("search-song-{}", song.id))
+                        .group(format!("search-song-{}", song.id))
                         .w_full()
                         .h(px(48.0))
                         .px(px(16.0))
@@ -262,10 +274,37 @@ impl SearchPage {
                                         .child(song.artists.clone()),
                                 ),
                         )
+                        .child(like_button(
+                            &playback,
+                            song.clone(),
+                            format!("search-song-{}", song.id),
+                            cx,
+                        ))
                         .context_menu(move |menu, _w, _cx| {
-                            let weak_ctx = weak_ctx.clone();
-                            menu.item(PopupMenuItem::new("添加到歌单").on_click(move |_ev, _w, cx| {
-                                weak_ctx
+                            let weak_next = weak_ctx.clone();
+                            let weak_like = weak_ctx.clone();
+                            let weak_add = weak_ctx.clone();
+                            let song_next = song_owned.clone();
+                            let song_like = song_owned.clone();
+                            menu.item(PopupMenuItem::new("下一首播放").on_click(move |_ev, _w, cx| {
+                                weak_next
+                                    .update(cx, |page, cx| {
+                                        page.playback.update(cx, |pb, cx| pb.play_next(song_next.clone(), cx))
+                                    })
+                                    .ok();
+                            }))
+                            .item(PopupMenuItem::new(if liked { "取消喜欢" } else { "喜欢" }).on_click(
+                                move |_ev, _w, cx| {
+                                    weak_like
+                                        .update(cx, |page, cx| {
+                                            page.playback
+                                                .update(cx, |pb, cx| pb.toggle_like_song(song_like.clone(), cx))
+                                        })
+                                        .ok();
+                                },
+                            ))
+                            .item(PopupMenuItem::new("添加到歌单").on_click(move |_ev, _w, cx| {
+                                weak_add
                                     .update(cx, |_page, cx| cx.emit(PageEvent::AddToPlaylist { song_id: sid }))
                                     .ok();
                             }))

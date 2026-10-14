@@ -14,10 +14,12 @@ use gpui_kit::*;
 
 use siren_core::model::{PlaylistDetail, Song};
 
+use super::super::components::like_button;
 use super::super::playback::Playback;
 use super::super::services::Services;
 use super::super::{fmt_time, icon, page_shell_with_header, PageEvent};
 use crate::theme;
+use siren_core::player::{PlaySource, PlaySourceKind};
 
 /// 封面裁剪状态。
 struct CropState {
@@ -77,6 +79,8 @@ pub(crate) struct PlaylistPage {
     add_results: Vec<Song>,
     /// 封面裁剪浮层状态。
     crop: Option<CropState>,
+    /// 加载代：重载时自增，旧响应据此失效。
+    load_gen: u64,
     _filter_sub: Subscription,
     _add_sub: Subscription,
 }
@@ -121,6 +125,7 @@ impl PlaylistPage {
             add_open: false,
             add_results: Vec::new(),
             crop: None,
+            load_gen: 0,
             _filter_sub,
             _add_sub,
         };
@@ -128,7 +133,19 @@ impl PlaylistPage {
         page
     }
 
+    /// 队列来源容器（用于「正在播放」与打卡上报）。
+    fn source(&self) -> PlaySource {
+        PlaySource {
+            kind: PlaySourceKind::Playlist,
+            id: self.id,
+            name: self.name.clone(),
+            cover_url: self.detail.as_ref().map(|d| d.cover_url.clone()).unwrap_or_default(),
+        }
+    }
+
     fn load(&mut self, cx: &mut Context<Self>) {
+        self.load_gen = self.load_gen.wrapping_add(1);
+        let gen = self.load_gen;
         let client = self.services.client.clone();
         let id = self.id;
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -156,6 +173,9 @@ impl PlaylistPage {
         cx.spawn(async move |this, cx| {
             let detail = rx.await.ok().flatten();
             this.update(cx, |this, cx| {
+                if this.load_gen != gen {
+                    return;
+                }
                 if let Some(d) = &detail {
                     this.subscribed = d.subscribed;
                 }
@@ -181,9 +201,34 @@ impl PlaylistPage {
         cx.notify();
         let client = self.services.client.clone();
         let id = self.id;
+        let (tx, rx) = tokio::sync::oneshot::channel();
         self.services.handle.spawn(async move {
-            let _ = siren_core::network::api::playlist_subscribe(&client, id, subscribe).await;
+            let ok = siren_core::network::api::playlist_subscribe(&client, id, subscribe)
+                .await
+                .is_ok();
+            let _ = tx.send(ok);
         });
+        cx.spawn(async move |this, cx| {
+            let ok = rx.await.unwrap_or(false);
+            this.update(cx, |this, cx| {
+                if ok {
+                    this.services.toast(
+                        if subscribe {
+                            "已收藏歌单"
+                        } else {
+                            "已取消收藏"
+                        },
+                        cx,
+                    );
+                } else {
+                    this.subscribed = !subscribe;
+                    this.services.toast_error("操作失败", cx);
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// 从当前歌单移除某首歌，成功后重新加载曲目。
@@ -856,7 +901,9 @@ impl Render for PlaylistPage {
                                 weak_play
                                     .update(cx, |page, cx| {
                                         let items = page.detail.as_ref().map(|d| d.tracks.clone()).unwrap_or_default();
-                                        page.playback.update(cx, |pb, cx| pb.play_from(items, 0, cx));
+                                        let source = page.source();
+                                        page.playback
+                                            .update(cx, |pb, cx| pb.play_from_source(items, 0, Some(source), cx));
                                     })
                                     .ok();
                             })
@@ -958,16 +1005,20 @@ impl Render for PlaylistPage {
 
                 let weak = cx.weak_entity();
                 let covers = self.services.covers.clone();
-                let rows = uniform_list("playlist-tracks", shown.len(), move |range, _window, _cx| {
+                let playback = self.playback.clone();
+                let rows = uniform_list("playlist-tracks", shown.len(), move |range, _window, cx| {
                     range
                         .map(|i| {
                             let song = &shown[i];
+                            let song_owned = song.clone();
+                            let liked = playback.read(cx).is_liked(song.id);
                             let cover = covers.image(&song.cover_url, 40.0);
                             let weak = weak.clone();
                             let weak_ctx = weak.clone();
                             let sid = song.id;
                             div()
                                 .id(format!("playlist-track-{}", song.id))
+                                .group(format!("playlist-track-{}", song.id))
                                 .w_full()
                                 .h(px(52.0))
                                 .px(px(24.0))
@@ -981,7 +1032,9 @@ impl Render for PlaylistPage {
                                     weak.update(cx, |this, cx| {
                                         let items = this.detail.as_ref().map(|d| d.tracks.clone()).unwrap_or_default();
                                         let idx = items.iter().position(|s| s.id == sid).unwrap_or(0);
-                                        this.playback.update(cx, |pb, cx| pb.play_from(items, idx, cx));
+                                        let source = this.source();
+                                        this.playback
+                                            .update(cx, |pb, cx| pb.play_from_source(items, idx, Some(source), cx));
                                     })
                                     .ok();
                                 })
@@ -1022,6 +1075,12 @@ impl Render for PlaylistPage {
                                         .truncate()
                                         .child(song.album.clone()),
                                 )
+                                .child(like_button(
+                                    &playback,
+                                    song.clone(),
+                                    format!("playlist-track-{}", song.id),
+                                    cx,
+                                ))
                                 .child(
                                     div()
                                         .w(px(56.0))
@@ -1030,9 +1089,30 @@ impl Render for PlaylistPage {
                                         .child(fmt_time(song.duration_ms)),
                                 )
                                 .context_menu(move |menu, _w, _cx| {
+                                    let weak_next = weak_ctx.clone();
+                                    let weak_like = weak_ctx.clone();
                                     let weak_add = weak_ctx.clone();
                                     let weak_del = weak_ctx.clone();
-                                    menu.item(PopupMenuItem::new("添加到歌单").on_click(move |_ev, _w, cx| {
+                                    let song_next = song_owned.clone();
+                                    let song_like = song_owned.clone();
+                                    menu.item(PopupMenuItem::new("下一首播放").on_click(move |_ev, _w, cx| {
+                                        weak_next
+                                            .update(cx, |page, cx| {
+                                                page.playback.update(cx, |pb, cx| pb.play_next(song_next.clone(), cx))
+                                            })
+                                            .ok();
+                                    }))
+                                    .item(PopupMenuItem::new(if liked { "取消喜欢" } else { "喜欢" }).on_click(
+                                        move |_ev, _w, cx| {
+                                            weak_like
+                                                .update(cx, |page, cx| {
+                                                    page.playback
+                                                        .update(cx, |pb, cx| pb.toggle_like_song(song_like.clone(), cx))
+                                                })
+                                                .ok();
+                                        },
+                                    ))
+                                    .item(PopupMenuItem::new("添加到歌单").on_click(move |_ev, _w, cx| {
                                         weak_add
                                             .update(cx, |_page, cx| cx.emit(PageEvent::AddToPlaylist { song_id: sid }))
                                             .ok();

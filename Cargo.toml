@@ -60,12 +60,16 @@ num-traits = "0.2"
 # ── 序列化 / 网络（siren-core，规划中）──────────────────────────
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "charset", "http2"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "charset", "http2", "multipart"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
 directories = "6"
 
 # 歌词解析（siren-core）
 regex = "1"
+
+# ── 日志（siren-core / siren-app）───────────────────────────────
+log = { version = "0.4", features = ["std"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
 # ── 二维码登录（siren-core）────────────────────────────────────
 qrcode = { version = "0.14", default-features = false }

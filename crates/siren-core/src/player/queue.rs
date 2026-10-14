@@ -3,11 +3,12 @@
 //! 队列只管理「顺序、当前索引、模式」；实际解码由音频引擎负责。
 
 use rand::Rng;
+use serde::{Deserialize, Serialize};
 
 use crate::model::Song;
 
 /// 播放模式。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum PlayMode {
     /// 列表循环。
     #[default]
@@ -18,12 +19,43 @@ pub enum PlayMode {
     Shuffle,
 }
 
+/// 队列来源容器（供「正在播放」显示名称/跳转，并作为打卡上报的容器 id）。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PlaySource {
+    pub kind: PlaySourceKind,
+    pub id: i64,
+    pub name: String,
+    #[serde(default)]
+    pub cover_url: String,
+}
+
+/// 来源容器类型。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum PlaySourceKind {
+    Playlist,
+    Album,
+}
+
 /// 播放队列。
 #[derive(Debug, Default)]
 pub struct PlayerQueue {
     items: Vec<Song>,
     current: Option<usize>,
     mode: PlayMode,
+    source: Option<PlaySource>,
+    context: Option<String>,
+    /// 进入特殊上下文（心动/漫游）前的队列备份。
+    snapshot: Option<Snapshot>,
+}
+
+/// 入特殊上下文前的队列备份。
+#[derive(Debug, Clone)]
+struct Snapshot {
+    items: Vec<Song>,
+    index: usize,
+    mode: PlayMode,
+    source: Option<PlaySource>,
+    context: Option<String>,
 }
 
 impl PlayerQueue {
@@ -39,6 +71,62 @@ impl PlayerQueue {
 
     pub fn items(&self) -> &[Song] {
         &self.items
+    }
+
+    /// 队列来源容器。
+    pub fn source(&self) -> Option<&PlaySource> {
+        self.source.as_ref()
+    }
+
+    pub fn set_source(&mut self, source: Option<PlaySource>) {
+        self.source = source;
+    }
+
+    /// 播放上下文标签（如 `intelligence` / `similar_roaming`）。
+    pub fn context(&self) -> Option<&str> {
+        self.context.as_deref()
+    }
+
+    pub fn set_context(&mut self, context: Option<String>) {
+        self.context = context;
+    }
+
+    /// 备份当前队列与上下文（进入心动/漫游前调用）。
+    pub fn take_snapshot(&mut self) {
+        self.snapshot = Some(Snapshot {
+            items: self.items.clone(),
+            index: self.current.unwrap_or(0),
+            mode: self.mode,
+            source: self.source.clone(),
+            context: self.context.clone(),
+        });
+    }
+
+    /// 是否存在可还原的备份。
+    pub fn has_snapshot(&self) -> bool {
+        self.snapshot.is_some()
+    }
+
+    /// 丢弃备份（正常播放新队列时）。
+    pub fn clear_snapshot(&mut self) {
+        self.snapshot = None;
+    }
+
+    /// 退出特殊上下文：有备份则还原，否则仅清除上下文标签。
+    pub fn exit_special_context(&mut self) {
+        let Some(snapshot) = self.snapshot.take() else {
+            self.context = None;
+            return;
+        };
+        // 还原前记下正在播放的曲目，尽量把它定位到还原后的队列
+        let playing_id = self.current.and_then(|i| self.items.get(i)).map(|s| s.id);
+        self.items = snapshot.items;
+        self.mode = snapshot.mode;
+        self.source = snapshot.source;
+        self.context = snapshot.context;
+        self.current = playing_id
+            .and_then(|id| self.items.iter().position(|s| s.id == id))
+            .or_else(|| (!self.items.is_empty()).then_some(snapshot.index.min(self.items.len() - 1)));
     }
 
     pub fn len(&self) -> usize {
@@ -107,6 +195,22 @@ impl PlayerQueue {
             PlayMode::Shuffle => self.random_index(),
             PlayMode::ListLoop => self.next_index(),
         }
+    }
+
+    /// 把 `song` 插到当前曲之后（无当前曲则插到队首）。
+    pub fn insert_next(&mut self, song: Song) {
+        let at = self.current.map(|i| i + 1).unwrap_or(0).min(self.items.len());
+        self.items.insert(at, song);
+    }
+
+    /// 用 `items` 替换 `index` 之后（含后续）的曲目（漫游续接：保留到当前，尾部续接相似歌曲）。
+    pub fn append_after(&mut self, index: usize, items: Vec<Song>) {
+        if self.items.is_empty() {
+            return;
+        }
+        let index = index.min(self.items.len() - 1);
+        self.items.truncate(index + 1);
+        self.items.extend(items);
     }
 
     /// 按模式推进到下一首，返回新的当前曲。

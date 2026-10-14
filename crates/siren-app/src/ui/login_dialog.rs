@@ -34,35 +34,35 @@ impl LoginTab {
 impl Root {
     /// 打开登录弹窗（默认停在扫码）。
     pub(crate) fn open_login(&mut self, cx: &mut Context<Self>) {
-        self.login_open = true;
+        self.login.open = true;
         self.set_login_tab(LoginTab::Scan, cx);
     }
 
     /// 关闭登录弹窗并使进行中的二维码轮询失效。
     pub(crate) fn close_login(&mut self, cx: &mut Context<Self>) {
-        self.login_open = false;
-        self.login_gen = self.login_gen.wrapping_add(1);
+        self.login.open = false;
+        self.login.gen = self.login.gen.wrapping_add(1);
         cx.notify();
     }
 
     fn set_login_tab(&mut self, tab: LoginTab, cx: &mut Context<Self>) {
-        self.login_tab = tab;
-        self.login_gen = self.login_gen.wrapping_add(1);
-        self.qr_image = None;
+        self.login.tab = tab;
+        self.login.gen = self.login.gen.wrapping_add(1);
+        self.login.qr_image = None;
         if tab == LoginTab::Scan {
-            self.login_status = "正在生成二维码…".into();
+            self.login.status = "正在生成二维码…".into();
             self.start_qr(cx);
         } else {
-            self.login_status = SharedString::default();
+            self.login.status = SharedString::default();
         }
         cx.notify();
     }
 
     /// Cookie 登录：校验并提交。
     pub(crate) fn submit_cookie_login(&mut self, cx: &mut Context<Self>) {
-        let raw = self.login_input.read(cx).value().trim().to_string();
+        let raw = self.login.input.read(cx).value().trim().to_string();
         let Some(cookie) = siren_core::auth::normalize_cookie(&raw) else {
-            self.login_status = "请输入 MUSIC_U 或完整 Cookie".into();
+            self.login.status = "请输入 MUSIC_U 或完整 Cookie".into();
             cx.notify();
             return;
         };
@@ -73,15 +73,15 @@ impl Root {
     fn finish_login(&mut self, cookie: String, cx: &mut Context<Self>) {
         self.services.client.set_cookie(Some(cookie.clone()));
         siren_core::auth::save_cookie(&cookie);
-        self.login_open = false;
-        self.login_gen = self.login_gen.wrapping_add(1);
+        self.login.open = false;
+        self.login.gen = self.login.gen.wrapping_add(1);
         cx.notify();
-        self.library.update(cx, |page, cx| page.refresh_account(cx));
+        self.library.update(cx, |page, cx| page.refresh_account(true, cx));
     }
 
     /// 生成二维码并轮询扫码状态。
     fn start_qr(&mut self, cx: &mut Context<Self>) {
-        let gen = self.login_gen;
+        let gen = self.login.gen;
         let client = self.services.client.clone();
         let handle = self.services.handle.clone();
         cx.spawn(async move |this, cx| {
@@ -97,15 +97,15 @@ impl Root {
             });
             let Some(key) = rx.await.ok().flatten() else {
                 this.update(cx, |this, cx| {
-                    if this.login_gen == gen {
-                        this.login_status = "二维码生成失败，请重试".into();
+                    if this.login.gen == gen {
+                        this.login.status = "二维码生成失败，请重试".into();
                         cx.notify();
                     }
                 })
                 .ok();
                 return;
             };
-            if this.update(cx, |this, _| this.login_gen != gen).unwrap_or(true) {
+            if this.update(cx, |this, _| this.login.gen != gen).unwrap_or(true) {
                 return;
             }
 
@@ -117,11 +117,11 @@ impl Root {
                 .await;
             let image = png.map(|bytes| Arc::new(Image::from_bytes(ImageFormat::Png, bytes)));
             this.update(cx, |this, cx| {
-                if this.login_gen != gen {
+                if this.login.gen != gen {
                     return;
                 }
-                this.qr_image = image;
-                this.login_status = "请使用网易云音乐 App 扫码".into();
+                this.login.qr_image = image;
+                this.login.status = "请使用网易云音乐 App 扫码".into();
                 cx.notify();
             })
             .ok();
@@ -130,7 +130,7 @@ impl Root {
             let mut failures = 0u32;
             loop {
                 cx.background_executor().timer(Duration::from_millis(2500)).await;
-                if this.update(cx, |this, _| this.login_gen != gen).unwrap_or(true) {
+                if this.update(cx, |this, _| this.login.gen != gen).unwrap_or(true) {
                     return;
                 }
 
@@ -145,8 +145,8 @@ impl Root {
                     failures += 1;
                     if failures >= 5 {
                         this.update(cx, |this, cx| {
-                            if this.login_gen == gen {
-                                this.login_status = "网络异常，请重试".into();
+                            if this.login.gen == gen {
+                                this.login.status = "网络异常，请重试".into();
                                 cx.notify();
                             }
                         })
@@ -160,8 +160,8 @@ impl Root {
                 match code {
                     800 => {
                         this.update(cx, |this, cx| {
-                            if this.login_gen == gen {
-                                this.login_status = "二维码已过期，请刷新".into();
+                            if this.login.gen == gen {
+                                this.login.status = "二维码已过期，请刷新".into();
                                 cx.notify();
                             }
                         })
@@ -186,8 +186,8 @@ impl Root {
                             message
                         };
                         this.update(cx, |this, cx| {
-                            if this.login_gen == gen {
-                                this.login_status = message.into();
+                            if this.login.gen == gen {
+                                this.login.status = message.into();
                                 cx.notify();
                             }
                         })
@@ -206,14 +206,14 @@ impl Root {
             .flex()
             .items_center()
             .gap(px(8.0))
-            .child(tab_button(LoginTab::Scan, self.login_tab, weak.clone()))
-            .child(tab_button(LoginTab::Web, self.login_tab, weak.clone()))
-            .child(tab_button(LoginTab::Cookie, self.login_tab, weak.clone()));
+            .child(tab_button(LoginTab::Scan, self.login.tab, weak.clone()))
+            .child(tab_button(LoginTab::Web, self.login.tab, weak.clone()))
+            .child(tab_button(LoginTab::Cookie, self.login.tab, weak.clone()));
 
         let weak_cancel = weak.clone();
-        let content: AnyElement = match self.login_tab {
+        let content: AnyElement = match self.login.tab {
             LoginTab::Scan => {
-                let qr: AnyElement = match &self.qr_image {
+                let qr: AnyElement = match &self.login.qr_image {
                     Some(image) => img(image.clone()).w(px(210.0)).h(px(210.0)).into_any_element(),
                     None => div()
                         .text_sm()
@@ -241,7 +241,7 @@ impl Root {
                         div()
                             .text_sm()
                             .text_color(theme::text_gray())
-                            .child(self.login_status.clone()),
+                            .child(self.login.status.clone()),
                     )
                     .child(
                         Button::new("qr-retry")
@@ -282,12 +282,12 @@ impl Root {
                     .flex_col()
                     .items_center()
                     .gap(px(12.0))
-                    .child(div().w(px(320.0)).child(Input::new(&self.login_input)))
+                    .child(div().w(px(320.0)).child(Input::new(&self.login.input)))
                     .child(
                         div()
                             .text_sm()
                             .text_color(theme::text_gray())
-                            .child(self.login_status.clone()),
+                            .child(self.login.status.clone()),
                     )
                     .child(
                         Button::new("cookie-login")
@@ -348,8 +348,8 @@ impl Root {
 fn self_status(this: &WeakEntity<Root>, cx: &mut AsyncApp, gen: u64, text: &str) {
     let text = text.to_string();
     this.update(cx, |this, cx| {
-        if this.login_gen == gen {
-            this.login_status = text.into();
+        if this.login.gen == gen {
+            this.login.status = text.into();
             cx.notify();
         }
     })

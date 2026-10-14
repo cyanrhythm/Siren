@@ -8,9 +8,12 @@
 pub mod components;
 pub mod covers;
 pub mod login_dialog;
+mod notifications;
 pub mod pages;
 mod playback;
 mod services;
+mod session;
+mod settings_store;
 
 use std::sync::Arc;
 
@@ -27,9 +30,41 @@ use siren_core::network::client::NeteaseClient;
 
 use crate::theme;
 use covers::CoverLoader;
-use pages::{AlbumPage, HomePage, LibraryPage, PlaylistPage, RecentPage, SearchPage};
+use notifications::Notifications;
+use pages::{
+    AccountPage, AlbumPage, ArtistPage, HomePage, LibraryPage, PlaylistPage, ProfilePage, RecentPage, SearchPage,
+};
+pub(crate) use playback::flush_playback_session;
 use playback::Playback;
 use services::Services;
+use session::Session;
+use settings_store::SettingsStore;
+
+/// 当前页面列实际宽度（供页面内自适应排布）。
+pub(crate) struct PageLayout {
+    pub page_w: f32,
+}
+
+impl Global for PageLayout {}
+
+/// 左侧「音乐库」栏宽度。
+pub(crate) const LIBRARY_W: f32 = 300.0;
+/// 主内容行左右内边距（px 8×2）与列间距（gap 8×2）之和。
+pub(crate) const SHELL_CHROME: f32 = 32.0;
+/// 页面列水平内边距（首页列 `p(24)` 的两侧）。
+pub(crate) const PAGE_PAD: f32 = 48.0;
+/// 首页卡片定宽与间距。
+pub(crate) const CARD_W: f32 = 168.0;
+pub(crate) const CARD_GAP: f32 = 16.0;
+
+/// 最小窗口尺寸：宽度需容纳「左栏 + 中间两个卡片 + 右栏」，
+/// 高度取宽度的 0.618（黄金比）。
+pub(crate) fn min_window_size(np_width: f32) -> (f32, f32) {
+    // 额外 8px 余量：DPI 取整后可视宽度会比请求值少不到 1px，否则第二张卡
+    // 会差之毫厘被挤到下一行，导致最小尺寸下只显示一张卡片。
+    let w = LIBRARY_W + SHELL_CHROME + PAGE_PAD + CARD_W * 2.0 + CARD_GAP + np_width + 8.0;
+    (w, w * 0.618)
+}
 
 /// 当前页面（音乐库为常驻侧栏，不在此列）。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,6 +80,11 @@ pub(crate) enum Route {
         id: i64,
         name: String,
     },
+    /// 歌手详情。
+    Artist {
+        id: i64,
+        name: String,
+    },
     /// 个人主页。
     Profile {
         uid: i64,
@@ -53,6 +93,8 @@ pub(crate) enum Route {
     RecentPlay,
     /// 设置。
     Settings,
+    /// 账号设置。
+    Account,
 }
 
 /// 页面回传给外壳的导航事件。
@@ -67,16 +109,17 @@ pub(crate) enum PageEvent {
         name: String,
     },
     Back,
-    /// 登录成功：上报 uid、昵称与头像，供标题栏账号区展示。
-    Account {
-        uid: i64,
-        nickname: String,
-        avatar_url: String,
-    },
+    /// 登录成功（账号信息经 [`Session`] 全局读取）。
+    SignedIn,
     /// 未登录 / 已退出登录。
     LoggedOut,
     /// 请求打开登录弹窗。
     OpenLogin,
+    /// 打开歌手详情。
+    OpenArtist {
+        id: i64,
+        name: String,
+    },
     /// 打开个人主页。
     OpenProfile {
         uid: i64,
@@ -85,6 +128,8 @@ pub(crate) enum PageEvent {
     OpenRecentPlay,
     /// 打开设置。
     OpenSettings,
+    /// 打开账号设置。
+    OpenAccount,
     /// 请求新建歌单。
     OpenCreate,
     /// 请求把歌曲加入歌单。
@@ -159,6 +204,91 @@ impl NpCard {
     }
 }
 
+/// 导航栈：顶层路由历史。
+pub(crate) struct NavState {
+    stack: Vec<Route>,
+}
+
+impl NavState {
+    fn new(route: Route) -> Self {
+        Self { stack: vec![route] }
+    }
+
+    /// 当前页面。
+    fn route(&self) -> Route {
+        self.stack.last().cloned().unwrap_or(Route::Home)
+    }
+
+    /// 切换顶层页面：历史重置为单元素。
+    fn reset(&mut self, route: Route) {
+        self.stack.clear();
+        self.stack.push(route);
+    }
+
+    fn push(&mut self, route: Route) {
+        self.stack.push(route);
+    }
+
+    /// 返回上一页；栈顶无可回退项时返回 `false`。
+    fn pop(&mut self) -> bool {
+        if self.stack.len() > 1 {
+            self.stack.pop();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn last_mut(&mut self) -> Option<&mut Route> {
+        self.stack.last_mut()
+    }
+}
+
+/// 登录弹窗状态。
+pub(crate) struct LoginDialogState {
+    pub(crate) open: bool,
+    pub(crate) tab: login_dialog::LoginTab,
+    /// 二维码轮询的「代」计数：自增即可使旧任务失效。
+    pub(crate) gen: u64,
+    pub(crate) qr_image: Option<Arc<Image>>,
+    pub(crate) status: SharedString,
+    pub(crate) input: Entity<InputState>,
+}
+
+/// 歌曲评论面板状态。
+#[derive(Default)]
+pub(crate) struct CommentsPanelState {
+    pub(crate) open: bool,
+    pub(crate) items: Vec<siren_core::model::CommentItem>,
+    pub(crate) total: i64,
+    pub(crate) has_more: bool,
+    pub(crate) cursor: String,
+    pub(crate) floor_open: Option<i64>,
+    pub(crate) floor_items: Vec<siren_core::model::CommentItem>,
+}
+
+/// 歌单写操作浮层状态。
+pub(crate) struct PlaylistOpsState {
+    pub(crate) create_open: bool,
+    pub(crate) create_input: Entity<InputState>,
+    pub(crate) picker_song: Option<i64>,
+    pub(crate) picker_playlists: Vec<Playlist>,
+    pub(crate) rename_pid: Option<i64>,
+    pub(crate) rename_input: Entity<InputState>,
+    pub(crate) delete_pid: Option<i64>,
+    pub(crate) desc_pid: Option<i64>,
+    pub(crate) desc_input: Entity<InputState>,
+}
+
+/// 正在播放栏的 UI 状态。
+pub(crate) struct NowPlayingUi {
+    pub(crate) open: bool,
+    pub(crate) album_page: usize,
+    pub(crate) simi_page: usize,
+    /// 已为哪首歌预取过播放封面（避免重复预取）。
+    pub(crate) cover_song: Option<i64>,
+}
+
 /// 主窗口根组件：导航与外壳。
 pub struct Root {
     _runtime: tokio::runtime::Runtime,
@@ -169,53 +299,26 @@ pub struct Root {
     pl_filter_input: Entity<InputState>,
     /// 歌单「添加歌曲」搜索框（跨歌单复用）。
     pl_add_input: Entity<InputState>,
-    nav: Vec<Route>,
+    /// 账号设置：新昵称 / 个性签名输入。
+    account_nickname_input: Entity<InputState>,
+    account_signature_input: Entity<InputState>,
+    nav: NavState,
     home: Entity<HomePage>,
     library: Entity<LibraryPage>,
     search: Entity<SearchPage>,
     recent: Entity<RecentPage>,
     playlist_page: Option<Entity<PlaylistPage>>,
     album_page: Option<Entity<AlbumPage>>,
-    now_playing_open: bool,
-    /// 右侧栏宽度（像素）。
-    np_width: f32,
+    artist_page: Option<Entity<ArtistPage>>,
+    profile_page: Option<Entity<ProfilePage>>,
+    account_page: Option<Entity<AccountPage>>,
+    /// 正在播放卡片编辑器的拖拽源索引。
+    card_drag_from: Option<usize>,
+    np: NowPlayingUi,
     np_width_slider: Entity<SliderState>,
-    /// 正在播放卡片顺序。
-    np_cards: Vec<NpCard>,
-    /// 歌手专辑 / 相似歌手卡片的当前页码。
-    np_album_page: usize,
-    np_simi_page: usize,
-    /// 登录后的账号信息（昵称、头像 URL、uid）；未登录为 None。
-    account: Option<(SharedString, String, i64)>,
-    /// 已为哪首歌预取过播放封面（避免重复预取）。
-    cover_song: Option<i64>,
-    // ── 登录弹窗状态 ───────────────────────────────────────────
-    login_open: bool,
-    login_tab: login_dialog::LoginTab,
-    /// 二维码轮询的“代”计数：自增即可使旧任务失效。
-    login_gen: u64,
-    qr_image: Option<Arc<Image>>,
-    login_status: SharedString,
-    login_input: Entity<InputState>,
-    // ── 评论面板状态 ───────────────────────────────────────────
-    comments_open: bool,
-    comments_items: Vec<siren_core::model::CommentItem>,
-    comments_total: i64,
-    comments_has_more: bool,
-    comments_cursor: String,
-    comment_floor_open: Option<i64>,
-    comment_floor_items: Vec<siren_core::model::CommentItem>,
-    // ── 歌单写操作 ─────────────────────────────────────────────
-    create_open: bool,
-    create_input: Entity<InputState>,
-    /// 待加入歌单的歌曲 id（Some 时显示歌单选择浮层）。
-    picker_song: Option<i64>,
-    picker_playlists: Vec<Playlist>,
-    rename_pid: Option<i64>,
-    rename_input: Entity<InputState>,
-    delete_pid: Option<i64>,
-    desc_pid: Option<i64>,
-    desc_input: Entity<InputState>,
+    login: LoginDialogState,
+    comments: CommentsPanelState,
+    ops: PlaylistOpsState,
     _subs: Vec<Subscription>,
     _search_sub: Subscription,
 }
@@ -223,6 +326,10 @@ pub struct Root {
 impl Root {
     pub fn new(window: &mut Window, cx: &mut App, runtime: tokio::runtime::Runtime) -> Entity<Self> {
         siren_platform::prepare_native_environment();
+        // 全局唯一真源：设置 + 会话
+        SettingsStore::init(cx);
+        Session::init(cx);
+        cx.set_global(PageLayout { page_w: 0.0 });
         let cookie = std::env::var("SIREN_COOKIE")
             .ok()
             .filter(|s| !s.trim().is_empty())
@@ -230,10 +337,12 @@ impl Root {
             .or_else(siren_core::auth::load_cookie);
         let client = Arc::new(NeteaseClient::with_cookie(cookie));
         let covers = CoverLoader::new(client.clone(), runtime.handle().clone());
+        let notifications = Notifications::new(cx);
         let services = Services {
             client,
             handle: runtime.handle().clone(),
             covers,
+            notifications: notifications.clone(),
         };
         let playback = Playback::new(
             window,
@@ -241,9 +350,10 @@ impl Root {
             services.client.clone(),
             services.handle.clone(),
             services.covers.clone(),
+            notifications.clone(),
         );
 
-        let home = cx.new(|cx| HomePage::new(cx, services.clone()));
+        let home = cx.new(|cx| HomePage::new(cx, services.clone(), playback.clone()));
         let library = cx.new(|cx| LibraryPage::new(window, cx, services.clone()));
         let search = cx.new(|_cx| SearchPage::new(services.clone(), playback.clone()));
         let recent = cx.new(|_cx| RecentPage::new(services.clone(), playback.clone()));
@@ -261,10 +371,12 @@ impl Root {
         let create_input = cx.new(|cx| InputState::new(window, cx).placeholder("歌单名称"));
         let pl_filter_input = cx.new(|cx| InputState::new(window, cx).placeholder("搜索歌单里的歌曲"));
         let pl_add_input = cx.new(|cx| InputState::new(window, cx).placeholder("搜索要添加的歌曲"));
+        let account_nickname_input = cx.new(|cx| InputState::new(window, cx).placeholder("新昵称"));
+        let account_signature_input = cx.new(|cx| InputState::new(window, cx).placeholder("个性签名"));
         let rename_input = cx.new(|cx| InputState::new(window, cx).placeholder("新名称"));
         let desc_input = cx.new(|cx| InputState::new(window, cx).placeholder("歌单简介"));
 
-        let np_width = siren_core::settings::load_np_width();
+        let np_width = SettingsStore::of(cx).np_width();
         let np_width_slider = cx.new(|_| {
             SliderState::new()
                 .max(siren_core::settings::NP_WIDTH_MAX)
@@ -276,11 +388,12 @@ impl Root {
         let initial_route = match std::env::var("SIREN_START").ok().as_deref() {
             Some("search") => Route::Search,
             Some("settings") => Route::Settings,
+            Some("account") => Route::Account,
             Some("recent") => Route::RecentPlay,
             _ => Route::Home,
         };
 
-        cx.new(|cx| {
+        let root = cx.new(|cx| {
             let mut subs = Vec::new();
             subs.push(cx.subscribe(&home, |root: &mut Root, _e, ev: &PageEvent, cx| {
                 root.on_page_event(ev, cx)
@@ -331,6 +444,8 @@ impl Root {
             subs.push(cx.observe(&playback, |root: &mut Root, playback, cx| {
                 root.on_playback(playback, cx)
             }));
+            // 提示变化时重绘外壳（Toast 浮层）
+            subs.push(cx.observe(&notifications, |_root, _n, cx| cx.notify()));
             Self {
                 _runtime: runtime,
                 services,
@@ -338,62 +453,74 @@ impl Root {
                 search_input,
                 pl_filter_input,
                 pl_add_input,
-                nav: vec![initial_route],
+                account_nickname_input,
+                account_signature_input,
+                nav: NavState::new(initial_route),
                 home,
                 library,
                 search,
                 recent,
                 playlist_page: None,
                 album_page: None,
-                now_playing_open: true,
-                np_width,
+                artist_page: None,
+                profile_page: None,
+                account_page: None,
+                card_drag_from: None,
+                np: NowPlayingUi {
+                    open: true,
+                    album_page: 0,
+                    simi_page: 0,
+                    cover_song: None,
+                },
                 np_width_slider,
-                np_cards: siren_core::settings::load_card_layout()
-                    .iter()
-                    .filter_map(|c| NpCard::from_code(c))
-                    .collect(),
-                np_album_page: 0,
-                np_simi_page: 0,
-                account: None,
-                cover_song: None,
-                login_open: false,
-                login_tab: login_dialog::LoginTab::Scan,
-                login_gen: 0,
-                qr_image: None,
-                login_status: SharedString::default(),
-                login_input,
-                comments_open: false,
-                comments_items: Vec::new(),
-                comments_total: 0,
-                comments_has_more: false,
-                comments_cursor: "0".to_string(),
-                comment_floor_open: None,
-                comment_floor_items: Vec::new(),
-                create_open: false,
-                create_input,
-                picker_song: None,
-                picker_playlists: Vec::new(),
-                rename_pid: None,
-                rename_input,
-                delete_pid: None,
-                desc_pid: None,
-                desc_input,
+                login: LoginDialogState {
+                    open: false,
+                    tab: login_dialog::LoginTab::Scan,
+                    gen: 0,
+                    qr_image: None,
+                    status: SharedString::default(),
+                    input: login_input,
+                },
+                comments: CommentsPanelState {
+                    cursor: "0".to_string(),
+                    ..Default::default()
+                },
+                ops: PlaylistOpsState {
+                    create_open: false,
+                    create_input,
+                    picker_song: None,
+                    picker_playlists: Vec::new(),
+                    rename_pid: None,
+                    rename_input,
+                    delete_pid: None,
+                    desc_pid: None,
+                    desc_input,
+                },
                 _subs: subs,
                 _search_sub,
             }
-        })
+        });
+        if std::env::var("SIREN_START").ok().as_deref() == Some("artist") {
+            root.update(cx, |root, cx| root.open_artist(6452, "周杰伦".to_string(), cx));
+        }
+        if std::env::var("SIREN_START").ok().as_deref() == Some("account") {
+            root.update(cx, |root, cx| root.open_account(cx));
+        }
+        root
     }
 
     fn route(&self) -> Route {
-        self.nav.last().cloned().unwrap_or(Route::Home)
+        self.nav.route()
     }
 
     /// 切换顶层页面（侧栏导航）。
     fn navigate(&mut self, route: Route, cx: &mut Context<Self>) {
-        self.nav.clear();
-        self.nav.push(route);
+        self.nav.reset(route);
         self.playlist_page = None;
         self.album_page = None;
+        self.artist_page = None;
+        self.profile_page = None;
+        self.account_page = None;
         cx.notify();
     }
 
@@ -401,20 +528,18 @@ impl Root {
         match event {
             PageEvent::OpenPlaylist { id, name } => self.open_playlist(*id, name.clone(), cx),
             PageEvent::OpenAlbum { id, name } => self.open_album(*id, name.clone(), cx),
+            PageEvent::OpenArtist { id, name } => self.open_artist(*id, name.clone(), cx),
             PageEvent::Back => self.back(cx),
-            PageEvent::Account {
-                uid,
-                nickname,
-                avatar_url,
-            } => self.set_account(Some((*uid, nickname.clone(), avatar_url.clone())), cx),
-            PageEvent::LoggedOut => self.set_account(None, cx),
+            PageEvent::SignedIn => self.on_signed_in(cx),
+            PageEvent::LoggedOut => self.on_signed_out(cx),
             PageEvent::OpenLogin => self.open_login(cx),
-            PageEvent::OpenProfile { uid } => self.navigate(Route::Profile { uid: *uid }, cx),
+            PageEvent::OpenProfile { uid } => self.open_profile(*uid, cx),
             PageEvent::OpenRecentPlay => {
                 self.recent.update(cx, |page, cx| page.load(cx));
                 self.navigate(Route::RecentPlay, cx);
             }
             PageEvent::OpenSettings => self.navigate(Route::Settings, cx),
+            PageEvent::OpenAccount => self.open_account(cx),
             PageEvent::OpenCreate => self.open_create(cx),
             PageEvent::AddToPlaylist { song_id } => self.open_picker(*song_id, cx),
             PageEvent::RenamePlaylist { id } => self.open_rename(*id, cx),
@@ -428,8 +553,8 @@ impl Root {
     fn on_playback(&mut self, playback: Entity<Playback>, cx: &mut Context<Self>) {
         let song = playback.read(cx).state().song;
         let id = song.as_ref().map(|s| s.id);
-        if id != self.cover_song {
-            self.cover_song = id;
+        if id != self.np.cover_song {
+            self.np.cover_song = id;
             if let Some(song) = &song {
                 self.services.covers.prefetch([song.cover_url.clone()], 56.0, cx);
                 self.services.covers.prefetch([song.cover_url.clone()], 512.0, cx);
@@ -438,14 +563,13 @@ impl Root {
         cx.notify();
     }
 
-    /// 设置右侧栏宽度（夹在 300..800）。
+    /// 设置右侧栏宽度（写入设置 store 并落盘，夹在 300..800）。
     fn set_np_width(&mut self, width: f32, cx: &mut Context<Self>) {
         let w = width.clamp(siren_core::settings::NP_WIDTH_MIN, siren_core::settings::NP_WIDTH_MAX);
-        if (w - self.np_width).abs() < 0.5 {
+        if (w - SettingsStore::of(cx).np_width()).abs() < 0.5 {
             return;
         }
-        self.np_width = w;
-        siren_core::settings::save_np_width(w);
+        cx.global_mut::<SettingsStore>().set_np_width(w);
         cx.notify();
     }
 
@@ -454,31 +578,91 @@ impl Root {
         &self.np_width_slider
     }
 
-    /// 当前右侧栏宽度。
-    pub(crate) fn np_width(&self) -> f32 {
-        self.np_width
+    /// 当前右侧栏宽度（唯一真源：设置 store）。
+    pub(crate) fn np_width(&self, cx: &App) -> f32 {
+        SettingsStore::of(cx).np_width()
     }
 
-    /// 更新标题栏账号区（登录成功 / 退出登录）。
-    fn set_account(&mut self, account: Option<(i64, String, String)>, cx: &mut Context<Self>) {
-        match &account {
-            Some((uid, _, url)) => {
-                self.services.covers.prefetch([url.clone()], 32.0, cx);
-                let uid = *uid;
-                self.playback.update(cx, |pb, cx| pb.load_likes(uid, cx));
-                self.recent.update(cx, |page, cx| page.load(cx));
-            }
-            None => self.playback.update(cx, |pb, cx| pb.clear_likes(cx)),
+    /// 当前正在播放卡片顺序（唯一真源：设置 store）。
+    pub(crate) fn np_cards(&self, cx: &App) -> Vec<NpCard> {
+        let store = SettingsStore::of(cx);
+        store
+            .card_order()
+            .iter()
+            .filter(|c| !store.is_card_hidden(c))
+            .filter_map(|c| NpCard::from_code(c))
+            .collect()
+    }
+
+    /// 正在播放卡片编辑器布局：完整顺序 + 各项可见性。
+    pub(crate) fn editor_layout(&self, cx: &App) -> Vec<(NpCard, bool)> {
+        let store = SettingsStore::of(cx);
+        store
+            .card_order()
+            .iter()
+            .filter_map(|c| NpCard::from_code(c).map(|card| (card, !store.is_card_hidden(c))))
+            .collect()
+    }
+
+    /// 拖拽中的源索引（供 live 重排使用）。
+    pub(crate) fn card_drag_from(&self) -> Option<usize> {
+        self.card_drag_from
+    }
+
+    /// 记录 / 清除拖拽源索引。
+    pub(crate) fn set_card_drag_from(&mut self, idx: Option<usize>) {
+        self.card_drag_from = idx;
+    }
+
+    /// 设置某卡片显隐（落盘）。
+    pub(crate) fn set_card_visible(&mut self, card: NpCard, visible: bool, cx: &mut Context<Self>) {
+        let store = cx.global_mut::<SettingsStore>();
+        let mut hidden = store.hidden_cards();
+        hidden.retain(|c| c != card.code());
+        if !visible {
+            hidden.push(card.code().to_string());
         }
-        self.account = account.map(|(uid, nick, url)| (nick.into(), url, uid));
+        store.set_hidden_cards(hidden);
         cx.notify();
     }
 
-    fn open_playlist(&mut self, id: i64, name: String, cx: &mut Context<Self>) {
+    /// 编辑器内将 `from` 位置卡片移动到 `to`（落盘完整顺序）。
+    pub(crate) fn reorder_card(&mut self, from: usize, to: usize, cx: &mut Context<Self>) {
+        let mut order = cx.global::<SettingsStore>().card_order();
+        if from < order.len() && to < order.len() && from != to {
+            let card = order.remove(from);
+            order.insert(to, card);
+            cx.global_mut::<SettingsStore>().set_card_order(order);
+            cx.notify();
+        }
+    }
+
+    /// 登录成功：预取头像、加载喜欢列表与最近播放（账号真源是 [`Session`]）。
+    fn on_signed_in(&mut self, cx: &mut Context<Self>) {
+        if let Some(account) = Session::account(cx).cloned() {
+            self.services.covers.prefetch([account.avatar_url.clone()], 32.0, cx);
+            let uid = account.uid;
+            self.playback.update(cx, |pb, cx| pb.load_likes(uid, cx));
+            self.recent.update(cx, |page, cx| page.load(cx));
+            // 调试：SIREN_START=profile 登录后直达本人主页
+            if std::env::var("SIREN_START").ok().as_deref() == Some("profile") {
+                self.open_profile(uid, cx);
+            }
+        }
+        cx.notify();
+    }
+
+    /// 退出登录：清除喜欢列表。
+    fn on_signed_out(&mut self, cx: &mut Context<Self>) {
+        self.playback.update(cx, |pb, cx| pb.clear_likes(cx));
+        cx.notify();
+    }
+
+    pub(crate) fn open_playlist(&mut self, id: i64, name: String, cx: &mut Context<Self>) {
         self.nav.push(Route::Playlist { id, name: name.clone() });
         let filter = self.pl_filter_input.clone();
         let add_input = self.pl_add_input.clone();
-        let my_uid = self.account.as_ref().map(|(_, _, uid)| *uid);
+        let my_uid = Session::uid(cx);
         let page = cx.new(|cx| {
             PlaylistPage::new(
                 cx,
@@ -499,7 +683,7 @@ impl Root {
         cx.notify();
     }
 
-    fn open_album(&mut self, id: i64, name: String, cx: &mut Context<Self>) {
+    pub(crate) fn open_album(&mut self, id: i64, name: String, cx: &mut Context<Self>) {
         self.nav.push(Route::Album { id, name: name.clone() });
         let page = cx.new(|cx| AlbumPage::new(cx, self.services.clone(), self.playback.clone(), id, name));
         let sub = cx.subscribe(&page, |root: &mut Root, _e, ev: &PageEvent, cx| {
@@ -510,11 +694,53 @@ impl Root {
         cx.notify();
     }
 
+    fn open_artist(&mut self, id: i64, name: String, cx: &mut Context<Self>) {
+        self.nav.push(Route::Artist { id, name: name.clone() });
+        let page = cx.new(|cx| ArtistPage::new(cx, self.services.clone(), self.playback.clone(), id, name));
+        let sub = cx.subscribe(&page, |root: &mut Root, _e, ev: &PageEvent, cx| {
+            root.on_page_event(ev, cx)
+        });
+        self._subs.push(sub);
+        self.artist_page = Some(page);
+        cx.notify();
+    }
+
+    fn open_profile(&mut self, uid: i64, cx: &mut Context<Self>) {
+        self.nav.push(Route::Profile { uid });
+        let my_uid = self.account_uid(cx);
+        let page = cx.new(|cx| ProfilePage::new(cx, self.services.clone(), uid, my_uid));
+        let sub = cx.subscribe(&page, |root: &mut Root, _e, ev: &PageEvent, cx| {
+            root.on_page_event(ev, cx)
+        });
+        self._subs.push(sub);
+        self.profile_page = Some(page);
+        cx.notify();
+    }
+
+    fn account_uid(&self, cx: &App) -> Option<i64> {
+        Session::uid(cx)
+    }
+
+    fn open_account(&mut self, cx: &mut Context<Self>) {
+        self.nav.push(Route::Account);
+        let nickname_input = self.account_nickname_input.clone();
+        let signature_input = self.account_signature_input.clone();
+        let page = cx.new(|cx| AccountPage::new(cx, self.services.clone(), nickname_input, signature_input));
+        let sub = cx.subscribe(&page, |root: &mut Root, _e, ev: &PageEvent, cx| {
+            root.on_page_event(ev, cx)
+        });
+        self._subs.push(sub);
+        self.account_page = Some(page);
+        cx.notify();
+    }
+
     fn back(&mut self, cx: &mut Context<Self>) {
-        if self.nav.len() > 1 {
-            self.nav.pop();
+        if self.nav.pop() {
             self.playlist_page = None;
             self.album_page = None;
+            self.artist_page = None;
+            self.profile_page = None;
+            self.account_page = None;
             cx.notify();
         }
     }
@@ -527,7 +753,7 @@ impl Root {
 
     /// 收起 / 展开正在播放栏。
     fn toggle_now_playing(&mut self, cx: &mut Context<Self>) {
-        self.now_playing_open = !self.now_playing_open;
+        self.np.open = !self.np.open;
         cx.notify();
     }
 
@@ -557,10 +783,23 @@ impl Root {
                 .as_ref()
                 .map(|p| p.clone().into_any_element())
                 .unwrap_or_else(|| div().into_any_element()),
+            Route::Artist { .. } => self
+                .artist_page
+                .as_ref()
+                .map(|p| p.clone().into_any_element())
+                .unwrap_or_else(|| div().into_any_element()),
             Route::Settings => self.settings_page(weak, cx),
+            Route::Account => self
+                .account_page
+                .as_ref()
+                .map(|p| p.clone().into_any_element())
+                .unwrap_or_else(|| div().into_any_element()),
             Route::RecentPlay => self.recent.clone().into_any_element(),
-            // 以下页面先接路由占位，后续逐个补齐
-            Route::Profile { .. } => placeholder_page("个人主页", "个人主页（待实现）"),
+            Route::Profile { .. } => self
+                .profile_page
+                .as_ref()
+                .map(|p| p.clone().into_any_element())
+                .unwrap_or_else(|| div().into_any_element()),
         }
     }
 }
@@ -572,25 +811,32 @@ impl Render for Root {
         let weak_page = cx.weak_entity();
         let weak_login = cx.weak_entity();
         let weak_comments = cx.weak_entity();
-        let login_overlay = self.login_open.then(|| self.login_overlay(weak_login));
-        let comments_overlay = self.comments_open.then(|| self.comments_overlay(weak_comments));
+        let login_overlay = self.login.open.then(|| self.login_overlay(weak_login));
+        let comments_overlay = self.comments.open.then(|| self.comments_overlay(weak_comments));
         let weak_create = cx.weak_entity();
         let weak_picker = cx.weak_entity();
-        let create_overlay = self.create_open.then(|| self.create_overlay(weak_create));
-        let picker_overlay = self.picker_song.map(|_| self.picker_overlay(weak_picker));
+        let create_overlay = self.ops.create_open.then(|| self.create_overlay(weak_create));
+        let picker_overlay = self.ops.picker_song.map(|_| self.picker_overlay(weak_picker));
         let weak_rename = cx.weak_entity();
         let weak_delete = cx.weak_entity();
-        let rename_overlay = self.rename_pid.map(|_| self.rename_overlay(weak_rename));
-        let delete_overlay = self.delete_pid.map(|_| self.delete_overlay(weak_delete));
+        let rename_overlay = self.ops.rename_pid.map(|_| self.rename_overlay(weak_rename));
+        let delete_overlay = self.ops.delete_pid.map(|_| self.delete_overlay(weak_delete));
         let weak_desc = cx.weak_entity();
-        let desc_overlay = self.desc_pid.map(|_| self.desc_overlay(weak_desc));
+        let desc_overlay = self.ops.desc_pid.map(|_| self.desc_overlay(weak_desc));
         // 中间列显式分配宽度，规避 gpui `flex_1` 的横向过度伸展。
         // 右侧栏严格取设置的宽度；空间不足时中间列收缩（不产生横向溢出）。
-        let np_w = if self.now_playing_open { self.np_width } else { 44.0 };
-        let page_w = (vw - 300.0 - np_w - 32.0).max(0.0);
+        let np_w = if self.np.open {
+            SettingsStore::of(cx).np_width()
+        } else {
+            44.0
+        };
+        let page_w = (vw - LIBRARY_W - np_w - SHELL_CHROME).max(0.0);
+        cx.global_mut::<PageLayout>().page_w = page_w;
         div()
             .v_flex()
+            .relative()
             .size_full()
+            .font_family("MiSans")
             .bg(theme::window_bg())
             .child(self.title_bar(weak.clone(), vw, cx))
             .child(
@@ -603,8 +849,8 @@ impl Render for Root {
                     .overflow_hidden()
                     .child(
                         div()
-                            .w(px(300.0))
-                            .min_w(px(300.0))
+                            .w(px(LIBRARY_W))
+                            .min_w(px(LIBRARY_W))
                             .h_full()
                             .flex_none()
                             .flex_shrink_0()
@@ -629,22 +875,8 @@ impl Render for Root {
             .when_some(rename_overlay, |this, overlay| this.child(overlay))
             .when_some(delete_overlay, |this, overlay| this.child(overlay))
             .when_some(desc_overlay, |this, overlay| this.child(overlay))
+            .child(self.notifications_overlay(cx))
     }
-}
-
-/// 占位页面（路由已接，内容待补）。
-fn placeholder_page(title: &str, hint: &str) -> AnyElement {
-    page_shell(
-        title.to_string(),
-        div()
-            .flex_1()
-            .flex()
-            .items_center()
-            .justify_center()
-            .child(div().text_sm().text_color(theme::text_gray()).child(hint.to_string()))
-            .into_any_element(),
-    )
-    .into_any_element()
 }
 
 // ---------- 共享小部件 ----------
@@ -674,6 +906,33 @@ pub(crate) fn page_shell_with_header(header: AnyElement, body: AnyElement) -> im
 pub(crate) fn fmt_time(ms: i64) -> String {
     let total = (ms.max(0) / 1000) as u64;
     format!("{}:{:02}", total / 60, total % 60)
+}
+
+/// 毫秒时间戳 → `M月D日`。
+pub(crate) fn fmt_month_day(ms: i64) -> String {
+    if ms <= 0 {
+        return String::new();
+    }
+    let (_, m, d) = civil_from_days(ms / 86_400_000);
+    format!("{m}月{d}日")
+}
+
+/// 毫秒时间戳 → 分区块标题（`8月24日 周一`；跨年补年份）。无时间返回空串。
+pub(crate) fn fmt_day_label(ms: i64, now_ms: i64) -> String {
+    if ms <= 0 {
+        return String::new();
+    }
+    const WEEKDAYS: [&str; 7] = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+    let days = ms / 86_400_000;
+    let (y, m, d) = civil_from_days(days);
+    let (ny, _, _) = civil_from_days(now_ms / 86_400_000);
+    let weekday = WEEKDAYS[(days + 4).rem_euclid(7) as usize];
+    let date = if y == ny {
+        format!("{m}月{d}日")
+    } else {
+        format!("{y}年{m}月{d}日")
+    };
+    format!("{date} {weekday}")
 }
 
 /// 毫秒时间戳 → `YYYY-MM-DD`（无日期时返回空串）。
