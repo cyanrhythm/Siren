@@ -21,3 +21,19 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 [[bin]]
 name = "siren"
 path = "src/main.rs"
+
+# ── 打包（cargo-packager）──────────────────────────────────────
+# 用法：cargo packager -p siren-app --release
+# 产物在 target/release/ 下（NSIS 安装包 *.exe）。
+# libmpv-2.dll 会被放到安装目录、与 siren.exe 同目录（运行时按 `libmpv-2.dll` 加载）。
+# 字体与图标已 include_bytes! 进二进制，无需额外打包。
+[package.metadata.packager]
+product-name = "Siren"
+identifier = "com.cyanrhythm.Siren"
+category = "Music"
+description = "网易云音乐第三方桌面客户端（Rust + GPUI）"
+authors = ["cyanrhythm"]
+icons = ["../../assets/icons/siren.ico"]
+resources = ["../../resources/native/windows/bin/libmpv-2.dll"]
+before-packaging-command = "cargo build --release -p siren-app"
+formats = ["nsis"]
