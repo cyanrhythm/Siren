@@ -2,10 +2,8 @@
 //!
 //! 目前落地「音质」档位选择；其余分节按 `docs/08-功能对照与清单.md` 的里程碑补齐。
 
-use std::time::Duration;
-
 use gpui_kit::assets::IconName;
-use gpui_kit::base::{transition, ElementExt, StyledExt, Transition};
+use gpui_kit::base::StyledExt;
 use gpui_kit::component::slider::Slider;
 use gpui_kit::component::switch::Switch;
 use gpui_kit::prelude::FluentBuilder as _;
@@ -14,6 +12,7 @@ use gpui_kit::*;
 use siren_core::model::AudioQuality;
 
 use super::super::settings_store::SettingsStore;
+use super::super::smooth_scroll::smooth_scroll;
 use super::super::{icon, motion, page_shell, Root};
 use crate::theme;
 
@@ -119,55 +118,7 @@ impl Root {
                 self.cards_control(weak.clone(), cx),
             ));
 
-        // 自管理平滑滚动：滚轮只更新「目标偏移」，渲染期用 transition 缓动逼近，内容用
-        // `.top(-offset)` 位移。不依赖 gpui 内建滚动，避免与原生滚动相互打架。
-        let offset = transition(
-            ("settings-scroll", "offset"),
-            self.settings_scroll_target,
-            Transition::new(Duration::from_millis(140)).ease(motion::ease_out()),
-            window,
-            cx,
-        );
-
-        let measure = weak.clone();
-        let container_measure = weak.clone();
-        let weak_wheel = weak.clone();
-        let scroll = div()
-            .id("settings-scroll")
-            .relative()
-            .flex_1()
-            .min_w(px(0.0))
-            .min_h(px(0.0))
-            .overflow_hidden()
-            .on_prepaint(move |bounds, _window, cx| {
-                let h = f32::from(bounds.size.height);
-                let _ = container_measure.update(cx, |root, _cx| root.settings_scroll_viewport = h);
-            })
-            .on_scroll_wheel(move |event, window, cx| {
-                cx.stop_propagation();
-                let dy = f32::from(event.delta.pixel_delta(window.line_height()).y);
-                let _ = weak_wheel.update(cx, |root, cx| {
-                    let max = (root.settings_scroll_content - root.settings_scroll_viewport).max(0.0);
-                    // 与 gpui 原生一致：滚轮向上为正增量、应减小偏移（offset 向下为负）。
-                    let next = (root.settings_scroll_target - dy).clamp(0.0, max);
-                    if next != root.settings_scroll_target {
-                        root.settings_scroll_target = next;
-                        cx.notify();
-                    }
-                });
-            })
-            .child(
-                div()
-                    .absolute()
-                    .top(px(-offset))
-                    .left(px(0.0))
-                    .right(px(0.0))
-                    .on_prepaint(move |bounds, _window, cx| {
-                        let h = f32::from(bounds.size.height);
-                        let _ = measure.update(cx, |root, _cx| root.settings_scroll_content = h);
-                    })
-                    .child(content),
-            );
+        let scroll = smooth_scroll("settings-scroll", content, window, cx);
 
         page_shell("设置".to_string(), scroll.into_any_element()).into_any_element()
     }

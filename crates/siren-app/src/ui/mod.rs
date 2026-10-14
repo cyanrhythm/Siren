@@ -15,6 +15,7 @@ mod playback;
 mod services;
 mod session;
 mod settings_store;
+mod smooth_scroll;
 
 use std::sync::Arc;
 
@@ -331,10 +332,6 @@ pub struct Root {
     drag_flip: std::collections::HashMap<String, (f32, u32)>,
     /// 播放队列滚动句柄（拖动排序换算目标下标时需补偿滚动偏移）。
     queue_scroll: ScrollHandle,
-    /// 设置页自管理平滑滚动：目标偏移 + 内容高/视口高（prepaint 时更新）。
-    settings_scroll_target: f32,
-    settings_scroll_content: f32,
-    settings_scroll_viewport: f32,
     np: NowPlayingUi,
     np_width_slider: Entity<SliderState>,
     login: LoginDialogState,
@@ -491,9 +488,6 @@ impl Root {
                 queue_drag_from: None,
                 drag_flip: std::collections::HashMap::new(),
                 queue_scroll: ScrollHandle::new(),
-                settings_scroll_target: 0.0,
-                settings_scroll_content: 0.0,
-                settings_scroll_viewport: 0.0,
                 np: NowPlayingUi {
                     open: true,
                     album_page: 0,
@@ -893,7 +887,10 @@ impl Render for Root {
         let weak_login = cx.weak_entity();
         let weak_comments = cx.weak_entity();
         let login_overlay = self.login.open.then(|| self.login_overlay(weak_login));
-        let comments_overlay = self.comments.open.then(|| self.comments_overlay(weak_comments));
+        let comments_overlay = self
+            .comments
+            .open
+            .then(|| self.comments_overlay(weak_comments, window, cx));
         let weak_create = cx.weak_entity();
         let weak_picker = cx.weak_entity();
         let create_overlay = self.ops.create_open.then(|| self.create_overlay(weak_create));
@@ -948,7 +945,7 @@ impl Render for Root {
                             .overflow_hidden()
                             .child(self.page(weak_page, window, cx)),
                     )
-                    .child(self.now_playing(weak.clone(), cx)),
+                    .child(self.now_playing(weak.clone(), window, cx)),
             )
             .child(self.player_bar(weak, vw, cx))
             .when_some(login_overlay, |this, overlay| this.child(overlay))

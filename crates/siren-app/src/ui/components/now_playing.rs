@@ -14,12 +14,18 @@ use gpui_kit::*;
 use siren_core::model::{Song, SongWiki};
 
 use super::super::settings_store::SettingsStore;
+use super::super::smooth_scroll::smooth_scroll;
 use super::super::{cover_placeholder, fmt_date, icon, NpCard, Root};
 use crate::theme;
 use siren_core::player::{PlaySource, PlaySourceKind};
 
 impl Root {
-    pub(crate) fn now_playing(&self, weak: WeakEntity<Self>, cx: &App) -> impl IntoElement {
+    pub(crate) fn now_playing(
+        &self,
+        weak: WeakEntity<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         if !self.np.open {
             let weak_expand = weak;
             return div()
@@ -59,15 +65,11 @@ impl Root {
         let base_color = song.as_ref().and_then(|s| self.services.covers.color(&s.cover_url));
         let panel_bg = base_color.map(|c| darken(c, 0.28)).unwrap_or_else(theme::pane);
 
-        // 卡片流（竖向滚动）。
+        // 卡片流（竖向滚动，平滑）。
         let mut body = div()
-            .id("np-scroll")
             .v_flex()
-            .flex_1()
-            .min_h(px(0.0))
             .w_full()
             .gap(px(14.0))
-            .overflow_y_scroll()
             .child(div().w_full().flex().justify_center().child(cover))
             .child(
                 div()
@@ -161,7 +163,7 @@ impl Root {
                     .child(div().flex_1().min_w(px(0.0)).child(source_title(source, weak.clone())))
                     .child(toggle_button("np-collapse", IconName::ChevronRight, weak)),
             )
-            .child(body)
+            .child(smooth_scroll("np-scroll", body, window, cx))
             .into_any_element()
     }
 }

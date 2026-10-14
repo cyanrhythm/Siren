@@ -9,6 +9,7 @@ use gpui_kit::*;
 use siren_core::model::CommentItem;
 use siren_core::network::api;
 
+use super::super::smooth_scroll::smooth_scroll;
 use super::super::{fmt_date, icon, Root};
 use crate::theme;
 
@@ -124,15 +125,13 @@ impl Root {
     }
 
     /// 评论浮层。
-    pub(crate) fn comments_overlay(&self, weak: WeakEntity<Self>) -> AnyElement {
-        let mut list = div()
-            .id("comments-scroll")
-            .v_flex()
-            .flex_1()
-            .min_h(px(0.0))
-            .w_full()
-            .gap(px(12.0))
-            .overflow_y_scroll();
+    pub(crate) fn comments_overlay(
+        &self,
+        weak: WeakEntity<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let mut list = div().v_flex().w_full().gap(px(12.0));
 
         for item in &self.comments.items {
             list = list.child(self.comment_row(item, weak.clone()));
@@ -217,7 +216,7 @@ impl Root {
                                     .child(icon(IconName::X, 16.0, theme::text_gray())),
                             ),
                     )
-                    .child(list)
+                    .child(smooth_scroll("comments-scroll", list, window, cx))
                     .child(footer),
             )
             .into_any_element()
