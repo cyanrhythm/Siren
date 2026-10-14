@@ -1,8 +1,8 @@
-//! 通用平滑滚动容器：把任意内容丢进来即可获得平滑滚动。
+//! 通用平滑滚动容器。
 //!
-//! Windows 滚轮是离散的 `Lines(3)` 步进、gpui 又直接瞬跳，观感很「顿」。本容器
-//! 自己维护「目标偏移」，渲染期用 `transition` 缓动逼近，内容用 `.top(-offset)` 位移，
-//! 不与 gpui 内建滚动耦合（避免「拦了原生又不走自己」）。
+//! Windows 滚轮是离散的 `Lines(3)` 步进、gpui 又直接瞬跳，观感很「顿」。做法：自己维护
+//! 「目标偏移」，渲染期用 `transition` 缓动逼近，可被下一格增量打断；内容用 `.top(-offset)`
+//! 位移，不与 gpui 内建滚动耦合（避免「拦了原生又不走自己」）。
 //!
 //! 用法（在 `render` 等有 `window` 的地方）：
 //! ```ignore
@@ -10,6 +10,9 @@
 //! ```
 //! - `id` 需在窗口内唯一且稳定；
 //! - 容器以 `flex_1` 占满父级剩余高度（父级应为 flex 布局）。
+//!
+//! 注：`uniform_list`（虚拟化列表）不走这套——它自管偏移，且其滚动上限不经我们可用的
+//! 句柄暴露，当前无法用同样方式平滑；那类列表仍用原生滚动。
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -24,10 +27,12 @@ use super::motion;
 struct Entry {
     /// 目标偏移（正数：内容上移多少像素）。
     target: f32,
-    /// 内容高（prepaint 量得）。
+    /// 内容高（`smooth_scroll` 在 prepaint 量得）。
     content: f32,
-    /// 视口高（prepaint 量得）。
+    /// 视口高（`smooth_scroll` 在 prepaint 量得）。
     viewport: f32,
+    /// 最大可滚偏移（正的像素数）。
+    max: f32,
 }
 
 /// 所有滚动区的状态（以 `ElementId` 为键）。
@@ -35,6 +40,12 @@ struct Entry {
 struct Registry(HashMap<ElementId, Entry>);
 
 impl Global for Registry {}
+
+fn ensure_registry(cx: &mut App) {
+    if cx.try_global::<Registry>().is_none() {
+        cx.set_global(Registry::default());
+    }
+}
 
 /// 把 `content` 包成平滑滚动容器。
 pub(crate) fn smooth_scroll(
@@ -44,9 +55,7 @@ pub(crate) fn smooth_scroll(
     cx: &mut App,
 ) -> impl IntoElement {
     let id = id.into();
-    if cx.try_global::<Registry>().is_none() {
-        cx.set_global(Registry::default());
-    }
+    ensure_registry(cx);
     let (target, content_h, viewport_h) = cx
         .global::<Registry>()
         .0
@@ -54,6 +63,7 @@ pub(crate) fn smooth_scroll(
         .map(|entry| (entry.target, entry.content, entry.viewport))
         .unwrap_or((0.0, 0.0, 0.0));
     let max = (content_h - viewport_h).max(0.0);
+    cx.global_mut::<Registry>().0.entry(id.clone()).or_default().max = max;
     let offset = transition(
         (id.clone(), "scroll"),
         target.clamp(0.0, max),
@@ -79,9 +89,8 @@ pub(crate) fn smooth_scroll(
             cx.stop_propagation();
             let dy = f32::from(event.delta.pixel_delta(window.line_height()).y);
             let entry = cx.global_mut::<Registry>().0.entry(wheel_id.clone()).or_default();
-            let max = (entry.content - entry.viewport).max(0.0);
             // 与 gpui 原生一致：滚轮向上为正增量、应减小偏移（offset 向下为负）。
-            let next = (entry.target - dy).clamp(0.0, max);
+            let next = (entry.target - dy).clamp(0.0, entry.max);
             if next != entry.target {
                 entry.target = next;
                 window.refresh();
