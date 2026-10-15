@@ -3,25 +3,37 @@
 //! | 能力 | 方案 |
 //! |---|---|
 //! | 目录 | `directories` crate（跨平台，无需平台特定代码） |
-//! | 媒体控制 | **SMTC**（`SystemMediaTransportControls`） |
-//! | 托盘 | `tray-icon` crate |
-//! | 快捷键 | `global-hotkey` crate |
-//! | 自启 | `auto-launch` crate（注册表 `HKCU\...\Run`） |
-//! | 窗口装饰 | DWM（`dwmapi`） |
-//! | 强调色 | 注册表 `HKCU\Software\Microsoft\Windows\DWM` |
-//! | 歌词穿透 | `WS_EX_TRANSPARENT \| WS_EX_LAYERED` |
+//! | 媒体控制 | **SMTC**（经 playwire，跨平台代码在根级 `media_session.rs`） |
+//! | 托盘 | `tray-icon` crate（跨平台，代码在根级 `tray.rs`） |
+//! | 窗口系统 | Win32（`display` / `icon` / `appmodel`） |
+//! | 单实例 | 命名互斥体 + `FindWindowW` 唤起 |
+//! | 快捷键 / 自启 | 计划 `global-hotkey` / `auto-launch`（未接入） |
 //!
-//! TODO: 补齐各模块
-//!
-//! pub mod media;      // SMTC
-//! pub mod window;     // DWM
-//! pub mod accent;     // 注册表
-//! pub mod lyric;      // 窗口样式
+//! 本模块不对外可见：上层仅经 `lib.rs`「四、统一导出」调用；
+//! 根级接口/跨平台文件经 `crate::imp::`（见 `lib.rs`「三」）取用下列入口。
 
-pub mod appmodel;
-pub mod display;
-pub mod icon;
-pub mod media;
-pub mod native;
-pub mod single_instance;
-pub mod tray;
+mod appmodel;
+mod audio;
+mod display;
+mod icon;
+mod native;
+mod shell;
+mod single_instance;
+mod window_system;
+
+use crate::native_library::NativeLibraryLocator;
+use crate::window_system::WindowSystem;
+
+/// 当前平台的窗口系统实现。
+pub(crate) fn window_system() -> &'static dyn WindowSystem {
+    &self::window_system::WindowsWindowSystem
+}
+
+/// 当前平台的原生库定位实现。
+pub(crate) fn native_library() -> &'static dyn NativeLibraryLocator {
+    &native::WindowsNativeLibraryLocator
+}
+
+pub(crate) use audio::device_prefixes;
+pub(crate) use shell::open_url;
+pub(crate) use single_instance::ensure_single_instance;

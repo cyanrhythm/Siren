@@ -22,3 +22,18 @@ pub trait NativeLibraryLocator: Send + Sync {
     /// 加载 libmpv 前的一次性准备（如纠正数值区域）。默认无操作。
     fn prepare(&self) {}
 }
+
+/// 当前平台的原生库定位实现。
+pub fn native_library() -> &'static dyn NativeLibraryLocator {
+    crate::imp::native_library()
+}
+
+/// 当前平台的 libmpv 库名/路径候选（便捷入口）。
+pub fn mpv_library_candidates() -> Vec<String> {
+    native_library().mpv_candidates()
+}
+
+/// 加载 libmpv 前的一次性准备（如纠正数值区域）。
+pub fn prepare_native_environment() {
+    native_library().prepare();
+}

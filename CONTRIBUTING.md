@@ -33,6 +33,34 @@ cargo fmt --all                # 格式化
 cargo clippy --workspace --all-targets -- -D warnings   # 静态检查
 ```
 
+### Windows 交叉检查（在 Linux 上）
+
+装有 mingw-w64 工具链时，可就地做 Windows 目标的编译检查（无需上 Windows 开发机）：
+
+```bash
+rustup target add x86_64-pc-windows-gnu
+cargo check -p siren-platform --target x86_64-pc-windows-gnu --all-targets
+cargo clippy -p siren-platform --target x86_64-pc-windows-gnu --all-targets
+```
+
+检查整个应用（含 gpui Windows 栈）时，`siren-app/build.rs` 需要 `rc.exe` 编译
+资源；`cargo check` 不链接，可用桩脚本经 `RC_x86_64_pc_windows_msvc` 绕行：
+
+```bash
+cat > /tmp/rc.exe <<'EOF'
+#!/bin/sh
+out=""; prev=""
+for a in "$@"; do [ "$prev" = "/fo" ] && out="$a"; prev="$a"; done
+[ -n "$out" ] && : > "$out"
+exit 0
+EOF
+chmod +x /tmp/rc.exe
+RC_x86_64_pc_windows_msvc=/tmp/rc.exe cargo check -p siren-app --target x86_64-pc-windows-gnu
+```
+
+> macOS 目标需要 clang + macOS SDK（`ring` 的 C 构建），Linux 上不可用，
+> 需在 macOS 实机验证。
+
 ---
 
 ## 提交规范

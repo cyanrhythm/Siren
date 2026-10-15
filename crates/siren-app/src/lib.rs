@@ -116,18 +116,16 @@ pub fn run() {
                             && TRAY_READY.load(Ordering::SeqCst)
                             && ui::close_to_tray(cx)
                         {
-                            if let Some(hwnd) = siren_platform::window_hwnd(window) {
-                                siren_platform::hide_window(hwnd);
+                            // 已隐藏到托盘才拦截关闭；窗口操作不可用（如 Linux 待补）时落回正常退出。
+                            if siren_platform::hide_window(window) {
+                                return false;
                             }
-                            return false;
                         }
                         // 真正退出：同步落盘播放会话（队列/当前曲/进度）+ 保存窗口物理矩形
                         ui::flush_playback_session(cx);
-                        if let Some(hwnd) = siren_platform::window_hwnd(window) {
-                            if !siren_platform::is_window_minimized(hwnd) {
-                                if let Some((x, y, w, h)) = siren_platform::window_physical_rect(hwnd) {
-                                    siren_core::settings::save_window_bounds(x as f32, y as f32, w as f32, h as f32);
-                                }
+                        if !siren_platform::is_window_minimized(window) {
+                            if let Some((x, y, w, h)) = siren_platform::window_physical_rect(window) {
+                                siren_core::settings::save_window_bounds(x as f32, y as f32, w as f32, h as f32);
                             }
                         }
                         true
@@ -144,22 +142,24 @@ pub fn run() {
                     } else {
                         None
                     };
-                    if let Some(hwnd) = siren_platform::window_hwnd(window) {
-                        cx.spawn(async move |cx| {
-                            cx.background_executor()
-                                .timer(std::time::Duration::from_millis(60))
-                                .await;
+                    // 可跨 await 持有的窗口句柄；窗口已关闭时 update 失败，忽略即可。
+                    let window_handle = window.window_handle();
+                    cx.spawn(async move |cx| {
+                        cx.background_executor()
+                            .timer(std::time::Duration::from_millis(60))
+                            .await;
+                        let _ = window_handle.update(cx, |_view, window, _cx| {
                             if let Some(t) = target {
-                                siren_platform::move_window(hwnd, t.0, t.1, t.2, t.3);
+                                siren_platform::move_window(window, t.0, t.1, t.2, t.3);
                             }
-                            let icon_ok = siren_platform::set_window_icon(hwnd);
-                            log::info!("set_window_icon -> {icon_ok} (hwnd={hwnd})");
-                            siren_platform::show_window(hwnd);
-                        })
-                        .detach();
-                        // 系统托盘（左键切换显隐 / 菜单退出）。
-                        setup_tray(hwnd, cx);
-                    }
+                            let icon_ok = siren_platform::set_window_icon(window);
+                            log::info!("set_window_icon -> {icon_ok}");
+                            siren_platform::show_window(window);
+                        });
+                    })
+                    .detach();
+                    // 系统托盘（左键切换显隐 / 菜单退出）。
+                    setup_tray(window_handle, cx);
                     Root::new(window, cx, runtime)
                 },
             )
@@ -172,7 +172,7 @@ fn env_f32(key: &str, default: f32) -> f32 {
 }
 
 /// 初始化系统托盘并轮询其事件（左键切换主窗口显隐；菜单「退出」）。
-fn setup_tray(hwnd: u64, cx: &mut App) {
+fn setup_tray(window_handle: AnyWindowHandle, cx: &mut App) {
     let Some(tray) = siren_platform::create_tray() else {
         log::warn!("系统托盘创建失败：关闭窗口将直接退出");
         return;
@@ -192,20 +192,21 @@ fn setup_tray(hwnd: u64, cx: &mut App) {
         for event in events {
             match event {
                 siren_platform::TrayEvent::ToggleWindow => {
-                    siren_platform::toggle_window(hwnd);
+                    // 窗口已关闭时 update 失败，忽略即可。
+                    let _ = window_handle.update(cx, |_view, window, _cx| {
+                        siren_platform::toggle_window(window);
+                    });
                 }
                 siren_platform::TrayEvent::Quit => {
                     QUITTING.store(true, Ordering::SeqCst);
                     // 托盘退出走 PostQuitMessage，不触发 WM_CLOSE，故在此保存窗口矩形。
-                    if !siren_platform::is_window_minimized(hwnd) {
-                        if let Some((x, y, w, h)) = siren_platform::window_physical_rect(hwnd) {
-                            siren_core::settings::save_window_bounds(x as f32, y as f32, w as f32, h as f32);
+                    let _ = window_handle.update(cx, |_view, window, cx| {
+                        if !siren_platform::is_window_minimized(window) {
+                            if let Some((x, y, w, h)) = siren_platform::window_physical_rect(window) {
+                                siren_core::settings::save_window_bounds(x as f32, y as f32, w as f32, h as f32);
+                            }
                         }
-                    }
-                    cx.update(|cx| {
                         ui::flush_playback_session(cx);
-                    });
-                    cx.update(|cx| {
                         cx.quit();
                     });
                     return;

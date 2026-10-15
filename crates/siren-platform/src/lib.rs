@@ -4,221 +4,101 @@
 //!
 //! ## 组织方式
 //!
-//! - `src/*.rs`（根级）：平台能力 **trait 定义**，与平台无关
-//! - `src/windows/`、`src/linux/`、`src/macos/`：各平台 **实现**
+//! - `src/*.rs`（根级）：**接口文件或跨平台实现文件**，与平台无关：
+//!   - 接口形态：多操作能力用 trait（[`window_system::WindowSystem`]、
+//!     [`native_library::NativeLibraryLocator`]、[`media_session::MediaSession`]）；
+//!     单点能力用统一函数契约（[`shell::open_url`]、[`single_instance::ensure_single_instance`]、
+//!     [`audio::device_prefixes`]）。
+//!   - 跨平台实现：[`tray`]（`tray-icon` crate）、[`media_session`]（playwire）。
+//!   - 规格占位（尚未定义接口）：`accent` / `app_paths` / `window` / `lyric_window` / `ui_scale`。
+//! - `src/windows/`、`src/linux/`、`src/macos/`：**平台实现**，一一对应根级接口。
+//!   模块不对外可见；本文件「三」是**全 crate 唯一的平台选择点**，
+//!   「四」的导出不出现任何 `#[cfg(target_os)]`。
 //!
 //! ## 编译期保证
 //!
-//! 通过 `#[cfg(target_os = "...")]` 在编译期选择实现。
-//! 若新增目标平台而未提供实现，会因符号未定义而**编译失败**——
-//! 这是 Melodia 需要自建 KSP 处理器才能达到的效果，在 Rust 中是语言特性。
+//! 平台实现缺任何接口方法/函数，都会在对应平台上**编译失败**；
+//! 新增目标平台而未提供实现同样如此（见文件末尾断言）。
+//!
+//! ## 平台实现现状（2026-10）
+//!
+//! | 能力 | Windows | Linux | macOS |
+//! |---|---|---|---|
+//! | 原生库定位（libmpv） | ✅ | ✅ | ✅ |
+//! | 系统媒体控制（playwire） | ✅ 已验证 | 🟡 KDE/GNOME 待实机验证 | 🟡 待验证 |
+//! | 系统托盘（tray-icon） | ✅ | 🟡 ksni 待实机验证 | ⬜ 待验证 |
+//! | 窗口系统（显隐/几何/图标/句柄） | ✅ | ⬜ 待补（当前降级） | ⬜ 待补（当前降级） |
+//! | 单实例 | ✅ | ⬜ 占位放行 | ⬜ 占位放行 |
+//!
+//! **降级约定**：上表 ⬜ 能力在对应平台的实现一律 no-op / `None` / `false`，
+//! 绝不 panic；上层据返回值决定降级行为（如托盘不可用时关闭即退出）。
+//! 全局快捷键 / 开机自启尚未建模（计划接入 `global-hotkey` / `auto-launch`）。
 //!
 //! ## 能力清单
 //!
 //! 详见 `docs/02-平台能力规格.md`。
 
-// ── 平台能力 trait（与平台无关，始终编译）────────────────────────
+// ── 一、平台能力（根级：接口 / 跨平台实现；始终编译）────────────────
 pub mod accent;
 pub mod app_paths;
 pub mod audio;
 pub mod lyric_window;
 pub mod media_session;
 pub mod native_library;
+pub mod shell;
+pub mod single_instance;
 pub mod tray;
 pub mod ui_scale;
 pub mod window;
-// pub mod tray;          // TODO: 若 tray-icon 不够用再自建
-// pub mod hotkey;        // TODO: 优先用 global-hotkey crate
-// pub mod autostart;     // TODO: 优先用 auto-launch crate
+pub mod window_system;
 
-// ── 平台实现（由 cfg 选择）───────────────────────────────────────
+// ── 二、平台实现（由 cfg 选择；不对外，经「三」「四」暴露）──────────
 #[cfg(target_os = "windows")]
-pub mod windows;
+mod windows;
 
 #[cfg(target_os = "linux")]
-pub mod linux;
+mod linux;
 
 #[cfg(target_os = "macos")]
-pub mod macos;
+mod macos;
 
-// ── 平台类型统一导出 ─────────────────────────────────────────────
+// ── 三、当前平台选择（全 crate 唯一的平台分支）──────────────────────
 //
-// 上层通过这里的别名取用当前平台的实现，无需关心具体平台。
+// 根级接口/跨平台文件经 `crate::imp::` 调用当前平台实现；
+// 各平台模块按约定提供：`window_system()` / `native_library()` /
+// `ensure_single_instance` / `open_url` / `device_prefixes`。
+#[cfg(target_os = "windows")]
+pub(crate) use windows as imp;
 
 #[cfg(target_os = "linux")]
-pub use linux::native::LinuxNativeLibraryLocator as PlatformNativeLibrary;
+pub(crate) use linux as imp;
+
 #[cfg(target_os = "macos")]
-pub use macos::native::MacosNativeLibraryLocator as PlatformNativeLibrary;
-/// 当前平台的原生库定位实现。
-#[cfg(target_os = "windows")]
-pub use windows::native::WindowsNativeLibraryLocator as PlatformNativeLibrary;
+pub(crate) use macos as imp;
 
-/// 当前平台的 libmpv 库名/路径候选（便捷入口）。
-pub fn mpv_library_candidates() -> Vec<String> {
-    use native_library::NativeLibraryLocator as _;
-    PlatformNativeLibrary.mpv_candidates()
-}
+// ── 四、统一导出（上层唯一入口；无平台分支）────────────────────────
 
-/// 加载 libmpv 前的一次性准备（便捷入口，如纠正数值区域）。
-pub fn prepare_native_environment() {
-    use native_library::NativeLibraryLocator as _;
-    PlatformNativeLibrary.prepare();
-}
+pub use media_session::{
+    MediaCommand, MediaMetadata, MediaSession, MediaSessionConfig, PlaybackStatus,
+    PlaywireMediaSession as PlatformMediaSession,
+};
+pub use native_library::{mpv_library_candidates, prepare_native_environment};
+pub use shell::open_url;
+pub use single_instance::ensure_single_instance;
+pub use tray::{create_tray, poll_tray_events, Tray as PlatformTray, TrayEvent};
+pub use window_system::{
+    hide_window, is_window_minimized, is_window_visible, move_window, primary_work_area, primary_work_area_physical,
+    restore_window, set_app_user_model_id, set_window_icon, show_window, toggle_window, window_hwnd,
+    window_physical_rect,
+};
 
-/// 当前平台的系统媒体控制实现（playwire 后端，跨平台）。
-pub use media_session::PlaywireMediaSession as PlatformMediaSession;
-pub use media_session::{MediaCommand, MediaMetadata, MediaSession, MediaSessionConfig, PlaybackStatus};
+// ── 五、编译期平台断言 ──────────────────────────────────────────────
 
-#[cfg(target_os = "linux")]
-pub use linux::media::hwnd_from as platform_hwnd_from;
-#[cfg(target_os = "macos")]
-pub use macos::media::hwnd_from as platform_hwnd_from;
-/// 当前平台的窗口句柄解析（Windows SMTC 需要）。
-#[cfg(target_os = "windows")]
-pub use windows::media::hwnd_from as platform_hwnd_from;
-
-/// 从任意实现了 `raw-window-handle` 的窗口解析原生句柄。
-///
-/// 上层（如 GPUI 的 `Window`）无需依赖 `raw-window-handle` 类型即可调用。
-pub fn window_hwnd<W: raw_window_handle::HasWindowHandle + ?Sized>(window: &W) -> Option<u64> {
-    let handle = window.window_handle().ok().map(|handle| handle.as_raw());
-    platform_hwnd_from(handle)
-}
-
-/// 注册进程级 AppUserModelID（Windows 用于媒体浮层显示应用名；其他平台无操作）。
-#[cfg(target_os = "windows")]
-pub use windows::appmodel::set_app_user_model_id;
-#[cfg(not(target_os = "windows"))]
-pub fn set_app_user_model_id(_id: &str) {}
-
-/// 主显示器工作区（逻辑像素 `x,y,w,h`；非 Windows 返回 None）。
-#[cfg(target_os = "windows")]
-pub use windows::display::primary_work_area;
-#[cfg(not(target_os = "windows"))]
-pub fn primary_work_area() -> Option<(f32, f32, f32, f32)> {
-    None
-}
-
-/// 主显示器工作区（物理像素；非 Windows 返回 None）。
-#[cfg(target_os = "windows")]
-pub use windows::display::primary_work_area_physical;
-#[cfg(not(target_os = "windows"))]
-pub fn primary_work_area_physical() -> Option<(i32, i32, i32, i32)> {
-    None
-}
-
-/// 将窗口移动到物理坐标（非 Windows 无操作）。
-#[cfg(target_os = "windows")]
-pub use windows::display::move_window;
-#[cfg(not(target_os = "windows"))]
-pub fn move_window(_hwnd: u64, _x: i32, _y: i32, _w: i32, _h: i32) {}
-
-/// 显示窗口并置前（非 Windows 无操作）。
-#[cfg(target_os = "windows")]
-pub use windows::icon::set_window_icon;
-/// 设置窗口图标（仅 Windows 有效；其余平台空实现）。
-#[cfg(not(target_os = "windows"))]
-pub fn set_window_icon(_hwnd: u64) -> bool {
-    false
-}
-
-#[cfg(target_os = "windows")]
-pub use windows::display::show_window;
-#[cfg(not(target_os = "windows"))]
-pub fn show_window(_hwnd: u64) {}
-
-/// 恢复（最小化还原）并置前窗口（非 Windows 无操作）。
-#[cfg(target_os = "windows")]
-pub use windows::display::restore_window;
-#[cfg(not(target_os = "windows"))]
-pub fn restore_window(_hwnd: u64) {}
-
-/// 隐藏窗口（最小化到托盘；非 Windows 无操作）。
-#[cfg(target_os = "windows")]
-pub use windows::display::hide_window;
-#[cfg(not(target_os = "windows"))]
-pub fn hide_window(_hwnd: u64) {}
-
-/// 窗口是否可见（非 Windows 恒 `false`）。
-#[cfg(target_os = "windows")]
-pub use windows::display::is_window_visible;
-#[cfg(not(target_os = "windows"))]
-pub fn is_window_visible(_hwnd: u64) -> bool {
-    false
-}
-
-/// 窗口是否最小化（非 Windows 恒 `false`）。
-#[cfg(target_os = "windows")]
-pub use windows::display::is_window_minimized;
-#[cfg(not(target_os = "windows"))]
-pub fn is_window_minimized(_hwnd: u64) -> bool {
-    false
-}
-
-/// 切换窗口显隐，返回切换后是否可见（非 Windows 无操作）。
-#[cfg(target_os = "windows")]
-pub use windows::display::toggle_window;
-#[cfg(not(target_os = "windows"))]
-pub fn toggle_window(_hwnd: u64) -> bool {
-    false
-}
-
-/// 单实例：唯一实例返回 `true`；已有实例则唤起其窗口并返回 `false`。
-#[cfg(target_os = "windows")]
-pub use windows::single_instance::ensure_single_instance;
-/// TODO: Linux/macOS 实现；当前占位放行（不阻断启动）。
-#[cfg(not(target_os = "windows"))]
-pub fn ensure_single_instance(_id: &str) -> bool {
-    true
-}
-
-pub use tray::TrayEvent;
-
-/// 创建系统托盘（唯一入口；非 Windows 暂空）。
-#[cfg(target_os = "windows")]
-pub use windows::tray::{create_tray, poll_tray_events, Tray as PlatformTray};
-/// 非 Windows 的托盘占位类型。
-#[cfg(not(target_os = "windows"))]
-pub struct PlatformTray;
-#[cfg(not(target_os = "windows"))]
-pub fn create_tray() -> Option<PlatformTray> {
-    None
-}
-#[cfg(not(target_os = "windows"))]
-pub fn poll_tray_events(_tray: &PlatformTray, _out: &mut Vec<TrayEvent>) {}
-
-/// 窗口的物理矩形 `(x,y,w,h)`；非 Windows 返回 None。
-#[cfg(target_os = "windows")]
-pub use windows::display::window_physical_rect;
-#[cfg(not(target_os = "windows"))]
-pub fn window_physical_rect(_hwnd: u64) -> Option<(i32, i32, i32, i32)> {
-    None
-}
-
-/// 用系统默认程序打开 URL（如网页登录）。
-#[cfg(target_os = "windows")]
-pub fn open_url(url: &str) {
-    // `start` 的首个带引号参数会被当作窗口标题，故传入空标题占位。
-    let _ = std::process::Command::new("cmd").args(["/C", "start", "", url]).spawn();
-}
-#[cfg(target_os = "linux")]
-pub fn open_url(url: &str) {
-    let _ = std::process::Command::new("xdg-open").arg(url).spawn();
-}
-#[cfg(target_os = "macos")]
-pub fn open_url(url: &str) {
-    let _ = std::process::Command::new("open").arg(url).spawn();
-}
-#[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
-pub fn open_url(_url: &str) {}
-
-/// 编译期平台断言。
-///
-/// 若目标平台不在支持列表内，此模块会触发编译错误，
-/// 避免出现"能编译但运行期无实现"的情况。
+/// 若目标平台不在支持列表内，触发编译错误，避免"能编译但运行期无实现"。
 #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
 compile_error!(
     "Siren 目前仅支持 Windows / Linux / macOS。\
-     若需支持新平台，请在 crates/siren-platform/src/ 下新增对应模块，\
-     并在 lib.rs 中补充 cfg 分支与统一导出。"
+     若需支持新平台，请在 crates/siren-platform/src/ 下新增对应平台目录\
+     （按同一接口实现 window_system / single_instance / shell / audio 等），\
+     并在 lib.rs「三、当前平台选择」登记。"
 );

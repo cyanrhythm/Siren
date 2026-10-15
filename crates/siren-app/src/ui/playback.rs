@@ -144,7 +144,8 @@ impl Playback {
             }
         }
 
-        // 系统媒体控制：从 GPUI 窗口取原生句柄（Windows SMTC 需要）。
+        // 系统媒体控制：取原生句柄交给 playwire 的 SMTC 配置
+        //（低层接口——playwire 的配置是 u64；常规窗口操作用 siren_platform 的便捷函数，直接传窗口）。
         let hwnd = siren_platform::window_hwnd(window);
         let (cmd_tx, cmd_rx) = std::sync::mpsc::channel::<MediaCommand>();
         let cmd_tx = std::sync::Mutex::new(cmd_tx);

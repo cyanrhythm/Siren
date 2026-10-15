@@ -21,6 +21,8 @@
 //!
 //! ## 目录组织
 //!
+//! - `window_system.rs`：窗口系统实现（当前降级；待补 X11 / Wayland）
+//! - `single_instance.rs`：单实例（当前占位放行；待补 flock + D-Bus 激活）
 //! - `mpris/`：系统媒体控制（D-Bus，与显示协议无关）
 //! - `sni/`：托盘 StatusNotifierItem（D-Bus，与显示协议无关）
 //! - `x11/`：X11 专属能力
@@ -28,14 +30,9 @@
 //!
 //! ## 托盘：用 tray-icon + ksni feature，不自建
 //!
-//! 托盘**不在此处实现**，直接使用 `tray-icon` crate，并在构建配置上开启
-//! `ksni` feature：
-//!
-//! ```toml
-//! tray-icon = { version = "0.26", default-features = false, features = ["ksni"] }
-//! ```
-//!
-//! 这样走原生 StatusNotifierItem（纯 D-Bus），**去掉默认的 GTK3 依赖**
+//! 托盘跨平台实现在根级 `tray.rs`（`tray-icon` crate）；
+//! Linux 后端经构建配置开启 `ksni` feature（见 `Cargo.toml`）——
+//! 走原生 StatusNotifierItem（纯 D-Bus），**去掉默认的 GTK3 依赖**
 //! （默认 feature `libappindicator` 会拖入 `libappindicator` + `muda/gtk3`）。
 //! 菜单经 DBusMenu 由托盘宿主原生渲染。
 //!
@@ -44,13 +41,32 @@
 //!
 //! ## TODO
 //!
-//! pub mod media;      // MPRIS
 //! pub mod accent;     // GTK / KDE 配置
 //! pub mod session;    // XDG_SESSION_TYPE 探测
 
-pub mod media;
+mod audio;
 pub mod mpris;
-pub mod native;
+mod native;
+mod shell;
+mod single_instance;
 pub mod sni;
 pub mod wayland;
+mod window_system;
 pub mod x11;
+
+use crate::native_library::NativeLibraryLocator;
+use crate::window_system::WindowSystem;
+
+/// 当前平台的窗口系统实现（当前降级）。
+pub(crate) fn window_system() -> &'static dyn WindowSystem {
+    &self::window_system::LinuxWindowSystem
+}
+
+/// 当前平台的原生库定位实现。
+pub(crate) fn native_library() -> &'static dyn NativeLibraryLocator {
+    &native::LinuxNativeLibraryLocator
+}
+
+pub(crate) use audio::device_prefixes;
+pub(crate) use shell::open_url;
+pub(crate) use single_instance::ensure_single_instance;
