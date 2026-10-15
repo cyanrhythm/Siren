@@ -141,6 +141,8 @@ pub struct AlbumDetail {
     /// 以 `/` 拼接的歌手名。
     pub artists: String,
     pub songs: Vec<Song>,
+    /// 当前用户是否已收藏该专辑。
+    pub subscribed: bool,
 }
 
 /// 解析推荐歌单（`/weapi/personalized/playlist`，`result` 数组）。
@@ -946,6 +948,7 @@ pub fn parse_album_detail(value: &Value) -> Option<AlbumDetail> {
             .to_string(),
         artists,
         songs,
+        subscribed: album.get("subscribed").and_then(Value::as_bool).unwrap_or(false),
     })
 }
 

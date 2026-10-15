@@ -25,9 +25,22 @@ impl PlaybackController for SilentEngine {
         None
     }
     fn is_paused(&self) -> Option<bool> {
-        Some(true)
+        // 降级引擎无真实暂停态：返回 `None` 让上层沿用自身状态机。
+        // 若返回 `Some(true)`，`tick` 每拍会把 `playing` 打回 false，表现为播放键失效（K6）。
+        None
     }
     fn eof_reached(&self) -> Option<bool> {
         Some(false)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_paused_is_unknown_so_state_machine_keeps_playing() {
+        // 降级引擎不报告暂停态：返回 `None`，否则 tick 每拍会把 playing 打回 false（K6）。
+        assert_eq!(SilentEngine.is_paused(), None);
     }
 }

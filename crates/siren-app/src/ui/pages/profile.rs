@@ -12,7 +12,7 @@ use siren_core::model::{Playlist, UserBrief, UserProfile};
 
 use super::super::services::Services;
 use super::super::smooth_scroll::smooth_scroll;
-use super::super::{icon, page_shell_with_header, PageEvent};
+use super::super::{icon, load_error, page_shell_with_header, PageEvent};
 use crate::theme;
 
 pub(crate) struct ProfilePage {
@@ -24,6 +24,8 @@ pub(crate) struct ProfilePage {
     follows: Vec<UserBrief>,
     followeds: Vec<UserBrief>,
     load_gen: u64,
+    /// 主接口全部失败（离线等）：展示失败态而非空数据（K8）。
+    failed: bool,
 }
 
 impl EventEmitter<PageEvent> for ProfilePage {}
@@ -39,6 +41,7 @@ impl ProfilePage {
             follows: Vec::new(),
             followeds: Vec::new(),
             load_gen: 0,
+            failed: false,
         };
         page.load(cx);
         page
@@ -51,18 +54,21 @@ impl ProfilePage {
         let uid = self.uid;
         let handle = self.services.handle.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();
+        self.failed = false;
         handle.spawn(async move {
-            let profile = siren_core::network::api::user_detail(&client, uid).await.ok().flatten();
-            let playlists = siren_core::network::api::user_playlists(&client, uid, 100, 0)
-                .await
-                .unwrap_or_default();
-            let follows = siren_core::network::api::user_follows(&client, uid, 30)
-                .await
-                .unwrap_or_default();
-            let followeds = siren_core::network::api::user_followeds(&client, uid, 30)
-                .await
-                .unwrap_or_default();
-            let _ = tx.send((profile, playlists, follows, followeds));
+            let profile = siren_core::network::api::user_detail(&client, uid).await;
+            let playlists = siren_core::network::api::user_playlists(&client, uid, 100, 0).await;
+            let follows = siren_core::network::api::user_follows(&client, uid, 30).await;
+            let followeds = siren_core::network::api::user_followeds(&client, uid, 30).await;
+            // 资料与歌单均失败视为整体失败（离线）；单项失败仍展示其余内容（K8）。
+            let failed = profile.is_err() && playlists.is_err();
+            let _ = tx.send((
+                profile.ok().flatten(),
+                playlists.unwrap_or_default(),
+                follows.unwrap_or_default(),
+                followeds.unwrap_or_default(),
+                failed,
+            ));
         });
         cx.notify();
         cx.spawn(async move |this, cx| {
@@ -71,7 +77,8 @@ impl ProfilePage {
                 if this.load_gen != gen {
                     return;
                 }
-                if let Some((profile, playlists, follows, followeds)) = payload {
+                if let Some((profile, playlists, follows, followeds, failed)) = payload {
+                    this.failed = failed;
                     if let Some(p) = &profile {
                         this.services.covers.prefetch([p.avatar_url.clone()], 108.0, cx);
                     }
@@ -319,6 +326,14 @@ impl Render for ProfilePage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let header = self.header(cx);
         let mut body = div().v_flex().w_full().p(px(16.0)).gap(px(18.0));
+        if self.failed {
+            body = body.child(load_error(
+                "profile-retry",
+                cx.weak_entity(),
+                "个人主页加载失败",
+                ProfilePage::load,
+            ));
+        }
 
         body = body.child(section(
             "歌单",

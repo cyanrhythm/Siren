@@ -88,6 +88,8 @@ impl AlbumPage {
                     this.services.covers.prefetch([d.cover_url.clone()], 120.0, cx);
                 }
                 this.failed = detail.is_none();
+                // 回填真实收藏态，否则已收藏专辑显示为未收藏、无法取消（K2）。
+                this.subscribed = detail.as_ref().map(|d| d.subscribed).unwrap_or(false);
                 this.detail = detail.map(Arc::new);
                 cx.notify();
             })

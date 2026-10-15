@@ -14,7 +14,7 @@ use super::super::components::like_button;
 use super::super::playback::Playback;
 use super::super::services::Services;
 use super::super::smooth_scroll::smooth_scroll;
-use super::super::{fmt_date, icon, page_shell_with_header, PageEvent};
+use super::super::{fmt_date, icon, load_error, page_shell_with_header, PageEvent};
 use crate::theme;
 
 pub(crate) struct ArtistPage {
@@ -29,6 +29,8 @@ pub(crate) struct ArtistPage {
     followed: bool,
     fans: i64,
     load_gen: u64,
+    /// 主接口全部失败（离线等）：展示失败态而非空数据（K8）。
+    failed: bool,
 }
 
 impl EventEmitter<PageEvent> for ArtistPage {}
@@ -53,6 +55,7 @@ impl ArtistPage {
             followed: false,
             fans: 0,
             load_gen: 0,
+            failed: false,
         };
         page.load(cx);
         page
@@ -65,24 +68,23 @@ impl ArtistPage {
         let id = self.id;
         let handle = self.services.handle.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();
+        self.failed = false;
         handle.spawn(async move {
-            let detail = siren_core::network::api::artist_detail(&client, id)
-                .await
-                .ok()
-                .flatten();
-            let songs = siren_core::network::api::artist_top_songs(&client, id)
-                .await
-                .unwrap_or_default();
-            let albums = siren_core::network::api::artist_albums(&client, id, 50)
-                .await
-                .unwrap_or_default();
-            let similar = siren_core::network::api::similar_artists(&client, id)
-                .await
-                .unwrap_or_default();
-            let (fans, followed) = siren_core::network::api::artist_follow_count(&client, id)
-                .await
-                .unwrap_or((0, false));
-            let _ = tx.send((detail, songs, albums, similar, fans, followed));
+            let detail = siren_core::network::api::artist_detail(&client, id).await;
+            let songs = siren_core::network::api::artist_top_songs(&client, id).await;
+            let albums = siren_core::network::api::artist_albums(&client, id, 50).await;
+            let similar = siren_core::network::api::similar_artists(&client, id).await;
+            let follow = siren_core::network::api::artist_follow_count(&client, id).await;
+            // 主接口全部失败视为整体失败（离线）；单项失败仍展示其余内容（K8）。
+            let failed = detail.is_err() && songs.is_err() && albums.is_err();
+            let _ = tx.send((
+                detail.ok().flatten(),
+                songs.unwrap_or_default(),
+                albums.unwrap_or_default(),
+                similar.unwrap_or_default(),
+                follow.unwrap_or((0, false)),
+                failed,
+            ));
         });
         cx.notify();
         cx.spawn(async move |this, cx| {
@@ -91,7 +93,8 @@ impl ArtistPage {
                 if this.load_gen != gen {
                     return;
                 }
-                if let Some((detail, songs, albums, similar, fans, followed)) = payload {
+                if let Some((detail, songs, albums, similar, (fans, followed), failed)) = payload {
+                    this.failed = failed;
                     let urls: Vec<String> = albums.iter().map(|a| a.cover_url.clone()).collect();
                     this.services.covers.prefetch(urls, 48.0, cx);
                     let song_covers: Vec<String> = songs.iter().map(|s| s.cover_url.clone()).collect();
@@ -436,6 +439,14 @@ impl Render for ArtistPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let header = self.header(cx);
         let mut body = div().v_flex().w_full().gap(px(18.0)).p(px(16.0));
+        if self.failed {
+            body = body.child(load_error(
+                "artist-retry",
+                cx.weak_entity(),
+                "歌手信息加载失败",
+                ArtistPage::load,
+            ));
+        }
 
         body = body.child(section(
             "热门歌曲",

@@ -7,7 +7,7 @@ use gpui_kit::*;
 
 use super::super::session::Session;
 use super::super::smooth_scroll::smooth_scroll;
-use super::super::{Root, Route};
+use super::super::{Root, Route, PLAYLIST_PAGE};
 use crate::theme;
 
 impl Root {
@@ -57,6 +57,8 @@ impl Root {
     pub(crate) fn open_picker(&mut self, song_id: i64, cx: &mut Context<Self>) {
         self.ops.picker_song = Some(song_id);
         self.ops.picker_playlists.clear();
+        self.ops.picker_offset = 0;
+        self.ops.picker_more = false;
         cx.notify();
         let Some(uid) = Session::uid(cx) else {
             return;
@@ -64,17 +66,57 @@ impl Root {
         let client = self.services.client.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.services.handle.spawn(async move {
-            let list = siren_core::network::api::user_playlists(&client, uid, 50, 0)
-                .await
-                .unwrap_or_default();
-            let _ = tx.send(list);
+            let _ = tx.send(siren_core::network::api::user_playlists(&client, uid, PLAYLIST_PAGE, 0).await);
         });
         cx.spawn(async move |this, cx| {
-            let list = rx.await.unwrap_or_default();
+            let result = rx.await.ok();
             this.update(cx, |this, cx| {
-                let urls: Vec<String> = list.iter().map(|p| p.cover_url.clone()).collect();
-                this.ops.picker_playlists = list;
-                this.services.covers.prefetch(urls, 48.0, cx);
+                match result {
+                    Some(Ok(list)) => {
+                        this.ops.picker_offset = list.len() as u32;
+                        this.ops.picker_more = list.len() as u32 >= PLAYLIST_PAGE;
+                        let urls: Vec<String> = list.iter().map(|p| p.cover_url.clone()).collect();
+                        this.ops.picker_playlists = list;
+                        this.services.covers.prefetch(urls, 48.0, cx);
+                    }
+                    Some(Err(err)) => this.services.toast_error(err.user_message(), cx),
+                    None => {}
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// 追加下一页「加入歌单」候选（K1：超过一页可继续加载）。
+    fn load_more_picker(&mut self, cx: &mut Context<Self>) {
+        if !self.ops.picker_more {
+            return;
+        }
+        let Some(uid) = Session::uid(cx) else {
+            return;
+        };
+        let offset = self.ops.picker_offset;
+        let client = self.services.client.clone();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.services.handle.spawn(async move {
+            let _ = tx.send(siren_core::network::api::user_playlists(&client, uid, PLAYLIST_PAGE, offset).await);
+        });
+        cx.spawn(async move |this, cx| {
+            let result = rx.await.ok();
+            this.update(cx, |this, cx| {
+                match result {
+                    Some(Ok(list)) => {
+                        this.ops.picker_offset += list.len() as u32;
+                        this.ops.picker_more = list.len() as u32 >= PLAYLIST_PAGE;
+                        let urls: Vec<String> = list.iter().map(|p| p.cover_url.clone()).collect();
+                        this.ops.picker_playlists.extend(list);
+                        this.services.covers.prefetch(urls, 48.0, cx);
+                    }
+                    Some(Err(err)) => this.services.toast_error(err.user_message(), cx),
+                    None => {}
+                }
                 cx.notify();
             })
             .ok();
@@ -210,6 +252,24 @@ impl Root {
                             .text_color(theme::text_primary())
                             .child(pl.name.clone()),
                     ),
+            );
+        }
+        if self.ops.picker_more {
+            let weak_more = weak.clone();
+            list = list.child(
+                div()
+                    .id("picker-more")
+                    .w_full()
+                    .h(px(40.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme::card_surface()))
+                    .on_click(move |_ev, _window, cx| {
+                        weak_more.update(cx, |root, cx| root.load_more_picker(cx)).ok();
+                    })
+                    .child(div().text_sm().text_color(theme::accent()).child("加载更多")),
             );
         }
         div()

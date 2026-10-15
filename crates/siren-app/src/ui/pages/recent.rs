@@ -13,7 +13,7 @@ use super::super::components::like_button;
 use super::super::playback::Playback;
 use super::super::services::Services;
 use super::super::smooth_scroll::smooth_scroll;
-use super::super::{fmt_day_label, page_shell_with_header, PageEvent};
+use super::super::{fmt_day_label, load_error, page_shell_with_header, PageEvent};
 use crate::theme;
 
 pub(crate) struct RecentPage {
@@ -24,6 +24,8 @@ pub(crate) struct RecentPage {
     albums: Vec<RecentAlbum>,
     status: SharedString,
     load_gen: u64,
+    /// 主接口全部失败（离线等）：展示失败态而非空数据（K8）。
+    failed: bool,
 }
 
 impl EventEmitter<PageEvent> for RecentPage {}
@@ -38,6 +40,7 @@ impl RecentPage {
             albums: Vec::new(),
             status: "最近播放".into(),
             load_gen: 0,
+            failed: false,
         }
     }
 
@@ -47,17 +50,19 @@ impl RecentPage {
         let gen = self.load_gen;
         let client = self.services.client.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();
+        self.failed = false;
         self.services.handle.spawn(async move {
-            let songs = siren_core::network::api::recent_songs_with_time(&client)
-                .await
-                .unwrap_or_default();
-            let playlists = siren_core::network::api::recent_playlists(&client)
-                .await
-                .unwrap_or_default();
-            let albums = siren_core::network::api::recent_albums(&client)
-                .await
-                .unwrap_or_default();
-            let _ = tx.send((songs, playlists, albums));
+            let songs = siren_core::network::api::recent_songs_with_time(&client).await;
+            let playlists = siren_core::network::api::recent_playlists(&client).await;
+            let albums = siren_core::network::api::recent_albums(&client).await;
+            // 全部失败视为整体失败（离线）；单项失败仍展示其余内容（K8）。
+            let failed = songs.is_err() && playlists.is_err() && albums.is_err();
+            let _ = tx.send((
+                songs.unwrap_or_default(),
+                playlists.unwrap_or_default(),
+                albums.unwrap_or_default(),
+                failed,
+            ));
         });
         self.status = "加载最近播放…".into();
         cx.notify();
@@ -67,7 +72,8 @@ impl RecentPage {
                 if this.load_gen != gen {
                     return;
                 }
-                if let Some((songs, playlists, albums)) = payload {
+                if let Some((songs, playlists, albums, failed)) = payload {
+                    this.failed = failed;
                     // 本地最近播放歌单与服务端合并去重（按播放时间倒序）
                     let mut merged: Vec<RecentPlaylist> = siren_core::recent_playlists::load_recent_playlists()
                         .into_iter()
@@ -280,6 +286,14 @@ impl Render for RecentPage {
             .into_any_element();
 
         let mut body = div().v_flex().w_full().p(px(16.0)).gap(px(12.0));
+        if self.failed {
+            body = body.child(load_error(
+                "recent-retry",
+                cx.weak_entity(),
+                "最近播放加载失败",
+                RecentPage::load,
+            ));
+        }
 
         let playlist_items: Vec<(i64, String, String)> = self
             .playlists

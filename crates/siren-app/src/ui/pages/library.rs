@@ -15,7 +15,7 @@ use siren_core::model::{Album, Artist, Playlist};
 use super::super::services::Services;
 use super::super::session::{Account, Session};
 use super::super::smooth_scroll::smooth_virtual_list;
-use super::super::{icon, PageEvent};
+use super::super::{icon, PageEvent, PLAYLIST_PAGE};
 use crate::theme;
 
 /// 音乐库分栏。
@@ -37,6 +37,13 @@ pub(crate) struct LibraryPage {
     load_gen: u64,
     albums_gen: u64,
     artists_gen: u64,
+    /// 「我的歌单」分页：已加载条数（下一页 offset）与是否可能还有更多（K1）。
+    playlists_offset: u32,
+    playlists_more: bool,
+    /// 各分栏是否已尝试过首次加载（成功或失败）——避免空列表时每次切 tab 重复请求（K8）。
+    playlists_loaded: bool,
+    albums_loaded: bool,
+    artists_loaded: bool,
     /// 账号刷新代次：logout 时自增，使在途的 account() 响应失效（避免被“登回”）。
     account_gen: u64,
     _login_sub: Subscription,
@@ -73,6 +80,11 @@ impl LibraryPage {
             load_gen: 0,
             albums_gen: 0,
             artists_gen: 0,
+            playlists_offset: 0,
+            playlists_more: false,
+            playlists_loaded: false,
+            albums_loaded: false,
+            artists_loaded: false,
             account_gen: 0,
             _login_sub,
         };
@@ -102,6 +114,12 @@ impl LibraryPage {
         self.my_playlists = Arc::new(Vec::new());
         self.albums = Arc::new(Vec::new());
         self.artists = Arc::new(Vec::new());
+        // 重置加载/分页标记，下次登录重新拉取。
+        self.playlists_offset = 0;
+        self.playlists_more = false;
+        self.playlists_loaded = false;
+        self.albums_loaded = false;
+        self.artists_loaded = false;
         // 使在途的 account() 响应作废，避免退出后被迟到的响应“登回”。
         self.account_gen = self.account_gen.wrapping_add(1);
         cx.emit(PageEvent::LoggedOut);
@@ -214,21 +232,70 @@ impl LibraryPage {
         let client = self.services.client.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.services.handle.spawn(async move {
-            let list = siren_core::network::api::user_playlists(&client, uid, 50, 0)
-                .await
-                .unwrap_or_default();
-            let _ = tx.send(list);
+            let _ = tx.send(siren_core::network::api::user_playlists(&client, uid, PLAYLIST_PAGE, 0).await);
         });
         cx.notify();
         cx.spawn(async move |this, cx| {
-            let list = rx.await.unwrap_or_default();
+            let result = rx.await.ok();
             this.update(cx, |this, cx| {
                 if this.load_gen != gen {
                     return;
                 }
-                let urls: Vec<String> = list.iter().map(|p| p.cover_url.clone()).collect();
-                this.my_playlists = Arc::new(list);
-                this.services.covers.prefetch(urls, 48.0, cx);
+                this.playlists_loaded = true;
+                match result {
+                    Some(Ok(list)) => {
+                        this.playlists_offset = list.len() as u32;
+                        this.playlists_more = list.len() as u32 >= PLAYLIST_PAGE;
+                        let urls: Vec<String> = list.iter().map(|p| p.cover_url.clone()).collect();
+                        this.my_playlists = Arc::new(list);
+                        this.services.covers.prefetch(urls, 48.0, cx);
+                    }
+                    Some(Err(err)) => this.services.toast_error(err.user_message(), cx),
+                    None => {}
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// 追加下一页「我的歌单」（K1：超过一页时可继续加载，而非硬截断 50 条）。
+    fn load_more_playlists(&mut self, cx: &mut Context<Self>) {
+        if !self.playlists_more {
+            return;
+        }
+        let Some(uid) = Session::uid(cx) else {
+            return;
+        };
+        let offset = self.playlists_offset;
+        self.load_gen = self.load_gen.wrapping_add(1);
+        let gen = self.load_gen;
+        let client = self.services.client.clone();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.services.handle.spawn(async move {
+            let _ = tx.send(siren_core::network::api::user_playlists(&client, uid, PLAYLIST_PAGE, offset).await);
+        });
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = rx.await.ok();
+            this.update(cx, |this, cx| {
+                if this.load_gen != gen {
+                    return;
+                }
+                match result {
+                    Some(Ok(list)) => {
+                        this.playlists_offset += list.len() as u32;
+                        this.playlists_more = list.len() as u32 >= PLAYLIST_PAGE;
+                        let urls: Vec<String> = list.iter().map(|p| p.cover_url.clone()).collect();
+                        let mut merged: Vec<Playlist> = this.my_playlists.as_ref().clone();
+                        merged.extend(list);
+                        this.my_playlists = Arc::new(merged);
+                        this.services.covers.prefetch(urls, 48.0, cx);
+                    }
+                    Some(Err(err)) => this.services.toast_error(err.user_message(), cx),
+                    None => {}
+                }
                 cx.notify();
             })
             .ok();
@@ -252,6 +319,7 @@ impl LibraryPage {
                 if this.albums_gen != gen {
                     return;
                 }
+                this.albums_loaded = true;
                 match result {
                     Some(Ok(list)) => {
                         let urls: Vec<String> = list.iter().map(|a| a.cover_url.clone()).collect();
@@ -284,6 +352,7 @@ impl LibraryPage {
                 if this.artists_gen != gen {
                     return;
                 }
+                this.artists_loaded = true;
                 match result {
                     Some(Ok(list)) => {
                         let urls: Vec<String> = list.iter().map(|a| a.cover_url.clone()).collect();
@@ -316,19 +385,21 @@ impl LibraryPage {
     }
 
     fn ensure_loaded(&mut self, cx: &mut Context<Self>) {
+        // 以「是否尝试过」而非「列表是否为空」为判据：空列表（真的没有）或加载失败时
+        // 不再每次切 tab 重复请求（K8）。
         match self.tab {
             LibraryTab::Playlist => {
-                if self.my_playlists.is_empty() {
+                if !self.playlists_loaded {
                     self.load_my_playlists(cx);
                 }
             }
             LibraryTab::Album => {
-                if self.albums.is_empty() {
+                if !self.albums_loaded {
                     self.load_albums(cx);
                 }
             }
             LibraryTab::Artist => {
-                if self.artists.is_empty() {
+                if !self.artists_loaded {
                     self.load_artists(cx);
                 }
             }
@@ -614,7 +685,7 @@ impl LibraryPage {
         let count = playlists.len();
         let covers = self.services.covers.clone();
         let weak = cx.weak_entity();
-        smooth_virtual_list(
+        let list = smooth_virtual_list(
             "lib-playlists",
             count,
             56.0,
@@ -688,8 +759,25 @@ impl LibraryPage {
             },
             window,
             cx,
-        )
-        .into_any_element()
+        );
+        let mut col = div().v_flex().flex_1().min_h(px(0.0)).w_full().child(list);
+        if self.playlists_more {
+            let weak_more = cx.weak_entity();
+            col = col.child(
+                div()
+                    .id("lib-playlists-more")
+                    .w_full()
+                    .py(px(8.0))
+                    .flex()
+                    .justify_center()
+                    .cursor_pointer()
+                    .on_click(move |_ev, _window, cx| {
+                        weak_more.update(cx, |page, cx| page.load_more_playlists(cx)).ok();
+                    })
+                    .child(div().text_sm().text_color(theme::accent()).child("加载更多")),
+            );
+        }
+        col.into_any_element()
     }
 }
 

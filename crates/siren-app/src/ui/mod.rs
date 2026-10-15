@@ -21,6 +21,7 @@ use std::sync::Arc;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::base::StyledExt;
+use gpui_kit::component::button::Button;
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::slider::{SliderEvent, SliderState, SliderValue};
 use gpui_kit::component::Icon;
@@ -51,6 +52,8 @@ impl Global for PageLayout {}
 
 /// 左侧「音乐库」栏宽度。
 pub(crate) const LIBRARY_W: f32 = 300.0;
+/// 「我的歌单」/「加入歌单」每页条数（分页加载）。
+pub(crate) const PLAYLIST_PAGE: u32 = 50;
 /// 主内容行左右内边距（px 8×2）与列间距（gap 8×2）之和。
 pub(crate) const SHELL_CHROME: f32 = 32.0;
 /// 页面列水平内边距（首页列 `p(24)` 的两侧）。
@@ -331,6 +334,9 @@ pub(crate) struct PlaylistOpsState {
     pub(crate) create_input: Entity<InputState>,
     pub(crate) picker_song: Option<i64>,
     pub(crate) picker_playlists: Vec<Playlist>,
+    /// 「加入歌单」列表分页：已加载条数与是否还有更多（K1）。
+    pub(crate) picker_offset: u32,
+    pub(crate) picker_more: bool,
     pub(crate) rename_pid: Option<i64>,
     pub(crate) rename_input: Entity<InputState>,
     pub(crate) delete_pid: Option<i64>,
@@ -574,6 +580,8 @@ impl Root {
                     create_input,
                     picker_song: None,
                     picker_playlists: Vec::new(),
+                    picker_offset: 0,
+                    picker_more: false,
                     rename_pid: None,
                     rename_input,
                     delete_pid: None,
@@ -1225,6 +1233,35 @@ fn civil_from_days(days: i64) -> (i64, i64, i64) {
 
 pub(crate) fn icon(name: IconName, size: f32, color: Rgba) -> Icon {
     Icon::new(name).size(px(size)).text_color(color)
+}
+
+/// 加载失败占位：提示文案 + 重试按钮。
+///
+/// `retry` 传页面的重载方法（如 `HomePage::load`），用于区分「加载失败」与「空数据」（K8）。
+pub(crate) fn load_error<E: 'static>(
+    id: &'static str,
+    weak: WeakEntity<E>,
+    message: &str,
+    retry: fn(&mut E, &mut Context<E>),
+) -> AnyElement {
+    div()
+        .w_full()
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .gap(px(10.0))
+        .py(px(24.0))
+        .child(
+            div()
+                .text_sm()
+                .text_color(theme::text_gray())
+                .child(message.to_string()),
+        )
+        .child(Button::new(id).label("重试").on_click(move |_ev, _w, cx| {
+            weak.update(cx, retry).ok();
+        }))
+        .into_any_element()
 }
 
 pub(crate) fn cover_placeholder(size: f32) -> impl IntoElement {

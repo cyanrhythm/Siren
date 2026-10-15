@@ -71,6 +71,9 @@ pub(crate) struct Playback {
     artist_fans: i64,
     /// 上次已重绘的整数秒（用于外壳节流重绘）。
     last_sec: i64,
+    /// 上次推送系统媒体状态的签名（歌曲 id / 播放中 / 模式 / 时长）。
+    /// 与整秒节流共同决定何时刷新系统面板（暂停/切模式等不再等到下一整秒）。
+    last_media_sig: Option<(Option<i64>, bool, PlayMode, i64)>,
     /// 冷启动恢复的待播放进度（URL 加载后 seek 到此处后清除）。
     resume_ms: Option<i64>,
     /// 冷启动恢复进度归属的歌曲 id：只对该曲生效，用户改播其它曲即丢弃。
@@ -251,6 +254,7 @@ impl Playback {
                 artist_followed: false,
                 artist_fans: 0,
                 last_sec: 0,
+                last_media_sig: None,
                 resume_ms,
                 resume_song_id,
                 needs_resolve,
@@ -679,6 +683,13 @@ impl Playback {
         // 进度条 Slider 在 Root render 中创建，只有 Root 重绘才会前进：
         // 播放中按 100ms 节拍重绘以获得平滑进度；空闲（暂停且无变化）不再重绘。
         let sec = state.position_ms / 1000;
+        // 系统媒体状态签名：歌曲 / 播放态 / 模式 / 时长（不含进度，进度由整秒节流驱动）。
+        let media_sig = (
+            state.song.as_ref().map(|s| s.id),
+            state.playing,
+            state.mode,
+            state.duration_ms,
+        );
         self.maybe_continue_roaming(&state, cx);
         let changed = state != self.mirrored;
         let playing = state.playing;
@@ -686,7 +697,11 @@ impl Playback {
         if changed || playing {
             cx.notify();
         }
-        if sec != self.last_sec {
+        // 整秒边界刷新进度；播放态/模式/歌曲/时长变化则立即刷新——否则暂停后 position 冻结、
+        // sec 不再变化，系统媒体面板会一直停留在「播放中」（B）。
+        let media_changed = self.last_media_sig != Some(media_sig);
+        self.last_media_sig = Some(media_sig);
+        if sec != self.last_sec || media_changed {
             self.last_sec = sec;
             self.push_media_state(cx);
         }

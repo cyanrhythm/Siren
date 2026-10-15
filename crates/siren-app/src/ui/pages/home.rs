@@ -18,7 +18,7 @@ use siren_core::model::{HomeCard, HomeShelf, Playlist, RecentPlaylist, Song};
 use super::super::playback::Playback;
 use super::super::services::Services;
 use super::super::smooth_scroll::smooth_scroll;
-use super::super::{fmt_month_day, icon, PageEvent, PageLayout};
+use super::super::{fmt_month_day, icon, load_error, PageEvent, PageLayout};
 use crate::theme;
 
 /// 首页卡片定宽与货架卡片间距（与 `card_tile` 保持一致，供货架宽度估算）。
@@ -46,6 +46,8 @@ pub(crate) struct HomePage {
     /// 最近播放的横向滚动句柄。
     recent_scroll: ScrollHandle,
     load_gen: u64,
+    /// 主接口全部失败（离线等）：展示失败态而非空数据（K8）。
+    failed: bool,
 }
 
 impl EventEmitter<PageEvent> for HomePage {}
@@ -63,6 +65,7 @@ impl HomePage {
             shelf_scroll: std::collections::HashMap::new(),
             recent_scroll: ScrollHandle::new(),
             load_gen: 0,
+            failed: false,
         };
         page.load(cx);
         page
@@ -71,22 +74,23 @@ impl HomePage {
     fn load(&mut self, cx: &mut Context<Self>) {
         self.load_gen = self.load_gen.wrapping_add(1);
         let gen = self.load_gen;
+        self.failed = false;
         let client = self.services.client.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.services.handle.spawn(async move {
-            let recent = siren_core::network::api::recent_playlists(&client)
-                .await
-                .unwrap_or_default();
-            let daily = siren_core::network::api::daily_recommend_songs(&client)
-                .await
-                .unwrap_or_default();
-            let playlists = siren_core::network::api::personalized_playlists(&client, 30)
-                .await
-                .unwrap_or_default();
-            let shelves = siren_core::network::api::home_shelves(&client)
-                .await
-                .unwrap_or_default();
-            let _ = tx.send((recent, daily, playlists, shelves));
+            let recent = siren_core::network::api::recent_playlists(&client).await;
+            let daily = siren_core::network::api::daily_recommend_songs(&client).await;
+            let playlists = siren_core::network::api::personalized_playlists(&client, 30).await;
+            let shelves = siren_core::network::api::home_shelves(&client).await;
+            // 主接口全部失败视为整体失败（离线）；单项失败仍展示其余内容（K8）。
+            let failed = recent.is_err() && daily.is_err() && playlists.is_err();
+            let _ = tx.send((
+                recent.unwrap_or_default(),
+                daily.unwrap_or_default(),
+                playlists.unwrap_or_default(),
+                shelves.unwrap_or_default(),
+                failed,
+            ));
         });
         cx.notify();
         cx.spawn(async move |this, cx| {
@@ -95,7 +99,8 @@ impl HomePage {
                 if this.load_gen != gen {
                     return;
                 }
-                if let Some((recent, daily, playlists, shelves)) = payload {
+                if let Some((recent, daily, playlists, shelves, failed)) = payload {
+                    this.failed = failed;
                     // 本地最近播放歌单与服务端合并去重
                     let mut merged: Vec<RecentPlaylist> = siren_core::recent_playlists::load_recent_playlists()
                         .into_iter()
@@ -522,31 +527,35 @@ impl HomePage {
 
 impl Render for HomePage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let body: AnyElement = match self.tab {
-            HomeTab::All => {
-                let mut col = div().v_flex().w_full().gap(px(28.0)).p(px(24.0));
-                if !self.recent.is_empty() {
-                    col = col.child(self.recent_section(cx));
-                }
-                if let Some(daily) = self.daily_spotlight(cx) {
-                    col = col.child(section_title("今日为你推荐")).child(daily);
-                }
-                if !self.shelves.is_empty() {
-                    for shelf in &self.shelves {
-                        col = col.child(self.shelf_section(shelf, cx));
+        let body: AnyElement = if self.failed {
+            load_error("home-retry", cx.weak_entity(), "首页加载失败", HomePage::load)
+        } else {
+            match self.tab {
+                HomeTab::All => {
+                    let mut col = div().v_flex().w_full().gap(px(28.0)).p(px(24.0));
+                    if !self.recent.is_empty() {
+                        col = col.child(self.recent_section(cx));
                     }
-                } else if !self.playlists.is_empty() {
-                    col = col.child(section_title("推荐歌单")).child(self.playlist_grid(cx));
+                    if let Some(daily) = self.daily_spotlight(cx) {
+                        col = col.child(section_title("今日为你推荐")).child(daily);
+                    }
+                    if !self.shelves.is_empty() {
+                        for shelf in &self.shelves {
+                            col = col.child(self.shelf_section(shelf, cx));
+                        }
+                    } else if !self.playlists.is_empty() {
+                        col = col.child(section_title("推荐歌单")).child(self.playlist_grid(cx));
+                    }
+                    smooth_scroll("home-scroll", col, window, cx).into_any_element()
                 }
-                smooth_scroll("home-scroll", col, window, cx).into_any_element()
+                HomeTab::Music | HomeTab::Podcast => div()
+                    .flex_1()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(div().text_sm().text_color(theme::text_gray()).child("该板块开发中"))
+                    .into_any_element(),
             }
-            HomeTab::Music | HomeTab::Podcast => div()
-                .flex_1()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(div().text_sm().text_color(theme::text_gray()).child("该板块开发中"))
-                .into_any_element(),
         };
 
         div()

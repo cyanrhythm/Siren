@@ -112,28 +112,38 @@ impl SearchPage {
         let gen = self.run_gen;
         let kind = self.kind;
         let keyword = self.keyword.clone();
+        // 发起新搜索：清空旧结果，避免上一关键词/类型的列表残留误导（K4）。
+        self.songs = Arc::new(Vec::new());
+        self.albums = Arc::new(Vec::new());
+        self.artists = Arc::new(Vec::new());
+        self.playlists = Arc::new(Vec::new());
+        self.selected = None;
         self.status = format!("搜索中：{keyword}").into();
         cx.notify();
 
         let client = self.services.client.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.services.handle.spawn(async move {
-            let value = siren_core::network::api::cloud_search(&client, &keyword, kind.api_value(), 30)
-                .await
-                .ok();
+            let value = siren_core::network::api::cloud_search(&client, &keyword, kind.api_value(), 30).await;
             let _ = tx.send(value);
         });
 
         cx.spawn(async move |this, cx| {
-            let value = rx.await.ok().flatten();
+            let value = rx.await.ok();
             this.update(cx, |this, cx| {
                 if this.run_gen != gen {
                     return;
                 }
-                let Some(value) = value else {
-                    this.status = format!("{} · 0 条", kind.label()).into();
-                    cx.notify();
-                    return;
+                // 区分「网络/接口失败」与「空结果」：失败给出可重试提示，而非伪装成「0 条」（K4）。
+                let value = match value {
+                    Some(Ok(value)) => value,
+                    Some(Err(err)) => {
+                        log::warn!("搜索失败：{}", err.user_message());
+                        this.status = format!("{} · 搜索失败，请重试", kind.label()).into();
+                        cx.notify();
+                        return;
+                    }
+                    None => return,
                 };
                 let count = match kind {
                     SearchKind::Song => {
@@ -394,6 +404,7 @@ impl SearchPage {
         let items = self.artists.clone();
         let count = items.len();
         let covers = self.services.covers.clone();
+        let weak = cx.weak_entity();
         let render = smooth_virtual_list(
             "search-artists",
             count,
@@ -403,6 +414,9 @@ impl SearchPage {
                     .map(|i| {
                         let artist = &items[i];
                         let cover = covers.image_round(&artist.cover_url, 44.0);
+                        let weak = weak.clone();
+                        let id = artist.id;
+                        let name = artist.name.clone();
                         div()
                             .id(format!("search-artist-{}", artist.id))
                             .w_full()
@@ -413,6 +427,13 @@ impl SearchPage {
                             .gap(px(12.0))
                             .rounded(px(6.0))
                             .hover(|s| s.bg(theme::card_surface()))
+                            .cursor_pointer()
+                            .on_click(move |_ev, _window, cx| {
+                                weak.update(cx, |_page, cx| {
+                                    cx.emit(PageEvent::OpenArtist { id, name: name.clone() });
+                                })
+                                .ok();
+                            })
                             .child(cover)
                             .child(
                                 div()
