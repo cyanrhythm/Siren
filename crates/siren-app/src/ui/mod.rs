@@ -221,7 +221,10 @@ pub(crate) struct NavState {
 
 impl NavState {
     fn new(route: Route) -> Self {
-        Self { stack: vec![route], forward: Vec::new() }
+        Self {
+            stack: vec![route],
+            forward: Vec::new(),
+        }
     }
 
     /// 当前页面。
@@ -1115,7 +1118,10 @@ mod nav_tests {
     use super::{NavState, Route};
 
     fn pl(id: i64) -> Route {
-        Route::Playlist { id, name: format!("pl-{id}") }
+        Route::Playlist {
+            id,
+            name: format!("pl-{id}"),
+        }
     }
 
     #[test]
