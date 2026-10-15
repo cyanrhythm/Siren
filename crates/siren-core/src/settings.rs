@@ -33,6 +33,8 @@ pub struct Settings {
     hidden_cards: Option<Vec<String>>,
     /// 右侧栏宽度（像素）。
     np_width: Option<f32>,
+    /// 歌曲详情页（正在播放面板）是否显示滚动条，默认显示。
+    np_scrollbar: Option<bool>,
     /// 上次窗口位置与大小（`x,y,w,h`）。
     window: Option<[f32; 4]>,
 }
@@ -171,6 +173,17 @@ impl Settings {
         self.save();
     }
 
+    /// 歌曲详情页（正在播放面板）是否显示滚动条（默认显示）。
+    pub fn np_scrollbar(&self) -> bool {
+        self.np_scrollbar.unwrap_or(true)
+    }
+
+    /// 设置歌曲详情页滚动条显隐并落盘。
+    pub fn set_np_scrollbar(&mut self, enabled: bool) {
+        self.np_scrollbar = Some(enabled);
+        self.save();
+    }
+
     /// 上次窗口位置与大小 `(x, y, w, h)`（尺寸过小时视为无效）。
     pub fn window_bounds(&self) -> Option<(f32, f32, f32, f32)> {
         let [x, y, w, h] = self.window?;
@@ -205,8 +218,17 @@ mod tests {
         assert_eq!(settings.quality(), AudioQuality::default());
         assert!(settings.media_keys());
         assert_eq!(settings.np_width(), NP_WIDTH_DEFAULT);
+        assert!(settings.np_scrollbar());
         assert_eq!(settings.cards().len(), DEFAULT_CARDS.len());
         assert!(settings.window_bounds().is_none());
+    }
+
+    #[test]
+    fn np_scrollbar_toggles() {
+        let mut settings = Settings::default();
+        assert!(settings.np_scrollbar());
+        settings.np_scrollbar = Some(false);
+        assert!(!settings.np_scrollbar());
     }
 
     #[test]

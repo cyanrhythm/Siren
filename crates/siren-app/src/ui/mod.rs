@@ -687,6 +687,12 @@ impl Root {
         cx.notify();
     }
 
+    /// 设置歌曲详情页是否显示滚动条（落盘）。
+    pub(crate) fn set_np_scrollbar(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        cx.global_mut::<SettingsStore>().set_np_scrollbar(enabled);
+        cx.notify();
+    }
+
     /// 设置某卡片显隐（落盘）。
     pub(crate) fn set_card_visible(&mut self, card: NpCard, visible: bool, cx: &mut Context<Self>) {
         let store = cx.global_mut::<SettingsStore>();

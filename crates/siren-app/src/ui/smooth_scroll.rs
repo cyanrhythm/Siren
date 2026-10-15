@@ -330,10 +330,30 @@ fn scroll_container(name: &'static str, id: ElementId, body: AnyElement, bar: Op
         .when_some(bar, |el, bar| el.child(bar))
 }
 
-/// 把 `content` 包成平滑滚动容器。
+/// 把 `content` 包成平滑滚动容器（默认带右缘细滚动条）。
 pub(crate) fn smooth_scroll(
     name: &'static str,
     content: impl IntoElement,
+    window: &mut Window,
+    cx: &mut App,
+) -> impl IntoElement {
+    smooth_scroll_with(name, content, true, window, cx)
+}
+
+/// 同 [`smooth_scroll`]，但不显示滚动条（仍有平滑滚动）。
+pub(crate) fn smooth_scroll_plain(
+    name: &'static str,
+    content: impl IntoElement,
+    window: &mut Window,
+    cx: &mut App,
+) -> impl IntoElement {
+    smooth_scroll_with(name, content, false, window, cx)
+}
+
+fn smooth_scroll_with(
+    name: &'static str,
+    content: impl IntoElement,
+    show_bar: bool,
     window: &mut Window,
     cx: &mut App,
 ) -> impl IntoElement {
@@ -395,7 +415,7 @@ pub(crate) fn smooth_scroll(
         })
         .child(content)
         .into_any_element();
-    let bar = (max > 0.5).then(|| scroll_bar(name, thumb_h, thumb_top, opacity).into_any_element());
+    let bar = (show_bar && max > 0.5).then(|| scroll_bar(name, thumb_h, thumb_top, opacity).into_any_element());
     scroll_container(name, id, body, bar)
 }
 

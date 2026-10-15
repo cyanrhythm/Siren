@@ -90,6 +90,16 @@ impl Root {
             })
             .into_any_element();
 
+        let weak_np_scrollbar = weak.clone();
+        let np_scrollbar_control = Switch::new("np-scrollbar")
+            .checked(SettingsStore::of(cx).np_scrollbar())
+            .on_click(move |checked, _window, cx| {
+                weak_np_scrollbar
+                    .update(cx, |root, cx| root.set_np_scrollbar(*checked, cx))
+                    .ok();
+            })
+            .into_any_element();
+
         let content = div()
             .v_flex()
             .w_full()
@@ -111,7 +121,17 @@ impl Root {
                     .child(toggle_row("关闭主窗口时最小化到托盘（从托盘菜单退出）", tray_control))
                     .into_any_element(),
             ))
-            .child(section("右侧栏", "正在播放栏宽度（300–800）", self.width_control(cx)))
+            .child(section(
+                "右侧栏",
+                "正在播放栏宽度与滚动条",
+                div()
+                    .v_flex()
+                    .w_full()
+                    .gap(px(10.0))
+                    .child(self.width_control(cx))
+                    .child(toggle_row("歌曲详情页显示滚动条", np_scrollbar_control))
+                    .into_any_element(),
+            ))
             .child(section(
                 "正在播放卡片",
                 "右侧面板卡片的顺序与显隐",

@@ -91,4 +91,14 @@ impl SettingsStore {
     pub(crate) fn set_np_width(&mut self, width: f32) {
         self.data.set_np_width(width);
     }
+
+    /// 歌曲详情页是否显示滚动条。
+    pub(crate) fn np_scrollbar(&self) -> bool {
+        self.data.np_scrollbar()
+    }
+
+    /// 保存歌曲详情页滚动条显隐（落盘）。
+    pub(crate) fn set_np_scrollbar(&mut self, enabled: bool) {
+        self.data.set_np_scrollbar(enabled);
+    }
 }

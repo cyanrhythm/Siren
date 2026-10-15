@@ -14,7 +14,7 @@ use gpui_kit::*;
 use siren_core::model::{Song, SongWiki};
 
 use super::super::settings_store::SettingsStore;
-use super::super::smooth_scroll::smooth_scroll;
+use super::super::smooth_scroll::{smooth_scroll, smooth_scroll_plain};
 use super::super::{cover_placeholder, fmt_date, icon, NpCard, Root};
 use crate::theme;
 use siren_core::player::{PlaySource, PlaySourceKind};
@@ -163,7 +163,11 @@ impl Root {
                     .child(div().flex_1().min_w(px(0.0)).child(source_title(source, weak.clone())))
                     .child(toggle_button("np-collapse", IconName::ChevronRight, weak)),
             )
-            .child(smooth_scroll("np-scroll", body, window, cx))
+            .child(if SettingsStore::of(cx).np_scrollbar() {
+                smooth_scroll("np-scroll", body, window, cx).into_any_element()
+            } else {
+                smooth_scroll_plain("np-scroll", body, window, cx).into_any_element()
+            })
             .into_any_element()
     }
 }
