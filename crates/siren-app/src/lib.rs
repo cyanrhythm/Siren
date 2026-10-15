@@ -150,17 +150,28 @@ pub fn run() {
                         cx.background_executor()
                             .timer(std::time::Duration::from_millis(60))
                             .await;
-                        let _ = window_handle.update(cx, |_view, window, _cx| {
-                            if let Some(t) = target {
-                                if !siren_platform::move_window(window, t.0, t.1, t.2, t.3) {
-                                    // 平台无法定位（Wayland：位置由合成器决定）：至少恢复上次尺寸。
+                        // 只在 update 内取句柄（无副作用）；窗口操作必须放到 update **之外**执行：
+                        // 否则 `SetWindowPos` 会同步派发 WM_MOVE 重入 gpui 的窗口过程，
+                        // 其消息处理再次借用 App → "RefCell already borrowed" panic。
+                        let hwnd = window_handle
+                            .update(cx, |_view, window, _cx| siren_platform::window_hwnd(window))
+                            .ok()
+                            .flatten();
+                        let Some(hwnd) = hwnd else {
+                            return;
+                        };
+                        if let Some(t) = target {
+                            if !siren_platform::move_window_hwnd(hwnd, t.0, t.1, t.2, t.3) {
+                                // 平台无法定位（Wayland：位置由合成器决定）：至少恢复上次尺寸
+                                //（GPUI 操作，放回 update 内执行）。
+                                let _ = window_handle.update(cx, |_view, window, _cx| {
                                     window.resize(size(px(t.2 as f32), px(t.3 as f32)));
-                                }
+                                });
                             }
-                            let icon_ok = siren_platform::set_window_icon(window);
-                            log::info!("set_window_icon -> {icon_ok}");
-                            siren_platform::show_window(window);
-                        });
+                        }
+                        let icon_ok = siren_platform::set_window_icon_hwnd(hwnd);
+                        log::info!("set_window_icon -> {icon_ok}");
+                        siren_platform::show_window_hwnd(hwnd);
                     })
                     .detach();
                     // 系统托盘（左键切换显隐 / 菜单退出）+ 平台事件轮询（单实例激活）。

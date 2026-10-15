@@ -89,9 +89,9 @@ pub use single_instance::{ensure_single_instance, poll_activation_events, Activa
 pub use tray::{create_tray, poll_tray_events, Tray as PlatformTray, TrayEvent};
 pub use window::prefers_client_decorations;
 pub use window_system::{
-    hide_window, is_window_minimized, is_window_visible, move_window, primary_work_area, primary_work_area_physical,
-    restore_window, set_app_user_model_id, set_window_icon, show_window, toggle_window, virtual_screen_physical,
-    window_hwnd, window_physical_rect,
+    hide_window, is_window_minimized, is_window_visible, move_window, move_window_hwnd, primary_work_area,
+    primary_work_area_physical, restore_window, set_app_user_model_id, set_window_icon, set_window_icon_hwnd,
+    show_window, show_window_hwnd, toggle_window, virtual_screen_physical, window_hwnd, window_physical_rect,
 };
 
 // ── 五、编译期平台断言 ──────────────────────────────────────────────

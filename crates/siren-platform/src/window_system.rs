@@ -115,6 +115,24 @@ pub fn virtual_screen_physical() -> Option<(i32, i32, i32, i32)> {
     window_system().virtual_screen_physical()
 }
 
+// 以下为「按句柄」的便捷函数：调用方先用 [`window_hwnd`] 取句柄，再在**不持有 GPUI
+// App 借用**时调用（某些 Win32 调用会同步派发消息重入 gpui，见 `lib.rs` 窗口移动注释）。
+
+/// 按句柄移动并调整窗口到物理坐标；返回是否已执行。
+pub fn move_window_hwnd(hwnd: u64, x: i32, y: i32, width: i32, height: i32) -> bool {
+    window_system().move_window(hwnd, x, y, width, height)
+}
+
+/// 按句柄显示窗口并置前。
+pub fn show_window_hwnd(hwnd: u64) {
+    window_system().show_window(hwnd);
+}
+
+/// 按句柄设置窗口图标；成功返回 `true`。
+pub fn set_window_icon_hwnd(hwnd: u64) -> bool {
+    window_system().set_window_icon(hwnd)
+}
+
 /// 窗口的物理矩形 `(x,y,w,h)`（句柄不可得 / 非 Windows 返回 None）。
 ///
 /// `None` 时上层退化为 GPUI 逻辑坐标（`Window::window_bounds`），见本模块文档的降级契约。
