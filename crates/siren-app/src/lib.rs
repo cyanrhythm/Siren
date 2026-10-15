@@ -150,18 +150,18 @@ pub fn run() {
                         cx.background_executor()
                             .timer(std::time::Duration::from_millis(60))
                             .await;
-                        // 只在 update 内取句柄（无副作用）；窗口操作必须放到 update **之外**执行：
-                        // 否则 `SetWindowPos` 会同步派发 WM_MOVE 重入 gpui 的窗口过程，
-                        // 其消息处理再次借用 App → "RefCell already borrowed" panic。
-                        let hwnd = window_handle
-                            .update(cx, |_view, window, _cx| siren_platform::window_hwnd(window))
+                        // 只在 update 内「捕获」窗口（无副作用、不接触原生句柄）；窗口操作放到
+                        // update **之外**再应用：否则 `SetWindowPos` 会同步派发 WM_MOVE 重入 gpui
+                        // 的窗口过程，其消息处理再次借用 App → "RefCell already borrowed" panic。
+                        let win = window_handle
+                            .update(cx, |_view, window, _cx| siren_platform::capture_window(window))
                             .ok()
                             .flatten();
-                        let Some(hwnd) = hwnd else {
+                        let Some(win) = win else {
                             return;
                         };
                         if let Some(t) = target {
-                            if !siren_platform::move_window_hwnd(hwnd, t.0, t.1, t.2, t.3) {
+                            if !win.move_to(t.0, t.1, t.2, t.3) {
                                 // 平台无法定位（Wayland：位置由合成器决定）：至少恢复上次尺寸
                                 //（GPUI 操作，放回 update 内执行）。
                                 let _ = window_handle.update(cx, |_view, window, _cx| {
@@ -169,9 +169,9 @@ pub fn run() {
                                 });
                             }
                         }
-                        let icon_ok = siren_platform::set_window_icon_hwnd(hwnd);
+                        let icon_ok = win.set_icon();
                         log::info!("set_window_icon -> {icon_ok}");
-                        siren_platform::show_window_hwnd(hwnd);
+                        win.show();
                     })
                     .detach();
                     // 系统托盘（左键切换显隐 / 菜单退出）+ 平台事件轮询（单实例激活）。
@@ -275,17 +275,23 @@ fn spawn_platform_event_poll(window_handle: AnyWindowHandle, cx: &mut App) {
         for event in tray_events {
             match event {
                 siren_platform::TrayEvent::ToggleWindow => {
-                    // 窗口已关闭时 update 失败，忽略即可。
-                    let _ = window_handle.update(cx, |_view, window, _cx| {
-                        if !siren_platform::toggle_window(window) {
+                    // 捕获后拖到 update 之外执行原生显隐：SetForegroundWindow 同样可能同步重入。
+                    let win = window_handle
+                        .update(cx, |_view, window, _cx| siren_platform::capture_window(window))
+                        .ok()
+                        .flatten();
+                    if let Some(win) = win {
+                        if !win.toggle() {
                             // 平台无原生生显切换（Wayland）：台前则收起，否则唤起。
-                            if window.is_window_active() {
-                                window.minimize_window();
-                            } else {
-                                window.activate_window();
-                            }
+                            let _ = window_handle.update(cx, |_view, window, _cx| {
+                                if window.is_window_active() {
+                                    window.minimize_window();
+                                } else {
+                                    window.activate_window();
+                                }
+                            });
                         }
-                    });
+                    }
                 }
                 siren_platform::TrayEvent::Quit => {
                     QUITTING.store(true, Ordering::SeqCst);

@@ -115,22 +115,43 @@ pub fn virtual_screen_physical() -> Option<(i32, i32, i32, i32)> {
     window_system().virtual_screen_physical()
 }
 
-// 以下为「按句柄」的便捷函数：调用方先用 [`window_hwnd`] 取句柄，再在**不持有 GPUI
-// App 借用**时调用（某些 Win32 调用会同步派发消息重入 gpui，见 `lib.rs` 窗口移动注释）。
-
-/// 按句柄移动并调整窗口到物理坐标；返回是否已执行。
-pub fn move_window_hwnd(hwnd: u64, x: i32, y: i32, width: i32, height: i32) -> bool {
-    window_system().move_window(hwnd, x, y, width, height)
+/// 平台层持有的原生窗口引用：句柄封装在内部，供上层把窗口操作**延迟到 App 借用之外**执行。
+///
+/// 上层在窗口上下文中用 [`capture_window`] 取得它（无副作用、不接触原生句柄），
+/// 随后在合适时机（异步任务里、`window_handle.update` 返回之后）调用其方法。
+///
+/// 背景：`SetWindowPos` / `SetForegroundWindow` 会**同步派发**窗口消息；若在 GPUI 的
+/// App 借用期间调用，会重入窗口过程并再次借用 App → `RefCell already borrowed` panic。
+#[derive(Clone, Copy)]
+pub struct CapturedWindow {
+    hwnd: u64,
 }
 
-/// 按句柄显示窗口并置前。
-pub fn show_window_hwnd(hwnd: u64) {
-    window_system().show_window(hwnd);
+impl CapturedWindow {
+    /// 移动到物理坐标；返回是否已执行（`false` 时上层用 GPUI 兜底）。
+    pub fn move_to(&self, x: i32, y: i32, width: i32, height: i32) -> bool {
+        window_system().move_window(self.hwnd, x, y, width, height)
+    }
+
+    /// 设置窗口图标；成功返回 `true`。
+    pub fn set_icon(&self) -> bool {
+        window_system().set_window_icon(self.hwnd)
+    }
+
+    /// 显示窗口并置前。
+    pub fn show(&self) {
+        window_system().show_window(self.hwnd);
+    }
+
+    /// 切换窗口显隐；返回是否已执行（`false` 时上层用 GPUI 兜底）。
+    pub fn toggle(&self) -> bool {
+        window_system().toggle_window(self.hwnd)
+    }
 }
 
-/// 按句柄设置窗口图标；成功返回 `true`。
-pub fn set_window_icon_hwnd(hwnd: u64) -> bool {
-    window_system().set_window_icon(hwnd)
+/// 在窗口上下文中捕获原生窗口（无副作用）；句柄不可得（非 Windows）返回 `None`。
+pub fn capture_window<W: HasWindowHandle + ?Sized>(window: &W) -> Option<CapturedWindow> {
+    window_hwnd(window).map(|hwnd| CapturedWindow { hwnd })
 }
 
 /// 窗口的物理矩形 `(x,y,w,h)`（句柄不可得 / 非 Windows 返回 None）。
