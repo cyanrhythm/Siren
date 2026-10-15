@@ -215,8 +215,8 @@ impl Root {
                             .on_click(move |_ev, _window, cx| {
                                 weak_queue
                                     .update(cx, |root, cx| {
-                                        root.queue_open = !root.queue_open;
-                                        cx.notify();
+                                        let open = !root.queue_open;
+                                        root.set_queue_open(open, cx);
                                     })
                                     .ok();
                             })

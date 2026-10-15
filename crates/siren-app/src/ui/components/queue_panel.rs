@@ -29,11 +29,9 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        // 封面预取改在「打开 / 队列结构变化」时（见 Root::set_queue_open 与 on_playback），
+        // 渲染路径不再发起网络（I6）。
         let (items, current) = self.playback.read(cx).queue_snapshot();
-        // 封面按 40px（bucket 64）渲染，需先预取（命中缓存前每次渲染幂等）。
-        self.services
-            .covers
-            .prefetch(items.iter().map(|s| s.cover_url.clone()), 40.0, cx);
         let n = items.len();
         let current = current.filter(|c| *c < n);
         let played_end = current.unwrap_or(0);
@@ -115,12 +113,7 @@ impl Root {
                     .cursor_pointer()
                     .hover(|s| s.bg(theme::surface()))
                     .on_click(move |_ev, _window, cx| {
-                        weak_close
-                            .update(cx, |root, cx| {
-                                root.queue_open = false;
-                                cx.notify();
-                            })
-                            .ok();
+                        weak_close.update(cx, |root, cx| root.set_queue_open(false, cx)).ok();
                     })
                     .child(icon(IconName::X, 16.0, theme::text_gray())),
             );

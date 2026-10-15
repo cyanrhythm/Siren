@@ -351,6 +351,8 @@ pub struct Root {
     card_drag_from: Option<usize>,
     /// 播放队列浮层是否打开。
     queue_open: bool,
+    /// 队列封面预取的签名（长度/当前下标/当前曲 id）；变化时才预取，避免每帧发起。
+    queue_cover_sig: Option<(usize, Option<usize>, Option<i64>)>,
     /// 播放队列拖动排序的源下标。
     queue_drag_from: Option<usize>,
     /// 拖动重排的行位移补间：键 → （起始像素偏移, 代次）。
@@ -478,8 +480,11 @@ impl Root {
             }));
             subs.push(
                 cx.subscribe(&np_width_slider, |root: &mut Root, _slider, event: &SliderEvent, cx| {
-                    if let SliderEvent::Change(SliderValue::Single(f)) = event {
-                        root.set_np_width(*f, cx);
+                    match event {
+                        // 拖动中只改内存，结束（Release）才落盘，避免逐像素写盘。
+                        SliderEvent::Change(SliderValue::Single(f)) => root.set_np_width_live(*f, cx),
+                        SliderEvent::Release(SliderValue::Single(f)) => root.set_np_width(*f, cx),
+                        _ => {}
                     }
                 }),
             );
@@ -509,6 +514,7 @@ impl Root {
                 account_page: None,
                 card_drag_from: None,
                 queue_open: false,
+                queue_cover_sig: None,
                 queue_drag_from: None,
                 drag_flip: std::collections::HashMap::new(),
                 np: NowPlayingUi {
@@ -601,6 +607,34 @@ impl Root {
                 self.services.covers.prefetch([song.cover_url.clone()], 512.0, cx);
             }
         }
+        // 队列封面：面板打开且队列结构变化时预取一次（不在渲染路径里每帧发起网络）。
+        if self.queue_open {
+            let st = playback.read(cx).state();
+            let sig = (st.queue_len, st.current_index, st.song.as_ref().map(|s| s.id));
+            if self.queue_cover_sig != Some(sig) {
+                self.queue_cover_sig = Some(sig);
+                let (items, _) = playback.read(cx).queue_snapshot();
+                self.services
+                    .covers
+                    .prefetch(items.iter().map(|s| s.cover_url.clone()), 40.0, cx);
+            }
+        }
+        cx.notify();
+    }
+
+    /// 开关播放队列浮层；打开时预取一次队列封面。
+    pub(crate) fn set_queue_open(&mut self, open: bool, cx: &mut Context<Self>) {
+        self.queue_open = open;
+        if open {
+            let (items, current) = self.playback.read(cx).queue_snapshot();
+            let song_id = current.and_then(|c| items.get(c)).map(|s| s.id);
+            self.queue_cover_sig = Some((items.len(), current, song_id));
+            self.services
+                .covers
+                .prefetch(items.iter().map(|s| s.cover_url.clone()), 40.0, cx);
+        } else {
+            self.queue_cover_sig = None;
+        }
         cx.notify();
     }
 
@@ -611,6 +645,16 @@ impl Root {
             return;
         }
         cx.global_mut::<SettingsStore>().set_np_width(w);
+        cx.notify();
+    }
+
+    /// 仅更新内存宽度（拖动中，不落盘）。
+    fn set_np_width_live(&mut self, width: f32, cx: &mut Context<Self>) {
+        let w = width.clamp(siren_core::settings::NP_WIDTH_MIN, siren_core::settings::NP_WIDTH_MAX);
+        if (w - SettingsStore::of(cx).np_width()).abs() < 0.5 {
+            return;
+        }
+        cx.global_mut::<SettingsStore>().set_np_width_live(w);
         cx.notify();
     }
 

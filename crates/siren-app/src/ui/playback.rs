@@ -190,13 +190,29 @@ impl Playback {
                     _ => {}
                 },
             );
-            let volume_slider = cx.new(|_| SliderState::new().min(0.0).max(1.0).step(0.01).default_value(0.8));
+            // 音量初值取自设置（默认 80），并立即对齐到引擎，避免「滑条 80% 而引擎 100%」的跳变。
+            let initial_volume = SettingsStore::of(cx).volume();
+            player.set_volume(initial_volume);
+            let volume_slider = cx.new(|_| {
+                SliderState::new()
+                    .min(0.0)
+                    .max(1.0)
+                    .step(0.01)
+                    .default_value((initial_volume / 100.0) as f32)
+            });
             let _volume_sub = cx.subscribe(
                 &volume_slider,
                 |this: &mut Playback, _slider, event: &SliderEvent, cx| {
-                    if let SliderEvent::Change(SliderValue::Single(f)) = event {
-                        this.player.set_volume(*f as f64 * 100.0);
-                        cx.notify();
+                    match event {
+                        SliderEvent::Change(SliderValue::Single(f)) => {
+                            this.player.set_volume(*f as f64 * 100.0);
+                            cx.notify();
+                        }
+                        // 拖动结束才落盘，避免逐像素写盘。
+                        SliderEvent::Release(SliderValue::Single(f)) => {
+                            cx.global_mut::<SettingsStore>().set_volume(*f as f64 * 100.0);
+                        }
+                        _ => {}
                     }
                 },
             );
@@ -599,7 +615,8 @@ impl Playback {
 
     fn start_tick_timer(&mut self, window: &Window, cx: &mut Context<Self>) {
         cx.spawn_in(window, async move |this, cx| loop {
-            cx.background_executor().timer(Duration::from_millis(16)).await;
+            // 100ms：进度条约 10fps 足够平滑；曾经的 16ms/60fps 空闲也全量重绘。
+            cx.background_executor().timer(Duration::from_millis(100)).await;
             if this.update_in(cx, |this, window, cx| this.tick(window, cx)).is_err() {
                 break;
             }
@@ -642,11 +659,15 @@ impl Playback {
                 .update(cx, |s, cx| s.set_value(frac.clamp(0.0, 1.0), window, cx));
         }
         // 进度条 Slider 在 Root render 中创建，只有 Root 重绘才会前进：
-        // 每次 tick 都重绘（100ms）以获得平滑进度；系统媒体推送节流到秒变化。
+        // 播放中按 100ms 节拍重绘以获得平滑进度；空闲（暂停且无变化）不再重绘。
         let sec = state.position_ms / 1000;
         self.maybe_continue_roaming(&state, cx);
+        let changed = state != self.mirrored;
+        let playing = state.playing;
         self.mirrored = state;
-        cx.notify();
+        if changed || playing {
+            cx.notify();
+        }
         if sec != self.last_sec {
             self.last_sec = sec;
             self.push_media_state(cx);

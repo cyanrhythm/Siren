@@ -110,12 +110,20 @@ impl CoverLoader {
             let base = url.split('?').next().unwrap_or(&url).to_string();
             self.handle.spawn(async move {
                 if let Ok(bytes) = client.get_bytes(&key).await {
-                    if let Some(color) = dominant_color(&bytes) {
-                        colors.lock().unwrap().insert(base, color);
-                    }
-                    if let Some(fmt) = guess_format(&bytes) {
-                        let image = Arc::new(Image::from_bytes(fmt, bytes));
-                        cache.lock().unwrap().insert(key.clone(), image);
+                    // 解码 / 取主色是 CPU 密集，放到 blocking 线程池，避免拖慢同 runtime 的网络请求。
+                    let computed = tokio::task::spawn_blocking(move || {
+                        let color = dominant_color(&bytes);
+                        let image = guess_format(&bytes).map(|fmt| Arc::new(Image::from_bytes(fmt, bytes)));
+                        (color, image)
+                    })
+                    .await;
+                    if let Ok((color, image)) = computed {
+                        if let Some(color) = color {
+                            colors.lock().unwrap().insert(base, color);
+                        }
+                        if let Some(image) = image {
+                            cache.lock().unwrap().insert(key.clone(), image);
+                        }
                     }
                 }
                 inflight.lock().unwrap().remove(&key);

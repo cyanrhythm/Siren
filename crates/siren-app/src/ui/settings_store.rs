@@ -92,6 +92,11 @@ impl SettingsStore {
         self.data.set_np_width(width);
     }
 
+    /// 仅更新内存宽度（不落盘）；拖动结束再 [`set_np_width`](Self::set_np_width)。
+    pub(crate) fn set_np_width_live(&mut self, width: f32) {
+        self.data.set_np_width_live(width);
+    }
+
     /// 歌曲详情页是否显示滚动条。
     pub(crate) fn np_scrollbar(&self) -> bool {
         self.data.np_scrollbar()
@@ -100,5 +105,15 @@ impl SettingsStore {
     /// 保存歌曲详情页滚动条显隐（落盘）。
     pub(crate) fn set_np_scrollbar(&mut self, enabled: bool) {
         self.data.set_np_scrollbar(enabled);
+    }
+
+    /// 音量百分比（0–100）。
+    pub(crate) fn volume(&self) -> f64 {
+        self.data.volume()
+    }
+
+    /// 保存音量（落盘）。
+    pub(crate) fn set_volume(&mut self, volume: f64) {
+        self.data.set_volume(volume);
     }
 }

@@ -93,13 +93,20 @@ impl AccountPage {
     fn signin(&mut self, cx: &mut Context<Self>) {
         let client = self.services.client.clone();
         let services = self.services.clone();
+        // reqwest 必须在 tokio 运行时上轮询：走 handle.spawn + oneshot，
+        // 不能在 GPUI 前台执行器（主线程）里直接 .await（否则 "no reactor running" panic）。
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.services.handle.spawn(async move {
+            let _ = tx.send(siren_core::network::api::daily_signin(&client, 0).await);
+        });
         cx.spawn(async move |this, cx| {
-            let res = siren_core::network::api::daily_signin(&client, 0).await;
+            let res = rx.await.ok();
             this.update(cx, |this, cx| {
                 match res {
-                    Ok(points) if points > 0 => services.toast_success(format!("签到成功！积分+{points}"), cx),
-                    Ok(_) => services.toast("今天已经签到过了", cx),
-                    Err(e) => services.toast_error(e.user_message(), cx),
+                    Some(Ok(points)) if points > 0 => services.toast_success(format!("签到成功！积分+{points}"), cx),
+                    Some(Ok(_)) => services.toast("今天已经签到过了", cx),
+                    Some(Err(e)) => services.toast_error(e.user_message(), cx),
+                    None => {}
                 }
                 this.load(cx);
             })
@@ -122,17 +129,23 @@ impl AccountPage {
         };
         let client = self.services.client.clone();
         let services = self.services.clone();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let nick_for_save = nickname.clone();
+        self.services.handle.spawn(async move {
+            let _ = tx.send(siren_core::network::api::update_user_profile(&client, &nick_for_save, &signature).await);
+        });
         cx.spawn(async move |this, cx| {
-            let res = siren_core::network::api::update_user_profile(&client, &nickname, &signature).await;
+            let res = rx.await.ok();
             this.update(cx, |_this, cx| match res {
-                Ok(()) => {
+                Some(Ok(())) => {
                     if let Some(mut a) = Session::account(cx).cloned() {
                         a.nickname = nickname.clone().into();
                         Session::set(cx, Some(a));
                     }
                     services.toast_success("资料保存成功", cx);
                 }
-                Err(e) => services.toast_error(e.user_message(), cx),
+                Some(Err(e)) => services.toast_error(e.user_message(), cx),
+                None => {}
             })
             .ok();
         })
@@ -150,6 +163,7 @@ impl AccountPage {
         let task = cx.prompt_for_paths(options);
         let client = self.services.client.clone();
         let services = self.services.clone();
+        let handle = self.services.handle.clone();
         cx.spawn(async move |this, cx| {
             let picked = match task.await {
                 Ok(Ok(paths)) => paths.and_then(|mut v| v.pop()),
@@ -161,17 +175,23 @@ impl AccountPage {
                 this.update(cx, |_this, cx| msg.toast_error("无法读取该图片", cx)).ok();
                 return;
             };
-            let res = siren_core::network::api::upload_avatar(&client, jpeg, "avatar.jpg").await;
+            // 上传（reqwest）放到 tokio 运行时，避免主线程轮询 panic。
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            handle.spawn(async move {
+                let _ = tx.send(siren_core::network::api::upload_avatar(&client, jpeg, "avatar.jpg").await);
+            });
+            let res = rx.await.ok();
             this.update(cx, |_this, cx| match res {
-                Ok(url) if !url.is_empty() => {
+                Some(Ok(url)) if !url.is_empty() => {
                     if let Some(mut a) = Session::account(cx).cloned() {
                         a.avatar_url = url;
                         Session::set(cx, Some(a));
                     }
                     services.toast_success("头像更新成功", cx);
                 }
-                Ok(_) => services.toast_error("头像更新失败", cx),
-                Err(e) => services.toast_error(e.user_message(), cx),
+                Some(Ok(_)) => services.toast_error("头像更新失败", cx),
+                Some(Err(e)) => services.toast_error(e.user_message(), cx),
+                None => {}
             })
             .ok();
         })

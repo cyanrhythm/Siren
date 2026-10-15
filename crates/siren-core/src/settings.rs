@@ -35,6 +35,8 @@ pub struct Settings {
     np_width: Option<f32>,
     /// 歌曲详情页（正在播放面板）是否显示滚动条，默认显示。
     np_scrollbar: Option<bool>,
+    /// 音量百分比（0–100）。
+    volume: Option<f64>,
     /// 上次窗口位置与大小（`x,y,w,h`）。
     window: Option<[f32; 4]>,
 }
@@ -170,6 +172,11 @@ impl Settings {
         self.save();
     }
 
+    /// 仅更新内存中的宽度（不落盘）；拖动过程中用，结束时再 [`save`](Self::save)。
+    pub fn set_np_width_live(&mut self, width: f32) {
+        self.np_width = Some(width.clamp(NP_WIDTH_MIN, NP_WIDTH_MAX));
+    }
+
     /// 歌曲详情页（正在播放面板）是否显示滚动条（默认显示）。
     pub fn np_scrollbar(&self) -> bool {
         self.np_scrollbar.unwrap_or(true)
@@ -178,6 +185,17 @@ impl Settings {
     /// 设置歌曲详情页滚动条显隐并落盘。
     pub fn set_np_scrollbar(&mut self, enabled: bool) {
         self.np_scrollbar = Some(enabled);
+        self.save();
+    }
+
+    /// 音量百分比（0–100，默认 80）。
+    pub fn volume(&self) -> f64 {
+        self.volume.unwrap_or(80.0).clamp(0.0, 100.0)
+    }
+
+    /// 设置音量并落盘。
+    pub fn set_volume(&mut self, volume: f64) {
+        self.volume = Some(volume.clamp(0.0, 100.0));
         self.save();
     }
 
