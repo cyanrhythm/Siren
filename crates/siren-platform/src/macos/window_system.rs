@@ -30,7 +30,9 @@ impl WindowSystem for MacosWindowSystem {
         None
     }
 
-    fn move_window(&self, _hwnd: u64, _x: i32, _y: i32, _width: i32, _height: i32) {}
+    fn move_window(&self, _hwnd: u64, _x: i32, _y: i32, _width: i32, _height: i32) -> bool {
+        false
+    }
 
     fn show_window(&self, _hwnd: u64) {}
 

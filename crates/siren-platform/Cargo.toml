@@ -10,6 +10,8 @@ authors.workspace = true
 
 [dependencies]
 siren-core.workspace = true
+# 日志门面（平台失败路径按约定记日志，不得静默）
+log.workspace = true
 playwire.workspace = true
 raw-window-handle.workspace = true
 png.workspace = true
@@ -22,6 +24,9 @@ libc.workspace = true
 [target.'cfg(target_os = "linux")'.dependencies]
 # Linux 托盘走 ksni（纯 D-Bus），避开 libappindicator/GTK3；见 docs/02 §9
 tray-icon = { version = "0.26", default-features = false, features = ["ksni"] }
+# 单实例唤起（`org.freedesktop.Application` 激活通道，与 MPRIS/SNI 同栈）；
+# 版本与 playwire 的 zbus 依赖一致（同一编译单元，不新增编译量）。
+zbus = "5"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [

@@ -40,8 +40,9 @@ impl WindowSystem for WindowsWindowSystem {
         display::window_physical_rect(hwnd)
     }
 
-    fn move_window(&self, hwnd: u64, x: i32, y: i32, width: i32, height: i32) {
+    fn move_window(&self, hwnd: u64, x: i32, y: i32, width: i32, height: i32) -> bool {
         display::move_window(hwnd, x, y, width, height);
+        true
     }
 
     fn show_window(&self, hwnd: u64) {
@@ -65,7 +66,8 @@ impl WindowSystem for WindowsWindowSystem {
     }
 
     fn toggle_window(&self, hwnd: u64) -> bool {
-        display::toggle_window(hwnd)
+        display::toggle_window(hwnd);
+        true
     }
 
     fn set_window_icon(&self, hwnd: u64) -> bool {

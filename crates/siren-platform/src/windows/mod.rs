@@ -36,4 +36,9 @@ pub(crate) fn native_library() -> &'static dyn NativeLibraryLocator {
 
 pub(crate) use audio::device_prefixes;
 pub(crate) use shell::open_url;
-pub(crate) use single_instance::ensure_single_instance;
+pub(crate) use single_instance::{ensure_single_instance, poll_activation_events};
+
+/// Windows 隐藏系统标题栏（`appears_transparent`）+ NC 命中测试，不请求 CSD。
+pub(crate) fn prefers_client_decorations() -> bool {
+    false
+}

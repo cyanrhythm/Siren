@@ -27,11 +27,12 @@
 //! | 原生库定位（libmpv） | ✅ | ✅ | ✅ |
 //! | 系统媒体控制（playwire） | ✅ 已验证 | 🟡 KDE/GNOME 待实机验证 | 🟡 待验证 |
 //! | 系统托盘（tray-icon） | ✅ | 🟡 ksni 待实机验证 | ⬜ 待验证 |
-//! | 窗口系统（显隐/几何/图标/句柄） | ✅ | ⬜ 待补（当前降级） | ⬜ 待补（当前降级） |
-//! | 单实例 | ✅ | ⬜ 占位放行 | ⬜ 占位放行 |
+//! | 窗口系统（显隐/几何/图标/句柄） | ✅ | 🟡 Wayland：协议不可及项降级（上层 GPUI 兜底）；X11 待补 | ⬜ 待补（当前降级） |
+//! | 单实例 | ✅ | ✅ flock + D-Bus 激活 | ⬜ 占位放行 |
 //!
-//! **降级约定**：上表 ⬜ 能力在对应平台的实现一律 no-op / `None` / `false`，
-//! 绝不 panic；上层据返回值决定降级行为（如托盘不可用时关闭即退出）。
+//! **降级约定**：上表 ⬜ / 🟡 能力在对应平台的实现一律 no-op / `None` / `false`，
+//! 绝不 panic；上层据返回值决定降级行为（如隐藏不可用时最小化到托盘、
+//! 单实例激活经 [`poll_activation_events`] 回调 GPUI 层执行）。
 //! 全局快捷键 / 开机自启尚未建模（计划接入 `global-hotkey` / `auto-launch`）。
 //!
 //! ## 能力清单
@@ -84,8 +85,9 @@ pub use media_session::{
 };
 pub use native_library::{mpv_library_candidates, prepare_native_environment};
 pub use shell::open_url;
-pub use single_instance::ensure_single_instance;
+pub use single_instance::{ensure_single_instance, poll_activation_events, ActivationEvent};
 pub use tray::{create_tray, poll_tray_events, Tray as PlatformTray, TrayEvent};
+pub use window::prefers_client_decorations;
 pub use window_system::{
     hide_window, is_window_minimized, is_window_visible, move_window, primary_work_area, primary_work_area_physical,
     restore_window, set_app_user_model_id, set_window_icon, show_window, toggle_window, virtual_screen_physical,

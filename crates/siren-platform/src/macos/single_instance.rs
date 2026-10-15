@@ -7,3 +7,6 @@
 pub(crate) fn ensure_single_instance(_app_id: &str) -> bool {
     true
 }
+
+/// 占位期无激活事件（随单实例实现一并补）。
+pub(crate) fn poll_activation_events(_out: &mut Vec<crate::ActivationEvent>) {}

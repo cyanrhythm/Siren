@@ -103,14 +103,12 @@ pub fn is_window_minimized(hwnd: u64) -> bool {
     unsafe { IsIconic(handle).as_bool() }
 }
 
-/// 切换窗口显隐；返回切换后是否可见。
-pub fn toggle_window(hwnd: u64) -> bool {
+/// 切换窗口显隐（可见则隐藏，否则恢复）。
+pub fn toggle_window(hwnd: u64) {
     if is_window_visible(hwnd) {
         hide_window(hwnd);
-        false
     } else {
         restore_window(hwnd);
-        true
     }
 }
 

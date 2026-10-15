@@ -6049,12 +6049,14 @@ name = "siren-platform"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "log",
  "playwire",
  "png 0.17.16",
  "raw-window-handle",
  "siren-core",
  "tray-icon",
  "windows 0.62.2",
+ "zbus",
 ]
 
 [[package]]

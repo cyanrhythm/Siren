@@ -50,3 +50,6 @@ fn focus_existing() {
         }
     }
 }
+
+/// Windows 在 [`ensure_single_instance`] 内直接唤起已有窗口，不产生延迟事件。
+pub(crate) fn poll_activation_events(_out: &mut Vec<crate::ActivationEvent>) {}

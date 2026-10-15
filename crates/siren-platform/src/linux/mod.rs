@@ -15,18 +15,21 @@
 //! |---|---|---|
 //! | 媒体控制（MPRIS） | ✅ D-Bus，与显示协议无关 | ✅ |
 //! | 托盘（SNI） | ✅ D-Bus，与显示协议无关 | ✅ |
+//! | 单实例 | ✅ flock + D-Bus 激活（`single_instance.rs`） | ✅ 同 |
+//! | 窗口显隐 / 几何 | ❌ 无协议，降级（GPUI 最小化/激活兜底） | ⬜ 待补（x11rb） |
 //! | 全局快捷键 | ⚠️ 仅 XDG Portal，非所有 DE 支持 | ✅ `XGrabKey` |
 //! | 歌词点击穿透 | ❌ 无协议，降级 | ✅ `XShape` |
 //! | 窗口装饰 | 交给合成器 | 同 |
 //!
 //! ## 目录组织
 //!
-//! - `window_system.rs`：窗口系统实现（当前降级；待补 X11 / Wayland）
-//! - `single_instance.rs`：单实例（当前占位放行；待补 flock + D-Bus 激活）
-//! - `mpris/`：系统媒体控制（D-Bus，与显示协议无关）
-//! - `sni/`：托盘 StatusNotifierItem（D-Bus，与显示协议无关）
-//! - `x11/`：X11 专属能力
-//! - `wayland/`：Wayland 专属能力（含 Portal）
+//! - `window_system.rs`：窗口系统实现（Wayland 路线：协议不可及项降级，
+//!   上层用 GPUI 窗口 API 兜底；X11 待补）
+//! - `single_instance.rs`：单实例（flock + D-Bus `Activate` 唤起）
+//! - `mpris/`：系统媒体控制的规格笔记（实现走根级 `media_session.rs`，playwire）
+//! - `sni/`：托盘 StatusNotifierItem（实现走根级 `tray.rs`，ksni feature）
+//! - `x11/`：X11 专属能力（待补）
+//! - `wayland/`：Wayland 专属能力（协议限制说明与 Portal 规划）
 //!
 //! ## 托盘：用 tray-icon + ksni feature，不自建
 //!
@@ -42,7 +45,6 @@
 //! ## TODO
 //!
 //! pub mod accent;     // GTK / KDE 配置
-//! pub mod session;    // XDG_SESSION_TYPE 探测
 
 mod audio;
 pub mod mpris;
@@ -57,7 +59,7 @@ pub mod x11;
 use crate::native_library::NativeLibraryLocator;
 use crate::window_system::WindowSystem;
 
-/// 当前平台的窗口系统实现（当前降级）。
+/// 当前平台的窗口系统实现（Wayland 路线；未实现项按降级约定返回 `None` / `false`）。
 pub(crate) fn window_system() -> &'static dyn WindowSystem {
     &self::window_system::LinuxWindowSystem
 }
@@ -69,4 +71,9 @@ pub(crate) fn native_library() -> &'static dyn NativeLibraryLocator {
 
 pub(crate) use audio::device_prefixes;
 pub(crate) use shell::open_url;
-pub(crate) use single_instance::ensure_single_instance;
+pub(crate) use single_instance::{ensure_single_instance, poll_activation_events};
+
+/// Linux 请求客户端装饰（CSD）：自绘标题栏，避免合成器再画一套（Wayland 双标题栏）。
+pub(crate) fn prefers_client_decorations() -> bool {
+    true
+}

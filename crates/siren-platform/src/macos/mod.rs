@@ -45,4 +45,9 @@ pub(crate) fn native_library() -> &'static dyn NativeLibraryLocator {
 
 pub(crate) use audio::device_prefixes;
 pub(crate) use shell::open_url;
-pub(crate) use single_instance::ensure_single_instance;
+pub(crate) use single_instance::{ensure_single_instance, poll_activation_events};
+
+/// macOS 使用系统原生装饰（CSD 待补）。
+pub(crate) fn prefers_client_decorations() -> bool {
+    false
+}
