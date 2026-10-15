@@ -77,6 +77,8 @@ pub(crate) struct Playback {
     resume_song_id: Option<i64>,
     /// 已恢复但尚未解析 URL（首次播放需先解析）。
     needs_resolve: bool,
+    /// URL/元数据解析代次：每次切歌自增，旧回调据此丢弃（防乱序覆盖）。
+    resolve_gen: u64,
     /// 上次进度落盘时刻（节流，5s）。
     last_progress_save: Instant,
     // 进度插值锚点（弥补 mpv time-pos 更新粒度）
@@ -222,6 +224,7 @@ impl Playback {
                 resume_ms,
                 resume_song_id,
                 needs_resolve,
+                resolve_gen: 0,
                 last_progress_save: Instant::now(),
                 anchor_pos: 0,
                 anchor_at: Instant::now(),
@@ -884,6 +887,9 @@ impl Playback {
 
     fn resolve_and_play(&mut self, song: Song, cx: &mut Context<Self>) {
         log::info!("解析并播放 id={} name={}", song.id, song.name);
+        // 代次自增：本次解析的所有异步回调都带 gen，切歌后旧回调据此丢弃。
+        self.resolve_gen = self.resolve_gen.wrapping_add(1);
+        let gen = self.resolve_gen;
         // 队列/下标已变化：落盘队列会话
         self.save_queue_session();
         // 打卡上报：结束上一首（按实际播放时长），并开始新一首。
@@ -927,6 +933,9 @@ impl Playback {
             });
             let detail = rx.await.ok().flatten();
             this.update(cx, |this, cx| {
+                if this.resolve_gen != gen {
+                    return;
+                }
                 this.detail = detail;
                 cx.notify();
             })
@@ -948,6 +957,9 @@ impl Playback {
             });
             let lines = rx.await.unwrap_or_default();
             this.update(cx, |this, cx| {
+                if this.resolve_gen != gen {
+                    return;
+                }
                 this.lyrics = lines;
                 cx.notify();
             })
@@ -967,6 +979,9 @@ impl Playback {
             });
             let wiki = rx.await.ok().flatten();
             this.update(cx, |this, cx| {
+                if this.resolve_gen != gen {
+                    return;
+                }
                 this.wiki = wiki;
                 cx.notify();
             })
@@ -1004,6 +1019,9 @@ impl Playback {
             });
             let (comments, artist) = rx.await.unwrap_or_default();
             this.update(cx, |this, cx| {
+                if this.resolve_gen != gen {
+                    return;
+                }
                 this.comments = comments;
                 let avatars: Vec<String> = this
                     .comments
@@ -1053,6 +1071,10 @@ impl Playback {
         cx.spawn(async move |this, cx| {
             let url = rx.await.ok().flatten();
             this.update(cx, |this, cx| {
+                // 代次不符：用户已切到别的歌，丢弃这次（可能乱序到达的）解析结果。
+                if this.resolve_gen != gen {
+                    return;
+                }
                 // 冷启动进度只归属恢复出的那首歌；用户改播其它曲则丢弃，避免强锁到旧进度。
                 let resume = this.resume_ms.take().filter(|_| Some(song.id) == this.resume_song_id);
                 this.resume_song_id = None;
@@ -1067,6 +1089,9 @@ impl Playback {
                     }
                     None => {
                         log::warn!("无可用播放地址 id={}", song.id);
+                        // 解除「等待加载」闩锁，避免状态机卡死不再推进。
+                        this.player.cancel_pending_load();
+                        this.needs_resolve = false;
                         this.status = "无可用播放地址（需登录/会员）".into();
                         this.notifications
                             .update(cx, |n, cx| n.error("无可用播放地址（需登录/会员）", cx));

@@ -134,17 +134,20 @@ impl Mpv {
         }
     }
 
-    /// 加载并播放（或预载）地址。
-    pub fn load_file(&self, url: &str) {
-        self.command(&["loadfile", url, "replace"]);
+    /// 加载并播放（或预载）地址；返回 libmpv 是否接受该命令。
+    pub fn load_file(&self, url: &str) -> Result<(), String> {
+        self.command(&["loadfile", url, "replace"])
     }
 
     /// 加载地址并从 `start_ms` 开始（借助 `loadfile` 的 `start=` 选项，加载完成后自动跳转）。
-    pub fn load_file_from(&self, url: &str, start_ms: Option<i64>) {
+    ///
+    /// **需要 mpv ≥ 0.38**：`loadfile` 的 `<index>=-1` 参数在旧版不被识别，会返回错误码。
+    /// 返回 `Err` 时上层不应把状态置为「播放中」（否则成为无声的假播放）。
+    pub fn load_file_from(&self, url: &str, start_ms: Option<i64>) -> Result<(), String> {
         match start_ms {
             Some(ms) if ms > 0 => {
                 let opt = format!("start={:.3}", ms as f64 / 1000.0);
-                self.command(&["loadfile", url, "replace", "-1", &opt]);
+                self.command(&["loadfile", url, "replace", "-1", &opt])
             }
             _ => self.load_file(url),
         }
@@ -156,7 +159,7 @@ impl Mpv {
 
     pub fn seek_to_ms(&self, position_ms: i64) {
         let seconds = (position_ms.max(0) as f64) / 1000.0;
-        self.command(&["seek", &seconds.to_string(), "absolute"]);
+        let _ = self.command(&["seek", &seconds.to_string(), "absolute"]);
     }
 
     /// 音量百分比（0.0..=100.0）。
@@ -166,7 +169,7 @@ impl Mpv {
     }
 
     pub fn stop(&self) {
-        self.command(&["stop"]);
+        let _ = self.command(&["stop"]);
     }
 
     /// 当前位置（秒）；未加载时为 `None`。
@@ -270,18 +273,22 @@ impl Mpv {
         Some(text)
     }
 
-    fn command(&self, args: &[&str]) {
+    /// 执行 libmpv 命令；返回返回码是否成功（失败带上 `mpv_error_string`）。
+    fn command(&self, args: &[&str]) -> Result<(), String> {
         if !self.alive.load(Ordering::Relaxed) {
-            return;
+            return Err("引擎已销毁".to_string());
         }
         let cstrings: Vec<CString> = args.iter().filter_map(|a| CString::new(*a).ok()).collect();
         if cstrings.len() != args.len() {
-            return;
+            return Err("命令参数含 NUL".to_string());
         }
         let mut ptrs: Vec<*const c_char> = cstrings.iter().map(|c| c.as_ptr()).collect();
         ptrs.push(ptr::null());
-        unsafe {
-            (self.lib.command)(self.handle, ptrs.as_ptr());
+        let rc = unsafe { (self.lib.command)(self.handle, ptrs.as_ptr()) };
+        if rc < 0 {
+            Err(self.error(rc))
+        } else {
+            Ok(())
         }
     }
 
@@ -307,12 +314,12 @@ impl Drop for Mpv {
 }
 
 impl crate::player::PlaybackController for Mpv {
-    fn load(&self, url: &str) {
-        self.load_file(url);
+    fn load(&self, url: &str) -> bool {
+        Mpv::load_file(self, url).is_ok()
     }
 
-    fn load_from(&self, url: &str, start_ms: Option<i64>) {
-        self.load_file_from(url, start_ms);
+    fn load_from(&self, url: &str, start_ms: Option<i64>) -> bool {
+        Mpv::load_file_from(self, url, start_ms).is_ok()
     }
 
     fn set_paused(&self, paused: bool) {

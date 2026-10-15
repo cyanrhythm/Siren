@@ -444,7 +444,9 @@ pub(crate) fn smooth_virtual_list(
         let entry = cx.global_mut::<Registry>().0.entry(id.clone()).or_default();
         entry.content = content_h;
         entry.max = max;
-        entry.target.clamp(0.0, max)
+        // 写回，避免列表缩短后 target 停留在越界值、视口瞬间跳回旧位置。
+        entry.target = entry.target.clamp(0.0, max);
+        entry.target
     };
     let ease = if dragging { Duration::ZERO } else { SCROLL_EASE };
     let offset = transition(

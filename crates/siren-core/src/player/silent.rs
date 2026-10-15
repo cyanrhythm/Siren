@@ -10,7 +10,10 @@ use crate::player::PlaybackController;
 pub struct SilentEngine;
 
 impl PlaybackController for SilentEngine {
-    fn load(&self, _url: &str) {}
+    fn load(&self, _url: &str) -> bool {
+        // 降级占位：视为加载成功，界面/队列照常工作（只是不出声）。
+        true
+    }
     fn set_paused(&self, _paused: bool) {}
     fn stop(&self) {}
     fn seek_to_ms(&self, _position_ms: i64) {}

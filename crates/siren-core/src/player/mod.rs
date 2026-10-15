@@ -27,15 +27,15 @@ pub use silent::SilentEngine;
 ///
 /// 方法均取 `&self`（引擎内部串行化），便于跨线程共享。
 pub trait PlaybackController: Send + Sync {
-    /// 加载并播放地址。
-    fn load(&self, url: &str);
-    /// 加载地址并从指定位置开始播放（`None` = 从头）。
+    /// 加载并播放地址；返回是否成功交给引擎（失败时上层不应显示为「播放中」）。
+    fn load(&self, url: &str) -> bool;
+    /// 加载地址并从指定位置开始播放（`None` = 从头）；返回是否成功。
     ///
     /// 引擎不支持时退化为 [`load`](Self::load)。实现应让引擎在**加载完成后**再跳转，
     /// 避免加载前 seek 被丢弃（冷启动恢复进度即依赖此语义）。
-    fn load_from(&self, url: &str, start_ms: Option<i64>) {
+    fn load_from(&self, url: &str, start_ms: Option<i64>) -> bool {
         let _ = start_ms;
-        self.load(url);
+        self.load(url)
     }
     /// 设置暂停状态。
     fn set_paused(&self, paused: bool);

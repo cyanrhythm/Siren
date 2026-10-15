@@ -250,16 +250,36 @@ impl Player {
             url.len(),
             start_ms
         );
-        self.engine.load_from(url, start_ms);
-        self.engine.set_paused(false);
-        log::debug!("引擎已加载新文件，恢复进度同步");
-        // 新文件已交给引擎，之后读到的是新曲进度，可恢复位置/时长同步。
+        let loaded = self.engine.load_from(url, start_ms);
+        // 新文件已交给引擎（无论成败），之后读到的是新曲进度，可恢复位置/时长同步。
+        // 新文件标志旧 EOF 已翻篇：解除手动切歌时的闩锁，允许本次播放自然结束再推进。
         self.awaiting_load = false;
-        self.state.playing = true;
-        if let Some(ms) = start_ms {
-            self.state.position_ms = ms.max(0);
+        self.eof_latched = false;
+        if loaded {
+            self.engine.set_paused(false);
+            log::debug!("引擎已加载新文件，恢复进度同步");
+            self.state.playing = true;
+            if let Some(ms) = start_ms {
+                self.state.position_ms = ms.max(0);
+            }
+        } else {
+            // 加载失败（含 mpv < 0.38 不识别 `-1` 参数）：不进入「播放中」的假死态。
+            log::error!("引擎加载播放地址失败（检查 libmpv 版本，需 ≥ 0.38）: len={}", url.len());
+            self.state.playing = false;
         }
         self.publish();
+    }
+
+    /// 取消在途的加载等待（URL 解析失败/放弃加载时调用）。
+    ///
+    /// 解除 [`awaiting_load`] 闩锁，恢复进度同步；否则状态机会一直停在「等待加载」，
+    /// 表现为进度不动、EOF 也不再推进的卡死态。
+    pub fn cancel_pending_load(&mut self) {
+        if self.awaiting_load {
+            log::debug!("取消在途加载等待，恢复进度同步");
+            self.awaiting_load = false;
+            self.publish();
+        }
     }
 
     /// 切换播放/暂停（需已有当前曲）。
@@ -359,7 +379,9 @@ impl Player {
             // mpv 已开始播放新文件，解除闩锁
             self.eof_latched = false;
         }
-        if self.state.song.is_some() && eof && !self.eof_latched {
+        // 与进度同步同门控：等待新文件加载期间（awaiting_load）引擎仍报旧曲的 eof，
+        // 若此时推进会造成旧文件播完后的连环自动切歌。
+        if !self.awaiting_load && self.state.song.is_some() && eof && !self.eof_latched {
             // 只推进一次；在新文件真正播放（eof 变假）前不再重复推进
             self.eof_latched = true;
             match self.advance_auto() {
@@ -386,6 +408,9 @@ impl Player {
         self.state.playing = false;
         // 已选中新曲但 URL 尚未加载：进入等待加载窗口，暂不同步引擎进度。
         self.awaiting_load = true;
+        // 同步闩锁：若引擎此刻仍报旧曲的 eof（上一首刚播完），手动切歌后不应再被
+        // 这个陈旧 eof 推进一步（否则会跳掉一首）；新文件播放（eof 变假）时自动解除。
+        self.eof_latched = true;
         self.publish();
         self.state.song.clone()
     }
@@ -443,11 +468,12 @@ mod tests {
     }
 
     impl PlaybackController for MockEngine {
-        fn load(&self, url: &str) {
+        fn load(&self, url: &str) -> bool {
             self.set(|i| {
                 i.url = Some(url.to_string());
                 i.eof = false;
             });
+            true
         }
         fn set_paused(&self, paused: bool) {
             self.set(|i| i.paused = paused);
@@ -520,6 +546,32 @@ mod tests {
     }
 
     #[test]
+    fn cancel_pending_load_resumes_progress_sync() {
+        let (mut player, engine) = setup(3);
+        // 手动切歌后进入等待加载窗口，期间不同步引擎进度。
+        assert_eq!(player.next_track().unwrap().id, 1);
+        engine.set(|i| i.pos_ms = 5_000);
+        assert!(player.tick().is_none());
+        assert_eq!(player.state().position_ms, 0, "等待加载期间不同步进度");
+        // 解析失败：取消等待加载，恢复进度同步（不再卡死）。
+        player.cancel_pending_load();
+        assert!(player.tick().is_none());
+        assert_eq!(player.state().position_ms, 5_000);
+    }
+
+    #[test]
+    fn manual_selection_latches_stale_eof() {
+        let (mut player, engine) = setup(3);
+        // 引擎仍报告上一首已播完（尚未被 tick 处理）。
+        engine.set(|i| i.eof = true);
+        // 手动切到第 3 首：应同步闩锁 eof。
+        assert_eq!(player.play_at(2).unwrap().id, 2);
+        // 陈旧的 eof 不应再触发一次自动切歌。
+        assert!(player.tick().is_none());
+        assert_eq!(player.state().current_index, Some(2));
+    }
+
+    #[test]
     fn toggle_flips_playing() {
         let (mut player, _) = setup(1);
         player.play_url("u");
@@ -576,6 +628,8 @@ mod tests {
         let (mut player, engine) = setup(3);
         player.set_mode(PlayMode::SingleLoop);
         player.play_at(1);
+        // 手动选曲后需真正加载（URL 送达）再等自然结束。
+        player.play_url("u1");
         engine.set(|i| i.eof = true);
         let pending = player.tick().unwrap();
         assert_eq!(pending.id, 1);

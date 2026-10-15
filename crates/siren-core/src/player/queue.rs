@@ -211,6 +211,13 @@ impl PlayerQueue {
         let index = index.min(self.items.len() - 1);
         self.items.truncate(index + 1);
         self.items.extend(items);
+        // 保留段末尾为 `index`：当前曲若落在被替换的尾段内（异步回调期间用户已切歌），
+        // 夹回 `index` 以免越界（对照 `remove` 的下标维护）。
+        self.current = match self.current {
+            None => None,
+            Some(_) if self.items.is_empty() => None,
+            Some(c) => Some(c.min(index)),
+        };
     }
 
     /// 移除指定下标的曲目，并让当前下标继续指向同一首歌（或顺延）。
@@ -412,5 +419,17 @@ mod tests {
         q.clear_keep_current();
         assert_eq!(q.len(), 1);
         assert_eq!(q.current().unwrap().id, 2);
+    }
+
+    #[test]
+    fn append_after_keeps_current_in_range_when_user_switched() {
+        let mut q = queue_with(3); // ids 0,1,2
+        q.select(2);
+        // 异步漫游回调带陈旧 index=0，期间用户已切到末尾（current=2，落在被替换尾段）。
+        q.append_after(0, vec![song(10), song(11)]);
+        assert_eq!(q.len(), 3);
+        // current 夹回保留段末尾（index=0），不越界、不指向新追加曲。
+        assert_eq!(q.current_index(), Some(0));
+        assert_eq!(q.current().unwrap().id, 0);
     }
 }

@@ -135,7 +135,9 @@ impl CoverLoader {
 /// 网易云封面支持 `?param=WxH` 生成指定尺寸，减少下载量。
 fn sized_url(url: &str, size: u32) -> String {
     if url.contains("126.net") && !url.contains("param=") {
-        format!("{url}?param={size}y{size}")
+        // URL 可能已带其它 query，此时用 `&` 追加，避免拼出两个 `?` 的非法地址。
+        let sep = if url.contains('?') { '&' } else { '?' };
+        format!("{url}{sep}param={size}y{size}")
     } else {
         url.to_string()
     }
@@ -185,6 +187,29 @@ fn guess_format(bytes: &[u8]) -> Option<ImageFormat> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn sized_url_appends_param_with_correct_separator() {
+        assert_eq!(
+            super::sized_url("https://p1.music.126.net/x.jpg", 64),
+            "https://p1.music.126.net/x.jpg?param=64y64"
+        );
+        // 已带其它 query 时用 `&`，不产生第二个 `?`。
+        assert_eq!(
+            super::sized_url("https://p1.music.126.net/x.jpg?foo=1", 64),
+            "https://p1.music.126.net/x.jpg?foo=1&param=64y64"
+        );
+        // 已带 param 的 URL 原样返回。
+        assert_eq!(
+            super::sized_url("https://p1.music.126.net/x.jpg?param=100y100", 64),
+            "https://p1.music.126.net/x.jpg?param=100y100"
+        );
+        // 非 126.net 不处理。
+        assert_eq!(
+            super::sized_url("https://example.com/x.jpg", 64),
+            "https://example.com/x.jpg"
+        );
+    }
+
     #[test]
     fn bucket_groups_nearby_sizes() {
         assert_eq!(super::bucket(28.0), 64);

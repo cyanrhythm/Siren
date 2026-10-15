@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::base::StyledExt;
+use gpui_kit::component::button::Button;
 use gpui_kit::component::menu::{ContextMenuExt, PopupMenuItem};
 use gpui_kit::*;
 
@@ -23,6 +24,8 @@ pub(crate) struct AlbumPage {
     id: i64,
     name: String,
     detail: Option<Arc<AlbumDetail>>,
+    /// 加载失败：用于展示错误态与重试（而非永久停在“加载中”）。
+    failed: bool,
     subscribed: bool,
     load_gen: u64,
 }
@@ -43,6 +46,7 @@ impl AlbumPage {
             id,
             name,
             detail: None,
+            failed: false,
             subscribed: false,
             load_gen: 0,
         };
@@ -63,6 +67,7 @@ impl AlbumPage {
     fn load(&mut self, cx: &mut Context<Self>) {
         self.load_gen = self.load_gen.wrapping_add(1);
         let gen = self.load_gen;
+        self.failed = false;
         let client = self.services.client.clone();
         let id = self.id;
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -82,6 +87,7 @@ impl AlbumPage {
                     this.services.covers.prefetch(urls, 40.0, cx);
                     this.services.covers.prefetch([d.cover_url.clone()], 120.0, cx);
                 }
+                this.failed = detail.is_none();
                 this.detail = detail.map(Arc::new);
                 cx.notify();
             })
@@ -346,13 +352,31 @@ impl Render for AlbumPage {
                     .child(rows)
                     .into_any_element()
             }
-            None => div()
-                .flex_1()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(div().text_sm().text_color(theme::text_gray()).child("加载专辑中…"))
-                .into_any_element(),
+            None => {
+                if self.failed {
+                    let weak = cx.weak_entity();
+                    div()
+                        .flex_1()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .justify_center()
+                        .gap(px(12.0))
+                        .child(div().text_sm().text_color(theme::text_gray()).child("专辑加载失败"))
+                        .child(Button::new("album-retry").label("重试").on_click(move |_ev, _w, cx| {
+                            weak.update(cx, |page, cx| page.load(cx)).ok();
+                        }))
+                        .into_any_element()
+                } else {
+                    div()
+                        .flex_1()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(div().text_sm().text_color(theme::text_gray()).child("加载专辑中…"))
+                        .into_any_element()
+                }
+            }
         };
         page_shell_with_header(header.into_any_element(), body)
     }

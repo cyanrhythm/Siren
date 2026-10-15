@@ -72,16 +72,24 @@ impl Root {
             return;
         };
         let tid = api::comment_thread_id(song.id);
-        let mut like = false;
-        if let Some(item) = self.comments.items.iter_mut().find(|c| c.comment_id == id) {
+        // 顶层评论与楼层回复都要查（回复在 floor_items 中）；都没找到就不发请求，
+        // 避免对从未喜欢过的评论发出「取消喜欢」。
+        let flip = |item: &mut CommentItem| {
             item.liked = !item.liked;
             if item.liked {
                 item.liked_count += 1;
             } else {
                 item.liked_count = (item.liked_count - 1).max(0);
             }
-            like = item.liked;
-        }
+            item.liked
+        };
+        let like = if let Some(item) = self.comments.items.iter_mut().find(|c| c.comment_id == id) {
+            flip(item)
+        } else if let Some(item) = self.comments.floor_items.iter_mut().find(|c| c.comment_id == id) {
+            flip(item)
+        } else {
+            return;
+        };
         cx.notify();
         let client = self.services.client.clone();
         self.services.handle.spawn(async move {

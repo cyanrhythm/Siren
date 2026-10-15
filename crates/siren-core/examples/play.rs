@@ -34,7 +34,10 @@ fn main() {
     };
 
     mpv.set_volume(60.0);
-    mpv.load_file(&url);
+    if let Err(e) = mpv.load_file(&url) {
+        eprintln!("加载播放地址失败：{e}");
+        std::process::exit(1);
+    }
     println!("开始播放：{url}");
 
     for _ in 0..40 {

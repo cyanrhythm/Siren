@@ -37,6 +37,8 @@ pub(crate) struct LibraryPage {
     load_gen: u64,
     albums_gen: u64,
     artists_gen: u64,
+    /// 账号刷新代次：logout 时自增，使在途的 account() 响应失效（避免被“登回”）。
+    account_gen: u64,
     _login_sub: Subscription,
 }
 
@@ -60,6 +62,7 @@ impl LibraryPage {
             load_gen: 0,
             albums_gen: 0,
             artists_gen: 0,
+            account_gen: 0,
             _login_sub,
         };
         page.refresh_account(false, cx);
@@ -88,11 +91,15 @@ impl LibraryPage {
         self.my_playlists = Arc::new(Vec::new());
         self.albums = Arc::new(Vec::new());
         self.artists = Arc::new(Vec::new());
+        // 使在途的 account() 响应作废，避免退出后被迟到的响应“登回”。
+        self.account_gen = self.account_gen.wrapping_add(1);
         cx.emit(PageEvent::LoggedOut);
         cx.notify();
     }
 
     pub(crate) fn refresh_account(&mut self, announce: bool, cx: &mut Context<Self>) {
+        self.account_gen = self.account_gen.wrapping_add(1);
+        let gen = self.account_gen;
         let had_cookie = self.services.client.cookie().is_some();
         let client = self.services.client.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -116,6 +123,10 @@ impl LibraryPage {
         cx.spawn(async move |this, cx| {
             let account = rx.await.ok().flatten();
             this.update(cx, |this, cx| {
+                // 代次不符：期间已 logout/重新刷新，丢弃这次响应。
+                if this.account_gen != gen {
+                    return;
+                }
                 let avatar = account
                     .as_ref()
                     .and_then(siren_core::network::api::account_avatar)
