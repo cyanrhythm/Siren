@@ -22,6 +22,7 @@ impl Root {
         let is_home = matches!(self.route(), Route::Home);
 
         let weak_back = weak.clone();
+        let weak_fwd = weak.clone();
         let weak_home = weak.clone();
         let weak_account = weak.clone();
         let weak_search = weak;
@@ -147,7 +148,20 @@ impl Root {
                     .items_center()
                     .justify_center()
                     .rounded_full()
-                    .child(icon(IconName::ChevronRight, 18.0, theme::surface_light())),
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme::surface()))
+                    .on_click(move |_ev, _window, cx| {
+                        weak_fwd.update(cx, |root, cx| root.forward(cx)).ok();
+                    })
+                    .child(icon(
+                        IconName::ChevronRight,
+                        18.0,
+                        if self.can_forward() {
+                            theme::text_gray()
+                        } else {
+                            theme::surface_light()
+                        },
+                    )),
             );
 
         // 中：首页 + 搜索框

@@ -213,14 +213,15 @@ impl NpCard {
     }
 }
 
-/// 导航栈：顶层路由历史。
+/// 导航栈：顶层路由历史（浏览器式 history + forward 双栈，对齐 Melodia `BackStack`）。
 pub(crate) struct NavState {
     stack: Vec<Route>,
+    forward: Vec<Route>,
 }
 
 impl NavState {
     fn new(route: Route) -> Self {
-        Self { stack: vec![route] }
+        Self { stack: vec![route], forward: Vec::new() }
     }
 
     /// 当前页面。
@@ -228,24 +229,47 @@ impl NavState {
         self.stack.last().cloned().unwrap_or(Route::Home)
     }
 
-    /// 切换顶层页面：历史重置为单元素。
+    /// 切换顶层页面（侧栏导航）：历史与前进栈一并清空。
     fn reset(&mut self, route: Route) {
         self.stack.clear();
         self.stack.push(route);
+        self.forward.clear();
     }
 
+    /// 打开详情页（push）：与当前路由相同则跳过；新导航清空前进栈。
     fn push(&mut self, route: Route) {
+        if route == self.route() {
+            return;
+        }
         self.stack.push(route);
+        self.forward.clear();
     }
 
-    /// 返回上一页；栈顶无可回退项时返回 `false`。
+    /// 返回上一页；返回的项移入前进栈。栈顶无可回退项时返回 `false`。
     fn pop(&mut self) -> bool {
         if self.stack.len() > 1 {
-            self.stack.pop();
+            if let Some(route) = self.stack.pop() {
+                self.forward.push(route);
+            }
             true
         } else {
             false
         }
+    }
+
+    /// 前进到下一页（从前进栈搬回历史栈）。
+    fn forward(&mut self) -> bool {
+        match self.forward.pop() {
+            Some(route) => {
+                self.stack.push(route);
+                true
+            }
+            None => false,
+        }
+    }
+
+    fn can_forward(&self) -> bool {
+        !self.forward.is_empty()
     }
 
     fn last_mut(&mut self) -> Option<&mut Route> {
@@ -536,11 +560,7 @@ impl Root {
     /// 切换顶层页面（侧栏导航）。
     fn navigate(&mut self, route: Route, cx: &mut Context<Self>) {
         self.nav.reset(route);
-        self.playlist_page = None;
-        self.album_page = None;
-        self.artist_page = None;
-        self.profile_page = None;
-        self.account_page = None;
+        self.clear_detail_pages();
         cx.notify();
     }
 
@@ -815,13 +835,29 @@ impl Root {
 
     fn back(&mut self, cx: &mut Context<Self>) {
         if self.nav.pop() {
-            self.playlist_page = None;
-            self.album_page = None;
-            self.artist_page = None;
-            self.profile_page = None;
-            self.account_page = None;
+            self.clear_detail_pages();
             cx.notify();
         }
+    }
+
+    /// 前进（标题栏前进按钮，浏览器语义）。
+    fn forward(&mut self, cx: &mut Context<Self>) {
+        if self.nav.forward() {
+            self.clear_detail_pages();
+            cx.notify();
+        }
+    }
+
+    fn can_forward(&self) -> bool {
+        self.nav.can_forward()
+    }
+
+    fn clear_detail_pages(&mut self) {
+        self.playlist_page = None;
+        self.album_page = None;
+        self.artist_page = None;
+        self.profile_page = None;
+        self.account_page = None;
     }
 
     /// 退出登录（标题栏头像菜单）：清除 Cookie 并让音乐库回到未登录态。
@@ -1072,4 +1108,91 @@ pub(crate) fn cover_placeholder_round(size: f32) -> AnyElement {
         .bg(theme::cover_placeholder())
         .child(icon(IconName::Music, size * 0.5, theme::text_gray()))
         .into_any_element()
+}
+
+#[cfg(test)]
+mod nav_tests {
+    use super::{NavState, Route};
+
+    fn pl(id: i64) -> Route {
+        Route::Playlist { id, name: format!("pl-{id}") }
+    }
+
+    #[test]
+    fn push_moves_forward_and_dedups_current() {
+        let mut nav = NavState::new(Route::Home);
+        nav.push(pl(1));
+        assert!(nav.pop());
+        assert!(nav.can_forward());
+
+        // push 新路由清空前进栈
+        nav.push(Route::Search);
+        assert!(!nav.can_forward());
+
+        // 与当前路由相同则跳过（栈深不变）
+        let mut nav = NavState::new(Route::Home);
+        nav.push(pl(1));
+        let before = nav.route();
+        nav.push(pl(1));
+        assert_eq!(nav.route(), before);
+        assert!(nav.pop());
+    }
+
+    #[test]
+    fn pop_fills_forward_and_forward_restores() {
+        let mut nav = NavState::new(Route::Home);
+        nav.push(pl(1));
+        nav.push(pl(2));
+        assert_eq!(nav.route(), pl(2));
+
+        assert!(nav.pop());
+        assert_eq!(nav.route(), pl(1));
+        assert!(nav.can_forward());
+
+        assert!(nav.forward());
+        assert_eq!(nav.route(), pl(2));
+        assert!(!nav.can_forward());
+
+        // 栈底不可 pop；前进栈仍有内容时可继续 forward
+        assert!(nav.pop());
+        assert!(nav.pop());
+        assert!(!nav.pop());
+        assert!(nav.forward());
+        assert_eq!(nav.route(), pl(1));
+        assert!(nav.forward());
+        assert_eq!(nav.route(), pl(2));
+        assert!(!nav.forward());
+    }
+
+    #[test]
+    fn reset_clears_history_and_forward() {
+        let mut nav = NavState::new(Route::Home);
+        nav.push(pl(1));
+        nav.push(pl(2));
+        nav.pop();
+        assert!(nav.can_forward());
+
+        nav.reset(Route::Settings);
+        assert_eq!(nav.route(), Route::Settings);
+        assert!(!nav.can_forward());
+        assert!(!nav.pop());
+    }
+
+    #[test]
+    fn back_forward_chain_across_multiple_entries() {
+        let mut nav = NavState::new(Route::Home);
+        nav.push(pl(1));
+        nav.push(pl(2));
+        nav.push(pl(3));
+
+        assert!(nav.pop());
+        assert!(nav.pop());
+        assert_eq!(nav.route(), pl(1));
+        // 后进先出：先 forward 回 pl(2)，再回 pl(3)
+        assert!(nav.forward());
+        assert_eq!(nav.route(), pl(2));
+        assert!(nav.forward());
+        assert_eq!(nav.route(), pl(3));
+        assert!(!nav.forward());
+    }
 }
