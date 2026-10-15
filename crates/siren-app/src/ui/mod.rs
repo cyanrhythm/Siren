@@ -407,6 +407,8 @@ impl Root {
             services.covers.clone(),
             notifications.clone(),
         );
+        // 冷启动恢复出的当前曲：立即拉取其元数据，打开详情页即有内容。
+        playback.update(cx, |pb, cx| pb.load_restored_metadata(cx));
 
         let home = cx.new(|cx| HomePage::new(cx, services.clone(), playback.clone()));
         let library = cx.new(|cx| LibraryPage::new(window, cx, services.clone()));

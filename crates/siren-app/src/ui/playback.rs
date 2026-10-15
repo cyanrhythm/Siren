@@ -943,45 +943,9 @@ impl Playback {
         }
     }
 
-    fn resolve_and_play(&mut self, song: Song, cx: &mut Context<Self>) {
-        log::info!("解析并播放 id={} name={}", song.id, song.name);
-        // mpv 缺失时整条链路「看似正常但无声」：首次播放提示一次。
-        if self.mpv_missing && !self.mpv_warned {
-            self.mpv_warned = true;
-            self.notifications
-                .update(cx, |n, cx| n.error("未找到 mpv，播放不可用", cx));
-        }
-        // 代次自增：本次解析的所有异步回调都带 gen，切歌后旧回调据此丢弃。
-        self.resolve_gen = self.resolve_gen.wrapping_add(1);
-        let gen = self.resolve_gen;
-        // 队列/下标已变化：落盘队列会话
-        self.save_queue_session();
-        // 打卡上报：结束上一首（按实际播放时长），并开始新一首。
-        self.finish_previous();
-        let client_report = self.client.clone();
+    /// 拉取当前曲的详情 / 歌词 / 百科 / 评论 / 首位歌手；`gen` 用于丢弃切歌后的乱序结果。
+    fn fetch_song_metadata(&mut self, song: &Song, gen: u64, cx: &mut Context<Self>) {
         let song_id = song.id;
-        let container = self.report_container(song_id);
-        // 歌单来源：本地记录「最近播放歌单」（服务端不记录本客户端的歌单播放）
-        if let Some(source) = self.player.source() {
-            if source.kind == PlaySourceKind::Playlist && source.id != self.last_recorded_playlist {
-                self.last_recorded_playlist = source.id;
-                siren_core::recent_playlists::record_recent_playlist(
-                    siren_core::recent_playlists::LocalRecentPlaylist {
-                        id: source.id,
-                        name: source.name.clone(),
-                        cover_url: source.cover_url.clone(),
-                        play_time: siren_core::recent_playlists::now_ms(),
-                    },
-                );
-            }
-        }
-        self.playing_id = Some(song_id);
-        self.playing_at = Some(Instant::now());
-        self.reporting_container = container;
-        self.handle.spawn(async move {
-            let _ = siren_core::network::api::report_start_play(&client_report, song_id, container).await;
-        });
-
         // 拉取歌曲详情（发行时间等），完成后刷新正在播放栏。
         let client_detail = self.client.clone();
         let handle_detail = self.handle.clone();
@@ -1113,6 +1077,62 @@ impl Playback {
             .ok();
         })
         .detach();
+    }
+
+    /// 冷启动恢复出的当前曲：立即拉取元数据（详情/歌词/百科/评论/歌手），无需等用户按播放。
+    pub(crate) fn load_restored_metadata(&mut self, cx: &mut Context<Self>) {
+        if !self.needs_resolve {
+            return;
+        }
+        let Some(song) = self.player.state().song else {
+            return;
+        };
+        self.resolve_gen = self.resolve_gen.wrapping_add(1);
+        let gen = self.resolve_gen;
+        self.fetch_song_metadata(&song, gen, cx);
+    }
+
+    fn resolve_and_play(&mut self, song: Song, cx: &mut Context<Self>) {
+        log::info!("解析并播放 id={} name={}", song.id, song.name);
+        // mpv 缺失时整条链路「看似正常但无声」：首次播放提示一次。
+        if self.mpv_missing && !self.mpv_warned {
+            self.mpv_warned = true;
+            self.notifications
+                .update(cx, |n, cx| n.error("未找到 mpv，播放不可用", cx));
+        }
+        // 代次自增：本次解析的所有异步回调都带 gen，切歌后旧回调据此丢弃。
+        self.resolve_gen = self.resolve_gen.wrapping_add(1);
+        let gen = self.resolve_gen;
+        // 队列/下标已变化：落盘队列会话
+        self.save_queue_session();
+        // 打卡上报：结束上一首（按实际播放时长），并开始新一首。
+        self.finish_previous();
+        let client_report = self.client.clone();
+        let song_id = song.id;
+        let container = self.report_container(song_id);
+        // 歌单来源：本地记录「最近播放歌单」（服务端不记录本客户端的歌单播放）
+        if let Some(source) = self.player.source() {
+            if source.kind == PlaySourceKind::Playlist && source.id != self.last_recorded_playlist {
+                self.last_recorded_playlist = source.id;
+                siren_core::recent_playlists::record_recent_playlist(
+                    siren_core::recent_playlists::LocalRecentPlaylist {
+                        id: source.id,
+                        name: source.name.clone(),
+                        cover_url: source.cover_url.clone(),
+                        play_time: siren_core::recent_playlists::now_ms(),
+                    },
+                );
+            }
+        }
+        self.playing_id = Some(song_id);
+        self.playing_at = Some(Instant::now());
+        self.reporting_container = container;
+        self.handle.spawn(async move {
+            let _ = siren_core::network::api::report_start_play(&client_report, song_id, container).await;
+        });
+
+        // 详情/歌词/百科/评论/歌手：与播放解耦，冷启动恢复时也会调用（见 `load_restored_metadata`）。
+        self.fetch_song_metadata(&song, gen, cx);
 
         let client = self.client.clone();
         let id = song.id;
