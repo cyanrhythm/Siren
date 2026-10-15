@@ -327,7 +327,6 @@ pub(crate) struct NowPlayingUi {
 
 /// 主窗口根组件：导航与外壳。
 pub struct Root {
-    _runtime: tokio::runtime::Runtime,
     services: Services,
     playback: Entity<Playback>,
     search_input: Entity<InputState>,
@@ -368,7 +367,7 @@ pub struct Root {
 }
 
 impl Root {
-    pub fn new(window: &mut Window, cx: &mut App, runtime: tokio::runtime::Runtime) -> Entity<Self> {
+    pub fn new(window: &mut Window, cx: &mut App, handle: tokio::runtime::Handle) -> Entity<Self> {
         siren_platform::prepare_native_environment();
         // 全局唯一真源：设置 + 会话
         SettingsStore::init(cx);
@@ -380,11 +379,11 @@ impl Root {
             .and_then(|s| siren_core::auth::normalize_cookie(&s))
             .or_else(siren_core::auth::load_cookie);
         let client = Arc::new(NeteaseClient::with_cookie(cookie));
-        let covers = CoverLoader::new(client.clone(), runtime.handle().clone());
+        let covers = CoverLoader::new(client.clone(), handle.clone());
         let notifications = Notifications::new(cx);
         let services = Services {
             client,
-            handle: runtime.handle().clone(),
+            handle: handle.clone(),
             covers,
             notifications: notifications.clone(),
         };
@@ -491,7 +490,6 @@ impl Root {
             // 提示变化时重绘外壳（Toast 浮层）
             subs.push(cx.observe(&notifications, |_root, _n, cx| cx.notify()));
             Self {
-                _runtime: runtime,
                 services,
                 playback,
                 search_input,

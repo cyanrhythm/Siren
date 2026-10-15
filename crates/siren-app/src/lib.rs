@@ -51,7 +51,10 @@ pub fn run() {
         return;
     }
 
+    // Runtime 由本函数持有（`run` 阻塞在事件循环，直到应用退出才返回），只把 Handle 交给 UI，
+    // 避免根视图持有一条完整 Runtime 掩盖真实依赖（F1）。
     let runtime = tokio::runtime::Runtime::new().expect("创建 tokio 运行时失败");
+    let rt_handle = runtime.handle().clone();
 
     // 开发期环境变量覆盖；否则用上次保存的窗口位置/大小；都没有则首次居中
     let env_set = ["SIREN_X", "SIREN_Y", "SIREN_W", "SIREN_H"]
@@ -160,7 +163,7 @@ pub fn run() {
                     .detach();
                     // 系统托盘（左键切换显隐 / 菜单退出）。
                     setup_tray(window_handle, cx);
-                    Root::new(window, cx, runtime)
+                    Root::new(window, cx, rt_handle.clone())
                 },
             )
             .expect("打开窗口失败");
