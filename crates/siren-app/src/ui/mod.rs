@@ -213,6 +213,9 @@ impl NpCard {
     }
 }
 
+/// 导航栈最大深度（历史栈与前进栈各自独立）：超出时丢弃栈底最早的记录。
+const NAV_MAX_DEPTH: usize = 10;
+
 /// 导航栈：顶层路由历史（浏览器式 history + forward 双栈，对齐 Melodia `BackStack`）。
 pub(crate) struct NavState {
     stack: Vec<Route>,
@@ -240,12 +243,14 @@ impl NavState {
     }
 
     /// 打开详情页（push）：与当前路由相同则跳过；新导航清空前进栈。
+    /// 深度超过 [`NAV_MAX_DEPTH`] 时丢弃栈底最早的记录。
     fn push(&mut self, route: Route) {
         if route == self.route() {
             return;
         }
         self.stack.push(route);
         self.forward.clear();
+        self.trim();
     }
 
     /// 返回上一页；返回的项移入前进栈。栈顶无可回退项时返回 `false`。
@@ -265,9 +270,22 @@ impl NavState {
         match self.forward.pop() {
             Some(route) => {
                 self.stack.push(route);
+                self.trim();
                 true
             }
             None => false,
+        }
+    }
+
+    /// 深度超限时丢弃两栈栈底（最早）的记录，保留最近的历史与前进目标。
+    fn trim(&mut self) {
+        if self.stack.len() > NAV_MAX_DEPTH {
+            let excess = self.stack.len() - NAV_MAX_DEPTH;
+            self.stack.drain(0..excess);
+        }
+        if self.forward.len() > NAV_MAX_DEPTH {
+            let excess = self.forward.len() - NAV_MAX_DEPTH;
+            self.forward.drain(0..excess);
         }
     }
 
@@ -588,6 +606,7 @@ impl Root {
     fn navigate(&mut self, route: Route, cx: &mut Context<Self>) {
         self.nav.reset(route);
         self.clear_detail_pages();
+        self.ensure_route_page(cx);
         cx.notify();
     }
 
@@ -827,8 +846,8 @@ impl Root {
         cx.notify();
     }
 
-    pub(crate) fn open_playlist(&mut self, id: i64, name: String, cx: &mut Context<Self>) {
-        self.nav.push(Route::Playlist { id, name: name.clone() });
+    /// 创建歌单详情页实体（不触碰导航栈；供 `open_*` 与 `back`/`forward` 复用）。
+    fn make_playlist_page(&mut self, id: i64, name: String, cx: &mut Context<Self>) {
         let filter = self.pl_filter_input.clone();
         let add_input = self.pl_add_input.clone();
         let my_uid = Session::uid(cx);
@@ -849,33 +868,27 @@ impl Root {
         });
         self.playlist_sub = Some(sub);
         self.playlist_page = Some(page);
-        cx.notify();
     }
 
-    pub(crate) fn open_album(&mut self, id: i64, name: String, cx: &mut Context<Self>) {
-        self.nav.push(Route::Album { id, name: name.clone() });
+    fn make_album_page(&mut self, id: i64, name: String, cx: &mut Context<Self>) {
         let page = cx.new(|cx| AlbumPage::new(cx, self.services.clone(), self.playback.clone(), id, name));
         let sub = cx.subscribe(&page, |root: &mut Root, _e, ev: &PageEvent, cx| {
             root.on_page_event(ev, cx)
         });
         self.album_sub = Some(sub);
         self.album_page = Some(page);
-        cx.notify();
     }
 
-    fn open_artist(&mut self, id: i64, name: String, cx: &mut Context<Self>) {
-        self.nav.push(Route::Artist { id, name: name.clone() });
+    fn make_artist_page(&mut self, id: i64, name: String, cx: &mut Context<Self>) {
         let page = cx.new(|cx| ArtistPage::new(cx, self.services.clone(), self.playback.clone(), id, name));
         let sub = cx.subscribe(&page, |root: &mut Root, _e, ev: &PageEvent, cx| {
             root.on_page_event(ev, cx)
         });
         self.artist_sub = Some(sub);
         self.artist_page = Some(page);
-        cx.notify();
     }
 
-    fn open_profile(&mut self, uid: i64, cx: &mut Context<Self>) {
-        self.nav.push(Route::Profile { uid });
+    fn make_profile_page(&mut self, uid: i64, cx: &mut Context<Self>) {
         let my_uid = self.account_uid(cx);
         let page = cx.new(|cx| ProfilePage::new(cx, self.services.clone(), uid, my_uid));
         let sub = cx.subscribe(&page, |root: &mut Root, _e, ev: &PageEvent, cx| {
@@ -883,6 +896,40 @@ impl Root {
         });
         self.profile_sub = Some(sub);
         self.profile_page = Some(page);
+    }
+
+    fn make_account_page(&mut self, cx: &mut Context<Self>) {
+        let nickname_input = self.account_nickname_input.clone();
+        let signature_input = self.account_signature_input.clone();
+        let page = cx.new(|cx| AccountPage::new(cx, self.services.clone(), nickname_input, signature_input));
+        let sub = cx.subscribe(&page, |root: &mut Root, _e, ev: &PageEvent, cx| {
+            root.on_page_event(ev, cx)
+        });
+        self.account_sub = Some(sub);
+        self.account_page = Some(page);
+    }
+
+    pub(crate) fn open_playlist(&mut self, id: i64, name: String, cx: &mut Context<Self>) {
+        self.nav.push(Route::Playlist { id, name: name.clone() });
+        self.make_playlist_page(id, name, cx);
+        cx.notify();
+    }
+
+    pub(crate) fn open_album(&mut self, id: i64, name: String, cx: &mut Context<Self>) {
+        self.nav.push(Route::Album { id, name: name.clone() });
+        self.make_album_page(id, name, cx);
+        cx.notify();
+    }
+
+    fn open_artist(&mut self, id: i64, name: String, cx: &mut Context<Self>) {
+        self.nav.push(Route::Artist { id, name: name.clone() });
+        self.make_artist_page(id, name, cx);
+        cx.notify();
+    }
+
+    fn open_profile(&mut self, uid: i64, cx: &mut Context<Self>) {
+        self.nav.push(Route::Profile { uid });
+        self.make_profile_page(uid, cx);
         cx.notify();
     }
 
@@ -892,20 +939,29 @@ impl Root {
 
     fn open_account(&mut self, cx: &mut Context<Self>) {
         self.nav.push(Route::Account);
-        let nickname_input = self.account_nickname_input.clone();
-        let signature_input = self.account_signature_input.clone();
-        let page = cx.new(|cx| AccountPage::new(cx, self.services.clone(), nickname_input, signature_input));
-        let sub = cx.subscribe(&page, |root: &mut Root, _e, ev: &PageEvent, cx| {
-            root.on_page_event(ev, cx)
-        });
-        self.account_sub = Some(sub);
-        self.account_page = Some(page);
+        self.make_account_page(cx);
         cx.notify();
+    }
+
+    /// 按当前路由（重新）建立详情页实体；顶层路由无需实体。
+    ///
+    /// `back`/`forward` 会先 `clear_detail_pages`：若不在此重建，回退/前进到详情路由时
+    /// 实体已被清空、`page()` 只能渲染空白（多层详情导航/侧栏连点后返回即触发）。
+    fn ensure_route_page(&mut self, cx: &mut Context<Self>) {
+        match self.route() {
+            Route::Playlist { id, name } => self.make_playlist_page(id, name, cx),
+            Route::Album { id, name } => self.make_album_page(id, name, cx),
+            Route::Artist { id, name } => self.make_artist_page(id, name, cx),
+            Route::Profile { uid } => self.make_profile_page(uid, cx),
+            Route::Account => self.make_account_page(cx),
+            _ => {}
+        }
     }
 
     fn back(&mut self, cx: &mut Context<Self>) {
         if self.nav.pop() {
             self.clear_detail_pages();
+            self.ensure_route_page(cx);
             cx.notify();
         }
     }
@@ -914,6 +970,7 @@ impl Root {
     fn forward(&mut self, cx: &mut Context<Self>) {
         if self.nav.forward() {
             self.clear_detail_pages();
+            self.ensure_route_page(cx);
             cx.notify();
         }
     }
@@ -1249,6 +1306,22 @@ mod nav_tests {
         assert!(nav.forward());
         assert_eq!(nav.route(), pl(2));
         assert!(!nav.forward());
+    }
+
+    #[test]
+    fn push_caps_depth_and_drops_oldest() {
+        let mut nav = NavState::new(Route::Home);
+        for id in 1..=20 {
+            nav.push(pl(id));
+        }
+        // 仅保留最近 10 条：pl(11)..=pl(20)；栈底 Home 与 pl(1..=10) 被丢弃。
+        assert_eq!(nav.route(), pl(20));
+        let mut depth = 1;
+        while nav.pop() {
+            depth += 1;
+        }
+        assert_eq!(depth, super::NAV_MAX_DEPTH);
+        assert_eq!(nav.route(), pl(11));
     }
 
     #[test]
