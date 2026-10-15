@@ -24,6 +24,11 @@ pub trait WindowSystem: Send + Sync {
     /// 主显示器工作区（物理像素；非 Windows 返回 `None`）。
     fn primary_work_area_physical(&self) -> Option<(i32, i32, i32, i32)>;
 
+    /// 所有显示器合成的虚拟屏幕（物理像素 `x,y,w,h`）；无实现时返回 `None`。
+    fn virtual_screen_physical(&self) -> Option<(i32, i32, i32, i32)> {
+        None
+    }
+
     /// 窗口的物理矩形 `(x,y,w,h)`（非 Windows 返回 `None`）。
     fn window_physical_rect(&self, hwnd: u64) -> Option<(i32, i32, i32, i32)>;
 
@@ -84,6 +89,11 @@ pub fn primary_work_area() -> Option<(f32, f32, f32, f32)> {
 /// 主显示器工作区（物理像素；非 Windows 返回 None）。
 pub fn primary_work_area_physical() -> Option<(i32, i32, i32, i32)> {
     window_system().primary_work_area_physical()
+}
+
+/// 所有显示器合成的虚拟屏幕（物理像素 `x,y,w,h`；无实现时返回 None）。
+pub fn virtual_screen_physical() -> Option<(i32, i32, i32, i32)> {
+    window_system().virtual_screen_physical()
 }
 
 /// 窗口的物理矩形 `(x,y,w,h)`（句柄不可得 / 非 Windows 返回 None）。

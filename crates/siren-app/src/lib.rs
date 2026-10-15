@@ -135,7 +135,7 @@ pub fn run() {
                     });
                     // 恢复上次物理矩形 / 首次居中：延迟到窗口建立后再移动，避免渲染期重入
                     let target = if let Some((x, y, w, h)) = saved {
-                        Some((x as i32, y as i32, w as i32, h as i32))
+                        Some(clamp_visible((x as i32, y as i32, w as i32, h as i32)))
                     } else if centered {
                         siren_platform::primary_work_area_physical().map(|(wx, wy, ww, wh)| {
                             let scale = window.scale_factor();
@@ -172,6 +172,26 @@ pub fn run() {
 
 fn env_f32(key: &str, default: f32) -> f32 {
     std::env::var(key).ok().and_then(|s| s.parse().ok()).unwrap_or(default)
+}
+
+/// 恢复的窗口矩形若完全落在可见区（所有显示器合成的虚拟屏幕）之外——如显示器拔除/改分辨率——，
+/// 则居中到主显示器工作区，避免窗口不可见。
+fn clamp_visible(rect: (i32, i32, i32, i32)) -> (i32, i32, i32, i32) {
+    let (x, y, w, h) = rect;
+    let on_screen = siren_platform::virtual_screen_physical()
+        .map(|(vx, vy, vw, vh)| x < vx + vw && x + w > vx && y < vy + vh && y + h > vy)
+        .unwrap_or(true);
+    if on_screen {
+        return rect;
+    }
+    match siren_platform::primary_work_area_physical() {
+        Some((wx, wy, ww, wh)) => {
+            let nw = w.min(ww);
+            let nh = h.min(wh);
+            (wx + (ww - nw) / 2, wy + (wh - nh) / 2, nw, nh)
+        }
+        None => rect,
+    }
 }
 
 /// 初始化系统托盘并轮询其事件（左键切换主窗口显隐；菜单「退出」）。

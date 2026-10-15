@@ -94,6 +94,12 @@ pub(crate) struct Playback {
     last_recorded_playlist: i64,
     /// 漫游续接：上一次已触发续接的歌曲 id（避免同曲反复拉取）。
     roaming_last_trigger: i64,
+    /// 系统媒体面板的随机 / 单曲循环开关（彼此独立；三态 `PlayMode` 由此派生）。
+    sys_shuffle: bool,
+    sys_repeat_one: bool,
+    /// libmpv 缺失（降级为静默引擎）；首次播放时提示一次。
+    mpv_missing: bool,
+    mpv_warned: bool,
     progress_slider: Entity<SliderState>,
     volume_slider: Entity<SliderState>,
     media: Option<PlatformMediaSession>,
@@ -111,10 +117,14 @@ impl Playback {
         covers: CoverLoader,
         notifications: Entity<Notifications>,
     ) -> Entity<Self> {
-        let engine: Arc<dyn PlaybackController> = match Mpv::load(&siren_platform::mpv_library_candidates()) {
-            Ok(mpv) => Arc::new(mpv),
-            Err(_) => Arc::new(SilentEngine),
-        };
+        let (engine, mpv_missing): (Arc<dyn PlaybackController>, bool) =
+            match Mpv::load(&siren_platform::mpv_library_candidates()) {
+                Ok(mpv) => (Arc::new(mpv), false),
+                Err(e) => {
+                    log::warn!("未找到 libmpv，播放不可用：{e}");
+                    (Arc::new(SilentEngine), true)
+                }
+            };
         let mut player = Player::new(engine);
         // 冷启动恢复上次队列/当前曲/进度（不自动播放；首次播放时解析 URL 并 seek 回进度）
         let mut resume_ms: Option<i64> = None;
@@ -145,6 +155,10 @@ impl Playback {
                 needs_resolve = true;
             }
         }
+
+        // 由恢复出的播放模式回填随机/单曲循环开关（三态派生）。
+        let sys_shuffle = player.mode() == PlayMode::Shuffle;
+        let sys_repeat_one = player.mode() == PlayMode::SingleLoop;
 
         // 系统媒体控制：取原生句柄交给 playwire 的 SMTC 配置
         //（低层接口——playwire 的配置是 u64；常规窗口操作用 siren_platform 的便捷函数，直接传窗口）。
@@ -250,6 +264,10 @@ impl Playback {
                 reporting_container: 0,
                 last_recorded_playlist: 0,
                 roaming_last_trigger: 0,
+                sys_shuffle,
+                sys_repeat_one,
+                mpv_missing,
+                mpv_warned: false,
                 progress_slider,
                 volume_slider,
                 media,
@@ -703,7 +721,6 @@ impl Playback {
         }
         self.roaming_last_trigger = song.id;
         let song_id = song.id;
-        let index = state.current_index.unwrap_or(0);
         let client = self.client.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.handle.spawn(async move {
@@ -718,6 +735,15 @@ impl Playback {
                 if this.player.context() != Some(CONTEXT_ROAMING) || songs.is_empty() {
                     return;
                 }
+                // 回调期间用户可能已切歌：重读当前下标并校验仍指向触发续接的那首歌，
+                // 否则用陈旧 index 截断会砍掉队列尾部 / 丢失当前曲（J5）。
+                let cur = this.player.state();
+                if cur.song.as_ref().map(|s| s.id) != Some(song_id) {
+                    return;
+                }
+                let Some(index) = cur.current_index else {
+                    return;
+                };
                 this.player.append_after(index, songs);
                 this.save_queue_session();
                 cx.notify();
@@ -732,6 +758,8 @@ impl Playback {
         let state = self.player.state();
         let queue = self.player.queue_items();
         if queue.is_empty() {
+            // 清空队列后删除旧会话，否则重启会把旧队列“复活”。
+            siren_core::playback_session::QueueSession::clear();
             return;
         }
         siren_core::playback_session::QueueSession {
@@ -780,6 +808,9 @@ impl Playback {
 
     /// 随机播放：开启随机模式后从给定列表播放。
     pub(crate) fn play_shuffled(&mut self, items: Vec<Song>, cx: &mut Context<Self>) {
+        // 同步系统媒体面板的随机开关状态。
+        self.sys_shuffle = true;
+        self.sys_repeat_one = false;
         if self.player.mode() != PlayMode::Shuffle {
             self.player.set_mode(PlayMode::Shuffle);
         }
@@ -840,6 +871,8 @@ impl Playback {
     pub(crate) fn remove_queue_at(&mut self, index: usize, cx: &mut Context<Self>) {
         let before = self.player.state().song.map(|s| s.id);
         self.player.remove_at(index);
+        // 队列结构已变：落盘，避免重启后“复活”被删的曲目。
+        self.save_queue_session();
         let after = self.player.state().song.map(|s| s.id);
         if before != after {
             if let Some(song) = self.player.state().song {
@@ -853,33 +886,37 @@ impl Playback {
     /// 队列内拖动排序。
     pub(crate) fn move_in_queue(&mut self, from: usize, to: usize, cx: &mut Context<Self>) {
         self.player.move_in_queue(from, to);
+        self.save_queue_session();
         cx.notify();
     }
 
     /// 清空队列（保留当前曲）。
     pub(crate) fn clear_queue(&mut self, cx: &mut Context<Self>) {
         self.player.clear_queue();
-        cx.notify();
-    }
-
-    /// 切换随机播放。
-    pub(crate) fn toggle_shuffle(&mut self, cx: &mut Context<Self>) {
-        let mode = if self.player.mode() == PlayMode::Shuffle {
-            PlayMode::ListLoop
-        } else {
-            PlayMode::Shuffle
-        };
-        self.player.set_mode(mode);
         self.save_queue_session();
         cx.notify();
     }
 
-    /// 切换单曲循环。
+    /// 切换随机播放（与单曲循环相互独立）。
+    pub(crate) fn toggle_shuffle(&mut self, cx: &mut Context<Self>) {
+        self.sys_shuffle = !self.sys_shuffle;
+        self.apply_sys_mode(cx);
+    }
+
+    /// 切换单曲循环（与随机相互独立）。
     pub(crate) fn toggle_repeat(&mut self, cx: &mut Context<Self>) {
-        let mode = if self.player.mode() == PlayMode::SingleLoop {
-            PlayMode::ListLoop
-        } else {
+        self.sys_repeat_one = !self.sys_repeat_one;
+        self.apply_sys_mode(cx);
+    }
+
+    /// 由随机/单曲循环开关派生三态 `PlayMode`。随机优先（无「随机+单曲循环」组合）。
+    fn apply_sys_mode(&mut self, cx: &mut Context<Self>) {
+        let mode = if self.sys_shuffle {
+            PlayMode::Shuffle
+        } else if self.sys_repeat_one {
             PlayMode::SingleLoop
+        } else {
+            PlayMode::ListLoop
         };
         self.player.set_mode(mode);
         self.save_queue_session();
@@ -908,6 +945,12 @@ impl Playback {
 
     fn resolve_and_play(&mut self, song: Song, cx: &mut Context<Self>) {
         log::info!("解析并播放 id={} name={}", song.id, song.name);
+        // mpv 缺失时整条链路「看似正常但无声」：首次播放提示一次。
+        if self.mpv_missing && !self.mpv_warned {
+            self.mpv_warned = true;
+            self.notifications
+                .update(cx, |n, cx| n.error("未找到 mpv，播放不可用", cx));
+        }
         // 代次自增：本次解析的所有异步回调都带 gen，切歌后旧回调据此丢弃。
         self.resolve_gen = self.resolve_gen.wrapping_add(1);
         let gen = self.resolve_gen;
@@ -1159,14 +1202,15 @@ impl Playback {
                 self.player.seek_ms(target);
             }
             MediaCommand::SetVolume(v) => self.player.set_volume(v * 100.0),
+            // 与播放栏按钮同源：更新独立开关后派生模式。
+            // 关随机不再被吞（会回落到单曲循环或顺序）；开/关重复也不会抹掉随机。
             MediaCommand::SetShuffle(on) => {
-                if on {
-                    self.player.set_mode(PlayMode::Shuffle);
-                }
+                self.sys_shuffle = on;
+                self.apply_sys_mode(cx);
             }
             MediaCommand::SetRepeat(one) => {
-                self.player
-                    .set_mode(if one { PlayMode::SingleLoop } else { PlayMode::ListLoop });
+                self.sys_repeat_one = one;
+                self.apply_sys_mode(cx);
             }
         }
         cx.notify();

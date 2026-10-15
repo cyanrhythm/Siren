@@ -80,6 +80,8 @@ pub(crate) struct PlaylistPage {
     add_input: Entity<InputState>,
     add_open: bool,
     add_results: Vec<Song>,
+    /// 「添加歌曲」搜索代次：连按回车时旧结果据此失效（J7）。
+    add_gen: u64,
     /// 封面裁剪浮层状态。
     crop: Option<CropState>,
     /// 加载代：重载时自增，旧响应据此失效。
@@ -128,6 +130,7 @@ impl PlaylistPage {
             add_input,
             add_open: false,
             add_results: Vec::new(),
+            add_gen: 0,
             crop: None,
             load_gen: 0,
             _filter_sub,
@@ -593,12 +596,31 @@ impl PlaylistPage {
     fn remove_playlist(&mut self, cx: &mut Context<Self>) {
         let client = self.services.client.clone();
         let id = self.id;
+        // 乐观更新：先从「我的歌单」移除。
         self.subscribed = false;
         cx.notify();
         cx.emit(PageEvent::PlaylistChanged);
+        let (tx, rx) = tokio::sync::oneshot::channel();
         self.services.handle.spawn(async move {
-            let _ = siren_core::network::api::playlist_subscribe(&client, id, false).await;
+            let ok = siren_core::network::api::playlist_subscribe(&client, id, false)
+                .await
+                .is_ok();
+            let _ = tx.send(ok);
         });
+        cx.spawn(async move |this, cx| {
+            let ok = rx.await.unwrap_or(false);
+            if !ok {
+                // 云端失败则回滚乐观更新并提示。
+                this.update(cx, |this, cx| {
+                    this.subscribed = true;
+                    this.services.toast_error("移出歌单失败，请重试", cx);
+                    cx.emit(PageEvent::PlaylistChanged);
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
     }
 
     fn open_add(&mut self, cx: &mut Context<Self>) {
@@ -615,6 +637,8 @@ impl PlaylistPage {
         if keyword.is_empty() {
             return;
         }
+        self.add_gen = self.add_gen.wrapping_add(1);
+        let gen = self.add_gen;
         let client = self.services.client.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.services.handle.spawn(async move {
@@ -628,6 +652,10 @@ impl PlaylistPage {
         cx.spawn(async move |this, cx| {
             let songs = rx.await.unwrap_or_default();
             this.update(cx, |this, cx| {
+                // 代次不符：已有更新的搜索，丢弃这次（可能乱序到达的）旧结果。
+                if this.add_gen != gen {
+                    return;
+                }
                 let urls: Vec<String> = songs.iter().map(|s| s.cover_url.clone()).collect();
                 this.add_results = songs;
                 this.services.covers.prefetch(urls, 40.0, cx);

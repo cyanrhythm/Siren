@@ -577,15 +577,35 @@ impl LibraryPage {
         if j < 0 || j as usize >= self.my_playlists.len() {
             return;
         }
+        let j = j as usize;
         let mut items: Vec<Playlist> = self.my_playlists.as_ref().clone();
-        items.swap(i, j as usize);
+        items.swap(i, j);
         let ids: Vec<i64> = items.iter().map(|p| p.id).collect();
         self.my_playlists = Arc::new(items);
         cx.notify();
         let client = self.services.client.clone();
+        let (tx, rx) = tokio::sync::oneshot::channel();
         self.services.handle.spawn(async move {
-            let _ = siren_core::network::api::playlist_order_update(&client, &ids).await;
+            let ok = siren_core::network::api::playlist_order_update(&client, &ids)
+                .await
+                .is_ok();
+            let _ = tx.send(ok);
         });
+        cx.spawn(async move |this, cx| {
+            let ok = rx.await.unwrap_or(false);
+            if !ok {
+                // 云端保存失败则回滚本地顺序并提示，避免显示与云端不一致。
+                this.update(cx, |this, cx| {
+                    let mut items: Vec<Playlist> = this.my_playlists.as_ref().clone();
+                    items.swap(i, j);
+                    this.my_playlists = Arc::new(items);
+                    this.services.toast_error("排序保存失败，请重试", cx);
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
     }
 
     /// 我的歌单列表。

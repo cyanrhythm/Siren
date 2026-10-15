@@ -180,6 +180,8 @@ impl Root {
                         return;
                     }
                     _ => {
+                        // 未知状态码多为中间态/临时异常：仅更新提示并继续轮询，
+                        // 不要永久停止（二维码自身到期会走 800）。
                         let message = if message.is_empty() {
                             format!("扫码异常({code})")
                         } else {
@@ -192,7 +194,7 @@ impl Root {
                             }
                         })
                         .ok();
-                        return;
+                        continue;
                     }
                 }
             }

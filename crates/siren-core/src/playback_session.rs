@@ -54,6 +54,13 @@ impl QueueSession {
         read_json(Self::FILE)
     }
 
+    /// 删除已保存的队列会话（清空队列时调用，避免重启后旧队列“复活”）。
+    pub fn clear() {
+        if let Some(path) = config_path(Self::FILE) {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+
     /// 写回磁盘。
     pub fn save(&self) {
         write_json(Self::FILE, self);

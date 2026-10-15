@@ -88,8 +88,8 @@ pub use single_instance::ensure_single_instance;
 pub use tray::{create_tray, poll_tray_events, Tray as PlatformTray, TrayEvent};
 pub use window_system::{
     hide_window, is_window_minimized, is_window_visible, move_window, primary_work_area, primary_work_area_physical,
-    restore_window, set_app_user_model_id, set_window_icon, show_window, toggle_window, window_hwnd,
-    window_physical_rect,
+    restore_window, set_app_user_model_id, set_window_icon, show_window, toggle_window, virtual_screen_physical,
+    window_hwnd, window_physical_rect,
 };
 
 // ── 五、编译期平台断言 ──────────────────────────────────────────────

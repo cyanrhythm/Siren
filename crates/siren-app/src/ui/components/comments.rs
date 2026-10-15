@@ -27,6 +27,8 @@ impl Root {
         };
         self.comments.floor_open = None;
         self.comments.floor_items.clear();
+        self.comments.song_id = self.playback.read(cx).state().song.as_ref().map(|s| s.id);
+        self.comments.loading_more = false;
         self.comments.open = true;
         let avatars: Vec<String> = page.comments.iter().map(|c| c.user.avatar_url.clone()).collect();
         self.services.covers.prefetch(avatars, 32.0, cx);
@@ -39,10 +41,16 @@ impl Root {
     }
 
     fn load_more_comments(&mut self, cx: &mut Context<Self>) {
+        // 在途守卫：连点不重复分页。
+        if self.comments.loading_more {
+            return;
+        }
         let Some(song) = self.playback.read(cx).state().song else {
             return;
         };
-        let tid = api::comment_thread_id(song.id);
+        let owner = song.id;
+        self.comments.loading_more = true;
+        let tid = api::comment_thread_id(owner);
         let cursor = self.comments.cursor.clone();
         let client = self.services.client.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -53,6 +61,12 @@ impl Root {
         cx.spawn(async move |this, cx| {
             let page = rx.await.ok().flatten();
             this.update(cx, |this, cx| {
+                this.comments.loading_more = false;
+                // 归属校验：期间切歌则丢弃，避免新旧歌评论混列表。
+                if this.comments.song_id != Some(owner) {
+                    cx.notify();
+                    return;
+                }
                 if let Some(page) = page {
                     let avatars: Vec<String> = page.comments.iter().map(|c| c.user.avatar_url.clone()).collect();
                     this.comments.items.extend(page.comments);
@@ -107,7 +121,8 @@ impl Root {
         let Some(song) = self.playback.read(cx).state().song else {
             return;
         };
-        let tid = api::comment_thread_id(song.id);
+        let owner = song.id;
+        let tid = api::comment_thread_id(owner);
         let client = self.services.client.clone();
         self.comments.floor_open = Some(parent_id);
         self.comments.floor_items.clear();
@@ -120,6 +135,10 @@ impl Root {
         cx.spawn(async move |this, cx| {
             let page = rx.await.ok().flatten();
             this.update(cx, |this, cx| {
+                // 归属校验：期间切歌则丢弃楼层结果。
+                if this.comments.song_id != Some(owner) || this.comments.floor_open != Some(parent_id) {
+                    return;
+                }
                 if let Some(page) = page {
                     let avatars: Vec<String> = page.comments.iter().map(|c| c.user.avatar_url.clone()).collect();
                     this.comments.floor_items = page.comments;

@@ -32,6 +32,10 @@ impl WindowSystem for WindowsWindowSystem {
         display::primary_work_area_physical()
     }
 
+    fn virtual_screen_physical(&self) -> Option<(i32, i32, i32, i32)> {
+        display::virtual_screen_physical()
+    }
+
     fn window_physical_rect(&self, hwnd: u64) -> Option<(i32, i32, i32, i32)> {
         display::window_physical_rect(hwnd)
     }

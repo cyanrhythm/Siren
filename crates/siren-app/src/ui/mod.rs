@@ -295,6 +295,10 @@ pub(crate) struct LoginDialogState {
 #[derive(Default)]
 pub(crate) struct CommentsPanelState {
     pub(crate) open: bool,
+    /// 面板归属的歌曲 id：切歌后据此重置/校验，避免新旧评论混列表（J6）。
+    pub(crate) song_id: Option<i64>,
+    /// 「加载更多」是否在途：防止连点重复分页（J6）。
+    pub(crate) loading_more: bool,
     pub(crate) items: Vec<siren_core::model::CommentItem>,
     pub(crate) total: i64,
     pub(crate) has_more: bool,
@@ -366,6 +370,12 @@ pub struct Root {
     ops: PlaylistOpsState,
     _subs: Vec<Subscription>,
     _search_sub: Subscription,
+    /// 详情页订阅：按路由持有，替换/离开时 drop，避免只增不减（J3）。
+    playlist_sub: Option<Subscription>,
+    album_sub: Option<Subscription>,
+    artist_sub: Option<Subscription>,
+    profile_sub: Option<Subscription>,
+    account_sub: Option<Subscription>,
 }
 
 impl Root {
@@ -549,6 +559,11 @@ impl Root {
                 },
                 _subs: subs,
                 _search_sub,
+                playlist_sub: None,
+                album_sub: None,
+                artist_sub: None,
+                profile_sub: None,
+                account_sub: None,
             }
         });
         if std::env::var("SIREN_START").ok().as_deref() == Some("artist") {
@@ -605,6 +620,11 @@ impl Root {
             if let Some(song) = &song {
                 self.services.covers.prefetch([song.cover_url.clone()], 56.0, cx);
                 self.services.covers.prefetch([song.cover_url.clone()], 512.0, cx);
+            }
+            // 切歌：评论面板归属旧歌时关闭，避免新旧歌评论混列表（J6）。
+            if self.comments.open && self.comments.song_id != id {
+                self.comments.open = false;
+                self.comments.loading_more = false;
             }
         }
         // 队列封面：面板打开且队列结构变化时预取一次（不在渲染路径里每帧发起网络）。
@@ -822,7 +842,7 @@ impl Root {
         let sub = cx.subscribe(&page, |root: &mut Root, _e, ev: &PageEvent, cx| {
             root.on_page_event(ev, cx)
         });
-        self._subs.push(sub);
+        self.playlist_sub = Some(sub);
         self.playlist_page = Some(page);
         cx.notify();
     }
@@ -833,7 +853,7 @@ impl Root {
         let sub = cx.subscribe(&page, |root: &mut Root, _e, ev: &PageEvent, cx| {
             root.on_page_event(ev, cx)
         });
-        self._subs.push(sub);
+        self.album_sub = Some(sub);
         self.album_page = Some(page);
         cx.notify();
     }
@@ -844,7 +864,7 @@ impl Root {
         let sub = cx.subscribe(&page, |root: &mut Root, _e, ev: &PageEvent, cx| {
             root.on_page_event(ev, cx)
         });
-        self._subs.push(sub);
+        self.artist_sub = Some(sub);
         self.artist_page = Some(page);
         cx.notify();
     }
@@ -856,7 +876,7 @@ impl Root {
         let sub = cx.subscribe(&page, |root: &mut Root, _e, ev: &PageEvent, cx| {
             root.on_page_event(ev, cx)
         });
-        self._subs.push(sub);
+        self.profile_sub = Some(sub);
         self.profile_page = Some(page);
         cx.notify();
     }
@@ -873,7 +893,7 @@ impl Root {
         let sub = cx.subscribe(&page, |root: &mut Root, _e, ev: &PageEvent, cx| {
             root.on_page_event(ev, cx)
         });
-        self._subs.push(sub);
+        self.account_sub = Some(sub);
         self.account_page = Some(page);
         cx.notify();
     }
@@ -903,6 +923,12 @@ impl Root {
         self.artist_page = None;
         self.profile_page = None;
         self.account_page = None;
+        // 一并注销详情页订阅（否则 `_subs` 只增不减，旧页面被订阅长期持有）。
+        self.playlist_sub = None;
+        self.album_sub = None;
+        self.artist_sub = None;
+        self.profile_sub = None;
+        self.account_sub = None;
     }
 
     /// 退出登录（标题栏头像菜单）：清除 Cookie 并让音乐库回到未登录态。

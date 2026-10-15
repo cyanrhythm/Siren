@@ -98,6 +98,8 @@ pub struct Mpv {
     lib: MpvLib,
     handle: *mut c_void,
     alive: AtomicBool,
+    /// 串行化全部 FFI 调用与 [`Drop`]，消除「检查 alive 之后、调用之前被销毁」的 TOCTOU。
+    lock: std::sync::Mutex<()>,
 }
 
 // mpv 的 client API 线程安全；句柄本身不含 `!Send/!Sync` 数据。
@@ -117,6 +119,7 @@ impl Mpv {
                 lib,
                 handle,
                 alive: AtomicBool::new(true),
+                lock: std::sync::Mutex::new(()),
             };
             // 纯音频：关闭视频与终端输出
             mpv.set_option("vid", "no");
@@ -204,91 +207,95 @@ impl Mpv {
         self.set_property("audio-device", name);
     }
 
+    /// 持锁并确认句柄存活后，用原始句柄执行 `f`；句柄已销毁时返回 `None`。
+    ///
+    /// 所有触碰 `handle` 的 FFI 都经此进入，与 [`Drop`] 互斥，杜绝 UAF / TOCTOU。
+    fn with_handle<R>(&self, f: impl FnOnce(*mut c_void) -> R) -> Option<R> {
+        let _guard = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+        if !self.alive.load(Ordering::SeqCst) {
+            return None;
+        }
+        Some(f(self.handle))
+    }
+
     pub fn set_option(&self, name: &str, value: &str) {
         let (Ok(name), Ok(value)) = (CString::new(name), CString::new(value)) else {
             return;
         };
-        unsafe {
-            (self.lib.set_option_string)(self.handle, name.as_ptr(), value.as_ptr());
-        }
+        let _ = self.with_handle(|h| unsafe {
+            (self.lib.set_option_string)(h, name.as_ptr(), value.as_ptr());
+        });
     }
 
     pub fn set_property(&self, name: &str, value: &str) {
-        if !self.alive.load(Ordering::Relaxed) {
-            return;
-        }
         let (Ok(name), Ok(value)) = (CString::new(name), CString::new(value)) else {
             return;
         };
-        unsafe {
-            (self.lib.set_property_string)(self.handle, name.as_ptr(), value.as_ptr());
-        }
+        let _ = self.with_handle(|h| unsafe {
+            (self.lib.set_property_string)(h, name.as_ptr(), value.as_ptr());
+        });
     }
 
     fn get_property_double(&self, name: &str) -> Option<f64> {
-        if !self.alive.load(Ordering::Relaxed) {
-            return None;
-        }
         let name = CString::new(name).ok()?;
-        let mut value: c_double = 0.0;
-        let rc = unsafe {
-            (self.lib.get_property)(
-                self.handle,
-                name.as_ptr(),
-                MPV_FORMAT_DOUBLE,
-                &mut value as *mut c_double as *mut c_void,
-            )
-        };
-        (rc >= 0).then_some(value)
+        self.with_handle(|h| {
+            let mut value: c_double = 0.0;
+            let rc = unsafe {
+                (self.lib.get_property)(
+                    h,
+                    name.as_ptr(),
+                    MPV_FORMAT_DOUBLE,
+                    &mut value as *mut c_double as *mut c_void,
+                )
+            };
+            (rc >= 0).then_some(value)
+        })
+        .flatten()
     }
 
     fn get_property_flag(&self, name: &str) -> Option<bool> {
-        if !self.alive.load(Ordering::Relaxed) {
-            return None;
-        }
         let name = CString::new(name).ok()?;
-        let mut value: c_int = 0;
-        let rc = unsafe {
-            (self.lib.get_property)(
-                self.handle,
-                name.as_ptr(),
-                MPV_FORMAT_FLAG,
-                &mut value as *mut c_int as *mut c_void,
-            )
-        };
-        (rc >= 0).then_some(value != 0)
+        self.with_handle(|h| {
+            let mut value: c_int = 0;
+            let rc = unsafe {
+                (self.lib.get_property)(
+                    h,
+                    name.as_ptr(),
+                    MPV_FORMAT_FLAG,
+                    &mut value as *mut c_int as *mut c_void,
+                )
+            };
+            (rc >= 0).then_some(value != 0)
+        })
+        .flatten()
     }
 
     fn get_property_string(&self, name: &str) -> Option<String> {
-        if !self.alive.load(Ordering::Relaxed) {
-            return None;
-        }
         let name = CString::new(name).ok()?;
-        let ptr = unsafe { (self.lib.get_property_string)(self.handle, name.as_ptr()) };
-        if ptr.is_null() {
-            return None;
-        }
-        let text = unsafe { CStr::from_ptr(ptr) }.to_string_lossy().into_owned();
-        unsafe { (self.lib.free)(ptr as *mut c_void) };
-        Some(text)
+        self.with_handle(|h| {
+            let ptr = unsafe { (self.lib.get_property_string)(h, name.as_ptr()) };
+            if ptr.is_null() {
+                return None;
+            }
+            let text = unsafe { CStr::from_ptr(ptr) }.to_string_lossy().into_owned();
+            unsafe { (self.lib.free)(ptr as *mut c_void) };
+            Some(text)
+        })
+        .flatten()
     }
 
     /// 执行 libmpv 命令；返回返回码是否成功（失败带上 `mpv_error_string`）。
     fn command(&self, args: &[&str]) -> Result<(), String> {
-        if !self.alive.load(Ordering::Relaxed) {
-            return Err("引擎已销毁".to_string());
-        }
         let cstrings: Vec<CString> = args.iter().filter_map(|a| CString::new(*a).ok()).collect();
         if cstrings.len() != args.len() {
             return Err("命令参数含 NUL".to_string());
         }
         let mut ptrs: Vec<*const c_char> = cstrings.iter().map(|c| c.as_ptr()).collect();
         ptrs.push(ptr::null());
-        let rc = unsafe { (self.lib.command)(self.handle, ptrs.as_ptr()) };
-        if rc < 0 {
-            Err(self.error(rc))
-        } else {
-            Ok(())
+        match self.with_handle(|h| unsafe { (self.lib.command)(h, ptrs.as_ptr()) }) {
+            None => Err("引擎已销毁".to_string()),
+            Some(rc) if rc < 0 => Err(self.error(rc)),
+            Some(_) => Ok(()),
         }
     }
 
@@ -305,6 +312,8 @@ impl Mpv {
 
 impl Drop for Mpv {
     fn drop(&mut self) {
+        // 持锁销毁：与 `with_handle` 互斥，确保不会在 FFI 调用中途释放句柄。
+        let _guard = self.lock.lock().unwrap_or_else(|e| e.into_inner());
         if self.alive.swap(false, Ordering::SeqCst) {
             unsafe {
                 (self.lib.terminate_destroy)(self.handle);

@@ -5,9 +5,10 @@ use windows::Win32::UI::HiDpi::{
     GetDpiForSystem, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetWindowRect, IsIconic, IsWindowVisible, SetForegroundWindow, SetWindowPos, ShowWindowAsync,
-    SystemParametersInfoW, SET_WINDOW_POS_FLAGS, SPI_GETWORKAREA, SWP_NOACTIVATE, SWP_NOZORDER, SW_HIDE, SW_RESTORE,
-    SW_SHOW, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+    GetSystemMetrics, GetWindowRect, IsIconic, IsWindowVisible, SetForegroundWindow, SetWindowPos, ShowWindowAsync,
+    SystemParametersInfoW, SET_WINDOW_POS_FLAGS, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
+    SM_YVIRTUALSCREEN, SPI_GETWORKAREA, SWP_NOACTIVATE, SWP_NOZORDER, SW_HIDE, SW_RESTORE, SW_SHOW,
+    SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
 };
 
 fn raw_work_area() -> Option<RECT> {
@@ -34,6 +35,17 @@ fn raw_work_area() -> Option<RECT> {
 pub fn primary_work_area_physical() -> Option<(i32, i32, i32, i32)> {
     let rect = raw_work_area()?;
     Some((rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top))
+}
+
+/// 所有显示器合成的虚拟屏幕（物理坐标）`(x, y, w, h)`。
+///
+/// 用于判断恢复的窗口位置是否仍落在可见范围内（显示器拔除/改分辨率后可能落到屏幕外）。
+pub fn virtual_screen_physical() -> Option<(i32, i32, i32, i32)> {
+    let x = unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) };
+    let y = unsafe { GetSystemMetrics(SM_YVIRTUALSCREEN) };
+    let w = unsafe { GetSystemMetrics(SM_CXVIRTUALSCREEN) };
+    let h = unsafe { GetSystemMetrics(SM_CYVIRTUALSCREEN) };
+    (w > 0 && h > 0).then_some((x, y, w, h))
 }
 
 /// 主显示器工作区（排除任务栏）的逻辑坐标 `(x, y, w, h)`。
