@@ -67,15 +67,12 @@ impl Settings {
             .unwrap_or_default()
     }
 
-    /// 写回磁盘（含目录创建；失败静默）。
+    /// 写回磁盘（原子替换；失败静默）。
     pub fn save(&self) {
         let Some(path) = settings_path() else {
             return;
         };
-        if let Some(dir) = path.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        let _ = std::fs::write(&path, serde_json::to_string_pretty(self).unwrap_or_default());
+        crate::persist::write_atomic(&path, &serde_json::to_string_pretty(self).unwrap_or_default());
     }
 
     /// 音质档位（缺省为默认档）。

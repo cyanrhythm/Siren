@@ -336,7 +336,7 @@ pub async fn update_playlist_cover(
         .get("docId")
         .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
         .unwrap_or_default();
-    if bucket.is_empty() || object_key.is_empty() || doc_id <= 0 {
+    if bucket.is_empty() || object_key.is_empty() || nos_token.is_empty() || doc_id <= 0 {
         return Err(Error::Biz {
             code: 0,
             message: "NOS 凭证获取失败".into(),
@@ -403,11 +403,19 @@ pub async fn playlist_create(client: &NeteaseClient, name: &str, privacy: i64) -
     let body = json!({ "name": name, "privacy": privacy, "type": "NORMAL" });
     let value = client.eapi_post(path::PLAYLIST_CREATE, &body).await?;
     validate(&value)?;
-    Ok(value
+    let id = value
         .get("id")
         .or_else(|| value.get("playlist").and_then(|p| p.get("id")))
         .and_then(Value::as_i64)
-        .unwrap_or_default())
+        .unwrap_or_default();
+    // 接口成功但未返回 id：视为失败，避免上层拿到 0 当作有效歌单。
+    if id <= 0 {
+        return Err(Error::Biz {
+            code: 0,
+            message: "新建歌单失败：接口未返回歌单 id".into(),
+        });
+    }
+    Ok(id)
 }
 
 /// 歌曲百科 + 制作人（WEAPI）。
@@ -541,6 +549,8 @@ pub async fn check_nickname(client: &NeteaseClient, nickname: &str) -> Result<bo
     let value = client
         .eapi_post(path::NICKNAME_CHECK, &json!({ "nickname": nickname }))
         .await?;
+    // 校验业务码：否则接口报错（如未登录）会被当成「未被占用」。
+    validate(&value)?;
     Ok(value.get("duplicated").and_then(Value::as_bool).unwrap_or(false))
 }
 
@@ -769,7 +779,12 @@ pub async fn artist_follow(client: &NeteaseClient, id: i64, follow: bool) -> Res
 pub async fn refresh_login(client: &NeteaseClient) -> Result<Option<String>> {
     let (value, cookie) = client.weapi_post_with_cookie(path::LOGIN_REFRESH, &json!({})).await?;
     validate(&value)?;
-    Ok(cookie.filter(|c| c.contains("MUSIC_U=")))
+    let Some(refresh) = cookie.filter(|c| c.contains("MUSIC_U=")) else {
+        return Ok(None);
+    };
+    // 按键合并：服务端可能只重发 MUSIC_U，需保留旧 __csrf 等。
+    let merged = crate::network::client::merge_cookies(client.cookie().as_deref(), &refresh);
+    Ok(Some(merged))
 }
 
 /// 歌词（EAPI `/eapi/song/lyric/v1`）：优先逐字（yrc），合并译文（tlyric）。

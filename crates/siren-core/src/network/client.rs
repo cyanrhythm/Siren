@@ -9,6 +9,7 @@
 use reqwest::Client;
 use serde_json::Value;
 use std::sync::{Arc, RwLock};
+use std::time::Duration;
 
 use crate::crypto;
 use crate::error::Result;
@@ -31,8 +32,14 @@ impl Default for NeteaseClient {
 
 impl NeteaseClient {
     pub fn new() -> Self {
+        // 连接 10s、整体 30s 超时：接口挂起时请求会失败而非永久 pending（避免 UI 任务卡死）。
+        let http = Client::builder()
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|_| Client::new());
         Self {
-            http: Client::new(),
+            http,
             cookie: Arc::new(RwLock::new(None)),
             real_ip: None,
         }
@@ -183,6 +190,8 @@ impl NeteaseClient {
     }
 
     async fn parse_json(response: reqwest::Response) -> Result<Value> {
+        // 先校验状态码：502/风控 HTML、404 等不应被当成 JSON 解析。
+        let response = response.error_for_status()?;
         let text = response.text().await?;
         Ok(serde_json::from_str(&text)?)
     }
@@ -195,9 +204,42 @@ impl NeteaseClient {
             .header("User-Agent", interceptor::PC_USER_AGENT)
             .send()
             .await?;
+        // 404/风控返回的 HTML 字节不应被当作封面图片。
+        let response = response.error_for_status()?;
         let bytes = response.bytes().await?;
         Ok(bytes.to_vec())
     }
+}
+
+/// 按键合并两份 Cookie：`existing` 打底，`refresh` 中出现的键覆盖之。
+///
+/// 用于 `refresh_login`：服务端续期通常只重发 `MUSIC_U`，需保留旧 `__csrf` 等，
+/// 否则整体替换后写操作接口可能被拒。
+pub fn merge_cookies(existing: Option<&str>, refresh: &str) -> String {
+    let mut order: Vec<String> = Vec::new();
+    let mut map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut apply = |text: &str| {
+        for pair in text.split(';') {
+            let pair = pair.trim();
+            if pair.is_empty() {
+                continue;
+            }
+            let key = pair.split('=').next().unwrap_or(pair).trim().to_string();
+            if !map.contains_key(&key) {
+                order.push(key.clone());
+            }
+            map.insert(key, pair.to_string());
+        }
+    };
+    if let Some(existing) = existing {
+        apply(existing);
+    }
+    apply(refresh);
+    order
+        .iter()
+        .filter_map(|k| map.get(k).cloned())
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 /// 汇总响应头的 `Set-Cookie` 为一条 Cookie 串（仅取 `name=value`）。

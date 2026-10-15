@@ -23,6 +23,7 @@ pub mod logging;
 pub mod lyrics;
 pub mod model;
 pub mod network;
+pub mod persist;
 pub mod playback_session;
 pub mod player;
 pub mod recent_playlists;

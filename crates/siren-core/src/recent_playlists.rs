@@ -69,8 +69,5 @@ pub fn record_recent_playlist(item: LocalRecentPlaylist) {
     let Some(path) = store_path() else {
         return;
     };
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    let _ = std::fs::write(&path, serde_json::to_string(&items).unwrap_or_default());
+    crate::persist::write_atomic(&path, &serde_json::to_string(&items).unwrap_or_default());
 }

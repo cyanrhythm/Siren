@@ -44,6 +44,17 @@ pub(crate) struct LibraryPage {
 
 impl EventEmitter<PageEvent> for LibraryPage {}
 
+/// 账号刷新结果：区分有效账号 / 会话过期 / 网络失败。
+enum AccountOutcome {
+    Ok {
+        uid: i64,
+        nickname: Option<String>,
+        avatar: String,
+    },
+    Expired,
+    Network,
+}
+
 impl LibraryPage {
     pub(crate) fn new(window: &mut Window, cx: &mut Context<Self>, services: Services) -> Self {
         let login_input = cx.new(|cx| InputState::new(window, cx).placeholder("粘贴 MUSIC_U 或完整 Cookie"));
@@ -102,42 +113,61 @@ impl LibraryPage {
         let gen = self.account_gen;
         let had_cookie = self.services.client.cookie().is_some();
         let client = self.services.client.clone();
-        let (tx, rx) = tokio::sync::oneshot::channel();
+        let (tx, rx) = tokio::sync::oneshot::channel::<AccountOutcome>();
         self.services.handle.spawn(async move {
-            let mut account = siren_core::network::api::account(&client).await.ok();
-            // 账号校验失败（未登录/会话过期）时尝试续期一次
+            // 区分「会话过期」与「网络失败」：后者不应清除本地登录态。
+            let mut network_err = false;
+            let mut account = match siren_core::network::api::account(&client).await {
+                Ok(v) => Some(v),
+                Err(_) => {
+                    network_err = true;
+                    None
+                }
+            };
+            // 账号校验失败（未登录/会话过期/网络失败）时尝试续期一次
             if account
                 .as_ref()
                 .and_then(siren_core::network::api::account_uid)
                 .is_none()
             {
-                if let Ok(Some(cookie)) = siren_core::network::api::refresh_login(&client).await {
-                    client.set_cookie(Some(cookie.clone()));
-                    siren_core::auth::save_cookie(&cookie);
-                    account = siren_core::network::api::account(&client).await.ok();
+                match siren_core::network::api::refresh_login(&client).await {
+                    Ok(Some(cookie)) => {
+                        client.set_cookie(Some(cookie.clone()));
+                        siren_core::auth::save_cookie(&cookie);
+                        match siren_core::network::api::account(&client).await {
+                            Ok(v) => {
+                                account = Some(v);
+                                network_err = false;
+                            }
+                            Err(_) => network_err = true,
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(_) => network_err = true,
                 }
             }
-            let _ = tx.send(account);
+            let outcome = match account {
+                Some(v) if siren_core::network::api::account_uid(&v).is_some() => AccountOutcome::Ok {
+                    uid: siren_core::network::api::account_uid(&v).unwrap_or_default(),
+                    nickname: siren_core::network::api::account_nickname(&v),
+                    avatar: siren_core::network::api::account_avatar(&v).unwrap_or_default(),
+                },
+                _ if network_err => AccountOutcome::Network,
+                _ => AccountOutcome::Expired,
+            };
+            let _ = tx.send(outcome);
         });
         cx.notify();
         cx.spawn(async move |this, cx| {
-            let account = rx.await.ok().flatten();
+            let outcome = rx.await.unwrap_or(AccountOutcome::Network);
             this.update(cx, |this, cx| {
                 // 代次不符：期间已 logout/重新刷新，丢弃这次响应。
                 if this.account_gen != gen {
                     return;
                 }
-                let avatar = account
-                    .as_ref()
-                    .and_then(siren_core::network::api::account_avatar)
-                    .unwrap_or_default();
-                let profile = account.and_then(|v| {
-                    siren_core::network::api::account_uid(&v)
-                        .map(|uid| (uid, siren_core::network::api::account_nickname(&v)))
-                });
-                match profile {
-                    Some((uid, nick)) => {
-                        let nickname: SharedString = nick.unwrap_or_else(|| "已登录".to_string()).into();
+                match outcome {
+                    AccountOutcome::Ok { uid, nickname, avatar } => {
+                        let nickname: SharedString = nickname.unwrap_or_else(|| "已登录".to_string()).into();
                         Session::set(
                             cx,
                             Some(Account {
@@ -154,7 +184,7 @@ impl LibraryPage {
                         this.tab = LibraryTab::Playlist;
                         this.load_my_playlists(cx);
                     }
-                    None => {
+                    AccountOutcome::Expired => {
                         Session::set(cx, None);
                         if announce {
                             this.services.toast_error("登录失败，请检查 Cookie", cx);
@@ -162,6 +192,10 @@ impl LibraryPage {
                             this.services.toast_error("登录已过期，请重新登录", cx);
                         }
                         cx.emit(PageEvent::LoggedOut);
+                    }
+                    AccountOutcome::Network => {
+                        // 网络失败：保留本地会话，只提示，不误报“登录已过期”。
+                        this.services.toast_error("网络错误，请稍后重试", cx);
                     }
                 }
                 cx.notify();

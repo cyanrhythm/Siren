@@ -70,10 +70,12 @@ pub fn eapi_cookie_weblog(stored: Option<&str>) -> String {
 }
 
 fn eapi_cookie_with_os(stored: Option<&str>, os: &str) -> String {
+    // 按 `;` 拆分并 trim：兼容无空格格式（如 `MUSIC_U=1;os=pc`），否则 os= 过滤失效。
     let filtered = stored
         .unwrap_or("")
-        .split("; ")
-        .filter(|p| !p.trim().is_empty() && !p.trim().starts_with("os="))
+        .split(';')
+        .map(str::trim)
+        .filter(|p| !p.is_empty() && !p.starts_with("os="))
         .collect::<Vec<_>>()
         .join("; ");
     if filtered.is_empty() {
@@ -130,6 +132,16 @@ mod tests {
     fn eapi_cookie_filters_os() {
         let cookie = eapi_cookie(Some("MUSIC_U=1; os=pc"));
         assert!(cookie.contains("MUSIC_U=1"));
+        assert!(cookie.contains("os=android"));
+        assert!(!cookie.contains("os=pc"));
+    }
+
+    #[test]
+    fn eapi_cookie_filters_os_without_space() {
+        // 无空格分隔也要能剔除历史 os=。
+        let cookie = eapi_cookie(Some("MUSIC_U=1;os=pc;__csrf=x"));
+        assert!(cookie.contains("MUSIC_U=1"));
+        assert!(cookie.contains("__csrf=x"));
         assert!(cookie.contains("os=android"));
         assert!(!cookie.contains("os=pc"));
     }

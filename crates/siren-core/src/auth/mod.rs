@@ -29,17 +29,25 @@ pub fn load_cookie() -> Option<String> {
         .map(str::to_string)
 }
 
-/// 保存 Cookie（写入失败静默忽略，不阻断登录流程）。
+/// 保存 Cookie（原子写；写入失败静默忽略，不阻断登录流程）。
 pub fn save_cookie(cookie: &str) {
     let Some(path) = session_path() else {
         return;
     };
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
     let body = serde_json::json!({ "cookie": cookie });
-    let _ = std::fs::write(&path, serde_json::to_string_pretty(&body).unwrap_or_default());
+    crate::persist::write_atomic(&path, &serde_json::to_string_pretty(&body).unwrap_or_default());
+    harden_permissions(&path);
 }
+
+/// 收紧会话文件权限（仅类 Unix；文件含 `MUSIC_U`，不应被同机其他用户读取）。
+#[cfg(unix)]
+fn harden_permissions(path: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+}
+
+#[cfg(not(unix))]
+fn harden_permissions(_path: &std::path::Path) {}
 
 /// 清除已保存的 Cookie。
 pub fn clear_cookie() {

@@ -23,10 +23,7 @@ fn write_json<T: Serialize>(name: &str, value: &T) {
     let Some(path) = config_path(name) else {
         return;
     };
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    let _ = std::fs::write(&path, serde_json::to_string(value).unwrap_or_default());
+    crate::persist::write_atomic(&path, &serde_json::to_string(value).unwrap_or_default());
 }
 
 fn read_json<T: for<'de> Deserialize<'de>>(name: &str) -> Option<T> {
