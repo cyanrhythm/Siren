@@ -100,36 +100,32 @@ impl CoverLoader {
                 continue;
             }
 
+            // 抓取、写缓存、清 inflight 全在 tokio 任务里完成：不依赖发起方的页面实体存活，
+            // 页面先销毁导致通知任务被取消时也不会把键永久留在 inflight（否则该封面永不加载）。
             let client = self.client.clone();
-            let (tx, rx) = tokio::sync::oneshot::channel::<(Option<Arc<Image>>, Option<Rgba>)>();
-            let fetch_key = key.clone();
-            let base = url.split('?').next().unwrap_or(&url).to_string();
-            self.handle.spawn(async move {
-                match client.get_bytes(&fetch_key).await {
-                    Ok(bytes) => {
-                        let color = dominant_color(&bytes);
-                        let image = guess_format(&bytes).map(|fmt| Arc::new(Image::from_bytes(fmt, bytes)));
-                        let _ = tx.send((image, color));
-                    }
-                    Err(_) => {
-                        let _ = tx.send((None, None));
-                    }
-                }
-            });
-
             let cache = self.cache.clone();
             let colors = self.colors.clone();
             let inflight = self.inflight.clone();
-            cx.spawn(async move |this, cx| {
-                let (image, color) = rx.await.unwrap_or((None, None));
+            let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+            let base = url.split('?').next().unwrap_or(&url).to_string();
+            self.handle.spawn(async move {
+                if let Ok(bytes) = client.get_bytes(&key).await {
+                    if let Some(color) = dominant_color(&bytes) {
+                        colors.lock().unwrap().insert(base, color);
+                    }
+                    if let Some(fmt) = guess_format(&bytes) {
+                        let image = Arc::new(Image::from_bytes(fmt, bytes));
+                        cache.lock().unwrap().insert(key.clone(), image);
+                    }
+                }
                 inflight.lock().unwrap().remove(&key);
-                if let Some(color) = color {
-                    colors.lock().unwrap().insert(base, color);
-                }
-                if let Some(image) = image {
-                    cache.lock().unwrap().insert(key, image);
-                    this.update(cx, |_this, cx| cx.notify()).ok();
-                }
+                let _ = tx.send(());
+            });
+
+            // 仅用于完成后通知发起方重绘（发起方可能已销毁，忽略即可）。
+            cx.spawn(async move |this, cx| {
+                let _ = rx.await;
+                this.update(cx, |_this, cx| cx.notify()).ok();
             })
             .detach();
         }
