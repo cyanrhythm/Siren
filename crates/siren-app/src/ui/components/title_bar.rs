@@ -5,6 +5,10 @@
 //! 拖动区只放在**空白 spacer**上（`WindowControlArea::Drag`）；窗口按钮各自
 //! `Min/Max/Close`。若把 Drag 设在整条容器上，父元素命中区会盖住按钮（命中测试
 //! 返回第一个匹配的 area），导致最小化/最大化/关闭点击无反应。
+//!
+//! Windows 下按钮点击由系统按 NC 区域处理（`window_control_area`）；Linux 请求
+//! 客户端装饰（CSD）后，最小化/最大化/关闭按钮、空白区拖动（`start_window_move`）
+//! 与双击最大化均由这里用 GPUI 窗口 API 执行（见 `siren_platform::window` 的 CSD 说明）。
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonCustomVariant, ButtonVariants};
@@ -18,13 +22,21 @@ use super::super::{icon, PageEvent, Root, Route};
 use crate::theme;
 
 impl Root {
-    pub(crate) fn title_bar(&self, weak: WeakEntity<Self>, vw: f32, cx: &App) -> impl IntoElement {
+    pub(crate) fn title_bar(
+        &self,
+        weak: WeakEntity<Self>,
+        vw: f32,
+        client_decorated: bool,
+        cx: &App,
+    ) -> impl IntoElement {
         let is_home = matches!(self.route(), Route::Home);
 
         let weak_back = weak.clone();
         let weak_fwd = weak.clone();
         let weak_home = weak.clone();
         let weak_account = weak.clone();
+        // CSD 拖动区（按下置位 / 首次移动交给合成器 / 抬起复位）。
+        let weak_drag = weak.clone();
         let weak_search = weak;
 
         // 账号按钮：已登录显示圆形头像，未登录显示人形占位（对齐 Melodia）。
@@ -235,29 +247,81 @@ impl Root {
                     .child(icon(IconName::Download, 18.0, theme::text_gray())),
             )
             .child(account_button)
-            .child(window_button("win-min", IconName::Minus, false, WindowControlArea::Min))
+            .child(window_button(
+                "win-min",
+                IconName::Minus,
+                false,
+                WindowControlArea::Min,
+                |window, _cx| {
+                    window.minimize_window();
+                },
+            ))
             .child(window_button(
                 "win-max",
                 IconName::Square,
                 false,
                 WindowControlArea::Max,
+                |window, _cx| {
+                    window.zoom_window();
+                },
             ))
-            .child(window_button("win-close", IconName::X, true, WindowControlArea::Close));
+            .child(window_button(
+                "win-close",
+                IconName::X,
+                true,
+                WindowControlArea::Close,
+                |window, cx| {
+                    if crate::request_close(window, cx) {
+                        window.remove_window();
+                    }
+                },
+            ));
 
         // 仅空白区可拖动（避免命中区盖住按钮）。
-        // 同时吞掉「双击」：Windows 对 HTCAPTION 的双击会默认最大化窗口，
-        // 这里只在双击时 stop_propagation（单击仍落回系统以启动拖动）。
+        // - Windows（服务端命中测试）：单击落回系统启动拖动；双击时 stop_propagation，
+        //   避免系统对 HTCAPTION 的默认最大化。
+        // - CSD（Linux 自绘装饰）：按下只置位，**首次移动**才把拖动交给合成器
+        //   （对齐 gpui-component `TitleBar`，避免双击的首击误启动移动）；双击最大化/还原。
         let fixed = 84.0 + 472.0 + 224.0;
         let sp = ((vw - 24.0 - fixed) / 2.0).max(0.0);
         let drag = |id: &'static str| {
+            let weak_down = weak_drag.clone();
+            let weak_move = weak_drag.clone();
+            let weak_up = weak_drag.clone();
             div()
                 .id(id)
                 .w(px(sp))
                 .h(px(64.0))
                 .window_control_area(WindowControlArea::Drag)
-                .on_mouse_down(MouseButton::Left, |ev, _window, cx| {
+                .on_mouse_down(MouseButton::Left, move |ev, window, cx| {
+                    if !client_decorated {
+                        if ev.click_count == 2 {
+                            cx.stop_propagation();
+                        }
+                        return;
+                    }
                     if ev.click_count == 2 {
-                        cx.stop_propagation();
+                        // 双击：清掉首击的待拖动标记，最大化/还原。
+                        weak_down.update(cx, |root, _| root.tb_drag_armed = false).ok();
+                        window.zoom_window();
+                    } else {
+                        weak_down.update(cx, |root, _| root.tb_drag_armed = true).ok();
+                    }
+                })
+                .on_mouse_move(move |_ev, window, cx| {
+                    if !client_decorated {
+                        return;
+                    }
+                    let armed = weak_move
+                        .update(cx, |root, _| std::mem::take(&mut root.tb_drag_armed))
+                        .unwrap_or(false);
+                    if armed {
+                        window.start_window_move();
+                    }
+                })
+                .on_mouse_up(MouseButton::Left, move |_ev, _window, cx| {
+                    if client_decorated {
+                        weak_up.update(cx, |root, _| root.tb_drag_armed = false).ok();
                     }
                 })
         };
@@ -276,8 +340,20 @@ impl Root {
     }
 }
 
-/// 窗口控制按钮：最小化 / 最大化 / 关闭（由 OS 处理）。
-fn window_button(id: &'static str, name: IconName, close: bool, area: WindowControlArea) -> impl IntoElement {
+/// 窗口控制按钮：最小化 / 最大化 / 关闭。
+///
+/// - Windows：`window_control_area` 交给系统命中测试（NC 区域），点击由 OS 处理，
+///   `on_click` 不会触发（客户端收不到该区域的鼠标消息）。
+/// - Linux（Wayland/X11）：平台层无命中测试实现（见 `siren_platform::window_system`
+///   的降级契约），点击由 `on_click` 用 GPUI 窗口 API 执行；关闭走统一的
+///   [`crate::request_close`]（托盘可用时隐藏/最小化而非退出）。
+fn window_button(
+    id: &'static str,
+    name: IconName,
+    close: bool,
+    area: WindowControlArea,
+    on_click: impl Fn(&mut Window, &mut App) + 'static,
+) -> impl IntoElement {
     let hover = if close { theme::accent() } else { theme::surface() };
     div()
         .id(id)
@@ -288,6 +364,7 @@ fn window_button(id: &'static str, name: IconName, close: bool, area: WindowCont
         .items_center()
         .justify_center()
         .cursor_pointer()
+        .on_click(move |_ev, window, cx| on_click(window, cx))
         .hover(move |s| s.bg(hover))
         .child(icon(name, 16.0, theme::text_primary()))
 }

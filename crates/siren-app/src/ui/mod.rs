@@ -359,6 +359,8 @@ pub struct Root {
     queue_cover_sig: Option<(usize, Option<usize>, Option<i64>)>,
     /// 播放队列拖动排序的源下标。
     queue_drag_from: Option<usize>,
+    /// 标题栏自绘拖动（CSD）：按下置位，首次移动交给合成器后清除。
+    tb_drag_armed: bool,
     /// 拖动重排的行位移补间：键 → （起始像素偏移, 代次）。
     /// 渲染时把刚换过槽位的行从旧位置平滑滑到新位置（FLIP，对齐 Melodia `animateItem`）。
     drag_flip: std::collections::HashMap<String, (f32, u32)>,
@@ -528,6 +530,7 @@ impl Root {
                 queue_open: false,
                 queue_cover_sig: None,
                 queue_drag_from: None,
+                tb_drag_armed: false,
                 drag_flip: std::collections::HashMap::new(),
                 np: NowPlayingUi {
                     open: true,
@@ -994,7 +997,11 @@ impl Root {
 
 impl Render for Root {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let vw = f32::from(window.viewport_size().width);
+        // CSD（客户端装饰）：合成器不画标题栏，阴影/缩放区由 gpui-kit 的 Root
+        // （gpui-component `window_border`）承担；此处仅做宽度补偿与按实际模式降级。
+        let client_decorated = matches!(window.window_decorations(), Decorations::Client { .. });
+        let pads = gpui_kit::component::window_paddings(window);
+        let vw = f32::from(window.viewport_size().width) - f32::from(pads.left) - f32::from(pads.right);
         let weak = cx.weak_entity();
         let weak_page = cx.weak_entity();
         let weak_login = cx.weak_entity();
@@ -1028,13 +1035,13 @@ impl Render for Root {
         };
         let page_w = (vw - LIBRARY_W - np_w - SHELL_CHROME).max(0.0);
         cx.global_mut::<PageLayout>().page_w = page_w;
-        div()
+        let shell = div()
             .v_flex()
             .relative()
             .size_full()
             .font_family("MiSans")
             .bg(theme::window_bg())
-            .child(self.title_bar(weak.clone(), vw, cx))
+            .child(self.title_bar(weak.clone(), vw, client_decorated, cx))
             .child(
                 div()
                     .flex_1()
@@ -1072,7 +1079,11 @@ impl Render for Root {
             .when_some(delete_overlay, |this, overlay| this.child(overlay))
             .when_some(desc_overlay, |this, overlay| this.child(overlay))
             .when_some(queue_overlay, |this, overlay| this.child(overlay))
-            .child(self.notifications_overlay(cx))
+            .child(self.notifications_overlay(cx));
+        // CSD 的阴影 / 窗口边缘缩放区 / client inset 由 gpui-kit 的 Root
+        // （gpui-component `WindowState` 插件 → `window_border`）统一承担，
+        // 这里只需按 `window_paddings` 扣除内边距做布局补偿（见上方 `vw`）。
+        shell
     }
 }
 
