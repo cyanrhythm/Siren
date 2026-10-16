@@ -161,5 +161,9 @@ pub fn install(cx: &mut App) {
         c.window_border = rgb(0x2A2A2A).into();
         theme.radius = gpui_kit::px(8.0);
         theme.radius_lg = gpui_kit::px(10.0);
+        // 聚焦态只保留 1px 的 ring 色描边（输入框/按钮自带的 `border_1`）。
+        // 开启时 kit 会在边框外再叠一圈 3px、50% 透明的 ring 色（`FOCUS_RING_WIDTH`
+        // / `FOCUS_RING_OPACITY`），视觉上是一圈发虚的红晕——与本项目的扁平风格不符。
+        theme.focus_ring = false;
     });
 }
