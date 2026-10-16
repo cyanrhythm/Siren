@@ -19,6 +19,7 @@ use siren_core::model::Song;
 use super::super::settings_store::SettingsStore;
 use super::super::smooth_scroll::{smooth_scroll, smooth_scroll_offset, smooth_scroll_to};
 use super::super::{cover_placeholder, icon, motion, Root};
+use super::collect::overlay_scrim;
 use super::queue_layout::{reorder_target, row_content_top, GAP, PAD, ROW_H, SECTION_H, STRIDE};
 use crate::theme;
 
@@ -197,63 +198,56 @@ impl Root {
             });
 
         // 「清空队列」确认浮层：压暗面板局部，取消 / 清空（danger）。
-        let confirm =
-            self.queue_clear_open.then(|| {
-                let weak_cancel = weak.clone();
-                let weak_ok = weak.clone();
+        // 遮罩复用 `overlay_scrim`（点遮罩 / Esc 均可关，O0.1）。
+        let confirm = self.queue_clear_open.then(|| {
+            let weak_cancel = weak.clone();
+            let weak_ok = weak.clone();
+            overlay_scrim("queue-clear-confirm", weak, |root: &mut Root, _w, cx| {
+                root.close_queue_clear(cx)
+            })
+            .child(
                 div()
-                    .id("queue-clear-confirm")
-                    .occlude()
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .w_full()
-                    .h_full()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .bg(theme::scrim())
+                    .v_flex()
+                    .w(px(300.0))
+                    .gap(px(theme::spacing::MD))
+                    .rounded(px(theme::RADIUS_LG))
+                    .bg(theme::surface())
+                    .p(px(theme::spacing::LG))
                     .child(
                         div()
-                            .v_flex()
-                            .w(px(300.0))
-                            .gap(px(theme::spacing::MD))
-                            .rounded(px(theme::RADIUS_LG))
-                            .bg(theme::surface())
-                            .p(px(theme::spacing::LG))
-                            .child(
-                                div()
-                                    .text_lg()
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_color(theme::text_primary())
-                                    .child("清空播放队列？"),
-                            )
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(theme::text_gray())
-                                    .child("队列中的所有歌曲都会被移除。"),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .justify_end()
-                                    .gap(px(theme::spacing::SM))
-                                    .child(Button::new("queue-clear-cancel").label("取消").on_click(
-                                        move |_ev, _w, cx| {
-                                            weak_cancel.update(cx, |root, cx| root.close_queue_clear(cx)).ok();
-                                        },
-                                    ))
-                                    .child(Button::new("queue-clear-ok").danger().label("清空").on_click(
-                                        move |_ev, _w, cx| {
-                                            weak_ok.update(cx, |root, cx| root.confirm_queue_clear(cx)).ok();
-                                        },
-                                    )),
-                            ),
+                            .text_lg()
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(theme::text_primary())
+                            .child("清空播放队列？"),
                     )
-                    .into_any_element()
-            });
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(theme::text_gray())
+                            .child("队列中的所有歌曲都会被移除。"),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_end()
+                            .gap(px(theme::spacing::SM))
+                            .child(
+                                Button::new("queue-clear-cancel")
+                                    .label("取消")
+                                    .on_click(move |_ev, _w, cx| {
+                                        weak_cancel.update(cx, |root, cx| root.close_queue_clear(cx)).ok();
+                                    }),
+                            )
+                            .child(Button::new("queue-clear-ok").danger().label("清空").on_click(
+                                move |_ev, _w, cx| {
+                                    weak_ok.update(cx, |root, cx| root.confirm_queue_clear(cx)).ok();
+                                },
+                            )),
+                    ),
+            )
+            .into_any_element()
+        });
 
         // 面板宽与右栏有效宽一致（窗口收窄时随动，见 Root::np_effective_w）。
         let pads = gpui_kit::component::window_paddings(window);

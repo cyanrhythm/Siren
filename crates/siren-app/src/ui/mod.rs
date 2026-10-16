@@ -1197,17 +1197,17 @@ impl Render for Root {
             .then(|| self.comments_overlay(weak_comments, window, cx));
         let weak_create = cx.weak_entity();
         let weak_picker = cx.weak_entity();
-        let create_overlay = self.ops.create_open.then(|| self.create_overlay(weak_create));
+        let create_overlay = self.ops.create_open.then(|| self.create_overlay(weak_create, cx));
         let picker_overlay = self
             .ops
             .picker_song
             .map(|_| self.picker_overlay(weak_picker, window, cx));
         let weak_rename = cx.weak_entity();
         let weak_delete = cx.weak_entity();
-        let rename_overlay = self.ops.rename_pid.map(|_| self.rename_overlay(weak_rename));
+        let rename_overlay = self.ops.rename_pid.map(|_| self.rename_overlay(weak_rename, cx));
         let delete_overlay = self.ops.delete_pid.map(|_| self.delete_overlay(weak_delete));
         let weak_desc = cx.weak_entity();
-        let desc_overlay = self.ops.desc_pid.map(|_| self.desc_overlay(weak_desc));
+        let desc_overlay = self.ops.desc_pid.map(|_| self.desc_overlay(weak_desc, cx));
         let weak_queue = cx.weak_entity();
         let queue_overlay = self.queue_open.then(|| self.queue_overlay(weak_queue, window, cx));
         // 中间列显式分配宽度，规避 gpui `flex_1` 的横向过度伸展。

@@ -1,7 +1,7 @@
 //! 歌单写操作浮层：新建歌单、收藏歌曲到歌单。
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use gpui_kit::base::{ElementExt as _, StyledExt};
 use gpui_kit::component::button::{Button, ButtonVariants};
@@ -16,13 +16,18 @@ use crate::theme::{self, spacing};
 thread_local! {
     /// 各浮层的焦点句柄：懒建后稳定复用，track_focus 依赖它把按键送达浮层根。
     static OVERLAY_FOCUS: RefCell<HashMap<&'static str, FocusHandle>> = RefCell::new(HashMap::new());
+    /// 本次打开已把焦点收到浮层根上的浮层：保证只收一次，不抢浮层内输入框的焦点。
+    static OVERLAY_FOCUS_TAKEN: RefCell<HashSet<&'static str>> = RefCell::new(HashSet::new());
     /// 删除确认浮层点名的歌单名（PlaylistOpsState 在 ui/mod.rs，跨 agent 不便加字段，
     /// 浮层同时只开一个，模块内暂存即可）。
     static DELETE_PNAME: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
 /// 取（或建）某浮层的焦点句柄；open_* 时预热，构建浮层时经 `overlay_focus_cached` 取。
+///
+/// 顺便清掉「本浮层已收过焦点」的标记：下次打开时会重新把焦点收到浮层根上（见 `overlay_scrim`）。
 pub(crate) fn overlay_focus(id: &'static str, cx: &mut App) -> FocusHandle {
+    OVERLAY_FOCUS_TAKEN.with(|set| set.borrow_mut().remove(id));
     OVERLAY_FOCUS.with(|map| map.borrow_mut().entry(id).or_insert_with(|| cx.focus_handle()).clone())
 }
 
@@ -31,13 +36,57 @@ fn overlay_focus_cached(id: &'static str) -> Option<FocusHandle> {
 }
 
 /// 浮层遮罩根：全屏压暗，点遮罩 / Esc 关闭；焦点为空时兜底聚焦浮层根（Esc 才能送达）。
-pub(crate) fn overlay_scrim(
+///
+/// 泛型 `E` 为浮层的 owner——Root 的浮层（新建/加入/重命名/删除/简介/评论）与页面的浮层
+/// （歌单页的移除歌曲/移除歌单/封面裁剪/添加歌曲、队列清空）共用同一实现。
+pub(crate) fn overlay_scrim<E: 'static>(
     id: &'static str,
-    weak: WeakEntity<Root>,
-    close: fn(&mut Root, &mut Window, &mut Context<Root>),
+    weak: WeakEntity<E>,
+    close: impl Fn(&mut E, &mut Window, &mut Context<E>) + Clone + 'static,
+) -> Stateful<Div> {
+    overlay_scrim_with(id, weak, close, theme::scrim())
+}
+
+/// 同 [`overlay_scrim`]，但压暗更重——用于封面裁剪这类需要突出前景的浮层。
+pub(crate) fn overlay_scrim_strong<E: 'static>(
+    id: &'static str,
+    weak: WeakEntity<E>,
+    close: impl Fn(&mut E, &mut Window, &mut Context<E>) + Clone + 'static,
+) -> Stateful<Div> {
+    overlay_scrim_with(id, weak, close, theme::scrim_strong())
+}
+
+/// 同 [`overlay_scrim`]，但打开后把焦点直接落到浮层内的输入框（`inner`），
+/// 用户打开即可输入，无需先点一下输入框（整改清单 O0.2）。
+pub(crate) fn overlay_scrim_focusing<E: 'static>(
+    id: &'static str,
+    weak: WeakEntity<E>,
+    close: impl Fn(&mut E, &mut Window, &mut Context<E>) + Clone + 'static,
+    inner: FocusHandle,
+) -> Stateful<Div> {
+    overlay_scrim_inner(id, weak, close, theme::scrim(), Some(inner))
+}
+
+fn overlay_scrim_with<E: 'static>(
+    id: &'static str,
+    weak: WeakEntity<E>,
+    close: impl Fn(&mut E, &mut Window, &mut Context<E>) + Clone + 'static,
+    scrim: Rgba,
+) -> Stateful<Div> {
+    overlay_scrim_inner(id, weak, close, scrim, None)
+}
+
+fn overlay_scrim_inner<E: 'static>(
+    id: &'static str,
+    weak: WeakEntity<E>,
+    close: impl Fn(&mut E, &mut Window, &mut Context<E>) + Clone + 'static,
+    scrim: Rgba,
+    inner: Option<FocusHandle>,
 ) -> Stateful<Div> {
     let weak_click = weak.clone();
     let weak_esc = weak;
+    let close_click = close.clone();
+    let close_esc = close;
     let mut root = div()
         .id(id)
         .occlude()
@@ -49,24 +98,29 @@ pub(crate) fn overlay_scrim(
         .flex()
         .items_center()
         .justify_center()
-        .bg(theme::scrim())
+        .bg(scrim)
         .on_click(move |ev: &ClickEvent, window, cx| {
             // 只响应鼠标左键；浮层根聚焦时 Enter/Space 产生的键盘 click 不关浮层。
             let on_scrim = matches!(ev, ClickEvent::Mouse(e) if e.up.button == MouseButton::Left);
             if on_scrim {
-                weak_click.update(cx, |root, cx| close(root, window, cx)).ok();
+                weak_click.update(cx, |entity, cx| close_click(entity, window, cx)).ok();
             }
         })
         .on_key_down(move |ev: &KeyDownEvent, window, cx| {
             if ev.keystroke.key == "escape" {
-                weak_esc.update(cx, |root, cx| close(root, window, cx)).ok();
+                weak_esc.update(cx, |entity, cx| close_esc(entity, window, cx)).ok();
                 cx.stop_propagation();
             }
         })
         .on_prepaint(move |_, window, cx| {
-            // 打开后若无焦点（点按钮不聚焦），兜底聚焦浮层根，Esc 才能送达。
-            let focus = overlay_focus(id, cx);
-            if window.focused(cx).is_none() {
+            // 打开后**第一帧**把焦点收到浮层根上（或浮层内的输入框），Esc 才能送达。
+            //
+            // 不能只在「当前无焦点」时收：kit Button 按下会 `prevent_default` 且不夺焦，
+            // 若打开浮层前焦点在标题栏搜索框，焦点就一直留在那里，浮层根的 `on_key_down`
+            // 收不到 Esc（整改清单 O0.2）。这里用「本浮层是否已收过焦点」判据，
+            // 保证只收一次——之后用户点到别处不会被抢回去。
+            let focus = inner.clone().unwrap_or_else(|| overlay_focus(id, cx));
+            if OVERLAY_FOCUS_TAKEN.with(|set| set.borrow_mut().insert(id)) {
                 window.focus(&focus, cx);
             }
         });
@@ -232,12 +286,17 @@ impl Root {
     }
 
     /// 新建歌单浮层。
-    pub(crate) fn create_overlay(&self, weak: WeakEntity<Self>) -> AnyElement {
+    pub(crate) fn create_overlay(&self, weak: WeakEntity<Self>, cx: &App) -> AnyElement {
         let weak_cancel = weak.clone();
         let weak_ok = weak.clone();
-        overlay_scrim("create-overlay", weak, Root::close_create)
-            .child(
-                div()
+        overlay_scrim_focusing(
+            "create-overlay",
+            weak,
+            Root::close_create,
+            self.ops.create_input.read(cx).focus_handle(cx),
+        )
+        .child(
+            div()
                     .v_flex()
                     .w(px(360.0))
                     .gap(px(14.0))
@@ -279,8 +338,8 @@ impl Root {
                                     }),
                             ),
                     ),
-            )
-            .into_any_element()
+        )
+        .into_any_element()
     }
 
     /// 添加到歌单浮层。
@@ -502,52 +561,57 @@ impl Root {
     }
 
     /// 重命名浮层。
-    pub(crate) fn rename_overlay(&self, weak: WeakEntity<Self>) -> AnyElement {
+    pub(crate) fn rename_overlay(&self, weak: WeakEntity<Self>, cx: &App) -> AnyElement {
         let weak_cancel = weak.clone();
         let weak_ok = weak.clone();
-        overlay_scrim("rename-overlay", weak, Root::close_rename)
-            .child(
-                div()
-                    .v_flex()
-                    .w(px(360.0))
-                    .gap(px(14.0))
-                    .rounded(px(theme::RADIUS_LG))
-                    .bg(theme::surface())
-                    .p(px(20.0))
-                    .id("rename-panel")
-                    .on_click(move |_ev, _window, cx| cx.stop_propagation())
-                    .child(
-                        div()
-                            .text_lg()
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(theme::text_primary())
-                            .child("重命名歌单"),
-                    )
-                    .child(Input::new(&self.ops.rename_input))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_end()
-                            .gap(px(spacing::SM))
-                            .child(
-                                Button::new("rename-cancel")
-                                    .label("取消")
-                                    .on_click(move |_ev, window, cx| {
-                                        weak_cancel.update(cx, |root, cx| root.close_rename(window, cx)).ok();
-                                    }),
-                            )
-                            .child(
-                                Button::new("rename-ok")
-                                    .primary()
-                                    .label("确定")
-                                    .on_click(move |_ev, _w, cx| {
-                                        weak_ok.update(cx, |root, cx| root.submit_rename(cx)).ok();
-                                    }),
-                            ),
-                    ),
-            )
-            .into_any_element()
+        overlay_scrim_focusing(
+            "rename-overlay",
+            weak,
+            Root::close_rename,
+            self.ops.rename_input.read(cx).focus_handle(cx),
+        )
+        .child(
+            div()
+                .v_flex()
+                .w(px(360.0))
+                .gap(px(14.0))
+                .rounded(px(theme::RADIUS_LG))
+                .bg(theme::surface())
+                .p(px(20.0))
+                .id("rename-panel")
+                .on_click(move |_ev, _window, cx| cx.stop_propagation())
+                .child(
+                    div()
+                        .text_lg()
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(theme::text_primary())
+                        .child("重命名歌单"),
+                )
+                .child(Input::new(&self.ops.rename_input))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_end()
+                        .gap(px(spacing::SM))
+                        .child(
+                            Button::new("rename-cancel")
+                                .label("取消")
+                                .on_click(move |_ev, window, cx| {
+                                    weak_cancel.update(cx, |root, cx| root.close_rename(window, cx)).ok();
+                                }),
+                        )
+                        .child(
+                            Button::new("rename-ok")
+                                .primary()
+                                .label("确定")
+                                .on_click(move |_ev, _w, cx| {
+                                    weak_ok.update(cx, |root, cx| root.submit_rename(cx)).ok();
+                                }),
+                        ),
+                ),
+        )
+        .into_any_element()
     }
 
     /// 删除确认浮层。
@@ -647,51 +711,56 @@ impl Root {
     }
 
     /// 编辑简介浮层。
-    pub(crate) fn desc_overlay(&self, weak: WeakEntity<Self>) -> AnyElement {
+    pub(crate) fn desc_overlay(&self, weak: WeakEntity<Self>, cx: &App) -> AnyElement {
         let weak_cancel = weak.clone();
         let weak_ok = weak.clone();
-        overlay_scrim("desc-overlay", weak, Root::close_desc)
-            .child(
-                div()
-                    .v_flex()
-                    .w(px(420.0))
-                    .gap(px(14.0))
-                    .rounded(px(theme::RADIUS_LG))
-                    .bg(theme::surface())
-                    .p(px(20.0))
-                    .id("desc-panel")
-                    .on_click(move |_ev, _window, cx| cx.stop_propagation())
-                    .child(
-                        div()
-                            .text_lg()
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(theme::text_primary())
-                            .child("编辑简介"),
-                    )
-                    .child(Input::new(&self.ops.desc_input))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_end()
-                            .gap(px(spacing::SM))
-                            .child(
-                                Button::new("desc-cancel")
-                                    .label("取消")
-                                    .on_click(move |_ev, window, cx| {
-                                        weak_cancel.update(cx, |root, cx| root.close_desc(window, cx)).ok();
-                                    }),
-                            )
-                            .child(
-                                Button::new("desc-ok")
-                                    .primary()
-                                    .label("保存")
-                                    .on_click(move |_ev, _w, cx| {
-                                        weak_ok.update(cx, |root, cx| root.submit_desc(cx)).ok();
-                                    }),
-                            ),
-                    ),
-            )
-            .into_any_element()
+        overlay_scrim_focusing(
+            "desc-overlay",
+            weak,
+            Root::close_desc,
+            self.ops.desc_input.read(cx).focus_handle(cx),
+        )
+        .child(
+            div()
+                .v_flex()
+                .w(px(420.0))
+                .gap(px(14.0))
+                .rounded(px(theme::RADIUS_LG))
+                .bg(theme::surface())
+                .p(px(20.0))
+                .id("desc-panel")
+                .on_click(move |_ev, _window, cx| cx.stop_propagation())
+                .child(
+                    div()
+                        .text_lg()
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(theme::text_primary())
+                        .child("编辑简介"),
+                )
+                .child(Input::new(&self.ops.desc_input))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_end()
+                        .gap(px(spacing::SM))
+                        .child(
+                            Button::new("desc-cancel")
+                                .label("取消")
+                                .on_click(move |_ev, window, cx| {
+                                    weak_cancel.update(cx, |root, cx| root.close_desc(window, cx)).ok();
+                                }),
+                        )
+                        .child(
+                            Button::new("desc-ok")
+                                .primary()
+                                .label("保存")
+                                .on_click(move |_ev, _w, cx| {
+                                    weak_ok.update(cx, |root, cx| root.submit_desc(cx)).ok();
+                                }),
+                        ),
+                ),
+        )
+        .into_any_element()
     }
 }

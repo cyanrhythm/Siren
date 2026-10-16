@@ -14,7 +14,7 @@ use gpui_kit::*;
 
 use siren_core::model::{PlaylistDetail, Song};
 
-use super::super::components::like_button;
+use super::super::components::{like_button, overlay_scrim, overlay_scrim_strong};
 use super::super::motion;
 use super::super::playback::Playback;
 use super::super::services::Services;
@@ -365,54 +365,45 @@ impl PlaylistPage {
         };
         let song_name = song_name.clone();
         let weak_cancel = weak.clone();
-        let weak_ok = weak;
+        let weak_ok = weak.clone();
         let playlist_name = self.name.clone();
-        div()
-            .id("remove-track-overlay")
-            .occlude()
-            .absolute()
-            .top_0()
-            .left_0()
-            .w_full()
-            .h_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(theme::scrim())
-            .child(
-                div()
-                    .v_flex()
-                    .w(px(360.0))
-                    .gap(px(spacing::MD))
-                    .rounded(px(theme::RADIUS_LG))
-                    .bg(theme::surface())
-                    .p(px(spacing::XL))
-                    .child(
-                        div()
-                            .text_base()
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(theme::text_primary())
-                            .child(format!("从「{playlist_name}」移除\"{song_name}\"？")),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_end()
-                            .gap(px(spacing::SM))
-                            .child(
-                                Button::new("remove-track-cancel")
-                                    .label("取消")
-                                    .on_click(move |_ev, _w, cx| {
-                                        weak_cancel.update(cx, |page, cx| page.cancel_remove_track(cx)).ok();
-                                    }),
-                            )
-                            .child(danger_button("remove-track-ok", "移除", move |_ev, _w, cx| {
-                                weak_ok.update(cx, |page, cx| page.confirm_remove_track(cx)).ok();
-                            })),
-                    ),
-            )
-            .into_any_element()
+        overlay_scrim("remove-track-overlay", weak, |page: &mut PlaylistPage, _w, cx| {
+            page.cancel_remove_track(cx)
+        })
+        .child(
+            div()
+                .v_flex()
+                .w(px(360.0))
+                .gap(px(spacing::MD))
+                .rounded(px(theme::RADIUS_LG))
+                .bg(theme::surface())
+                .p(px(spacing::XL))
+                .child(
+                    div()
+                        .text_base()
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(theme::text_primary())
+                        .child(format!("从「{playlist_name}」移除\"{song_name}\"？")),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_end()
+                        .gap(px(spacing::SM))
+                        .child(
+                            Button::new("remove-track-cancel")
+                                .label("取消")
+                                .on_click(move |_ev, _w, cx| {
+                                    weak_cancel.update(cx, |page, cx| page.cancel_remove_track(cx)).ok();
+                                }),
+                        )
+                        .child(danger_button("remove-track-ok", "移除", move |_ev, _w, cx| {
+                            weak_ok.update(cx, |page, cx| page.confirm_remove_track(cx)).ok();
+                        })),
+                ),
+        )
+        .into_any_element()
     }
 
     /// 「移除歌单」确认浮层。
@@ -421,60 +412,51 @@ impl PlaylistPage {
             return div().into_any_element();
         }
         let weak_cancel = weak.clone();
-        let weak_ok = weak;
+        let weak_ok = weak.clone();
         let playlist_name = self.name.clone();
-        div()
-            .id("remove-playlist-overlay")
-            .occlude()
-            .absolute()
-            .top_0()
-            .left_0()
-            .w_full()
-            .h_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(theme::scrim())
-            .child(
-                div()
-                    .v_flex()
-                    .w(px(360.0))
-                    .gap(px(spacing::MD))
-                    .rounded(px(theme::RADIUS_LG))
-                    .bg(theme::surface())
-                    .p(px(spacing::XL))
-                    .child(
-                        div()
-                            .text_base()
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(theme::text_primary())
-                            .child(format!("从音乐库移除\"{playlist_name}\"？")),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme::text_gray())
-                            .child("将取消收藏该歌单。"),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_end()
-                            .gap(px(spacing::SM))
-                            .child(
-                                Button::new("remove-pl-cancel")
-                                    .label("取消")
-                                    .on_click(move |_ev, _w, cx| {
-                                        weak_cancel.update(cx, |page, cx| page.cancel_remove_playlist(cx)).ok();
-                                    }),
-                            )
-                            .child(danger_button("remove-pl-ok", "移除", move |_ev, _w, cx| {
-                                weak_ok.update(cx, |page, cx| page.confirm_remove_playlist(cx)).ok();
-                            })),
-                    ),
-            )
-            .into_any_element()
+        overlay_scrim("remove-playlist-overlay", weak, |page: &mut PlaylistPage, _w, cx| {
+            page.cancel_remove_playlist(cx)
+        })
+        .child(
+            div()
+                .v_flex()
+                .w(px(360.0))
+                .gap(px(spacing::MD))
+                .rounded(px(theme::RADIUS_LG))
+                .bg(theme::surface())
+                .p(px(spacing::XL))
+                .child(
+                    div()
+                        .text_base()
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(theme::text_primary())
+                        .child(format!("从音乐库移除\"{playlist_name}\"？")),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme::text_gray())
+                        .child("将取消收藏该歌单。"),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_end()
+                        .gap(px(spacing::SM))
+                        .child(
+                            Button::new("remove-pl-cancel")
+                                .label("取消")
+                                .on_click(move |_ev, _w, cx| {
+                                    weak_cancel.update(cx, |page, cx| page.cancel_remove_playlist(cx)).ok();
+                                }),
+                        )
+                        .child(danger_button("remove-pl-ok", "移除", move |_ev, _w, cx| {
+                            weak_ok.update(cx, |page, cx| page.confirm_remove_playlist(cx)).ok();
+                        })),
+                ),
+        )
+        .into_any_element()
     }
 
     /// 更换封面：选择图片 → 打开裁剪浮层。
@@ -646,7 +628,7 @@ impl PlaylistPage {
         let weak_move = weak.clone();
         let weak_up = weak.clone();
         let weak_cancel = weak.clone();
-        let weak_ok = weak;
+        let weak_ok = weak.clone();
 
         let stage = div()
             .relative()
@@ -696,53 +678,44 @@ impl PlaylistPage {
                     }),
             );
 
-        div()
-            .id("crop-overlay")
-            .occlude()
-            .absolute()
-            .top_0()
-            .left_0()
-            .w_full()
-            .h_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(theme::scrim_strong())
-            .child(
-                div()
-                    .v_flex()
-                    .gap(px(14.0))
-                    .rounded(px(theme::RADIUS_LG))
-                    .bg(theme::surface())
-                    .p(px(20.0))
-                    .child(
-                        div()
-                            .text_lg()
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(theme::text_primary())
-                            .child("裁剪封面（拖拽选择正方形区域）"),
-                    )
-                    .child(stage)
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_end()
-                            .gap(px(spacing::SM))
-                            .child(Button::new("crop-cancel").label("取消").on_click(move |_ev, _w, cx| {
-                                weak_cancel.update(cx, |page, cx| page.crop_cancel(cx)).ok();
-                            }))
-                            .child(
-                                Button::new("crop-ok")
-                                    .primary()
-                                    .label("确定")
-                                    .on_click(move |_ev, _w, cx| {
-                                        weak_ok.update(cx, |page, cx| page.crop_confirm(cx)).ok();
-                                    }),
-                            ),
-                    ),
-            )
-            .into_any_element()
+        overlay_scrim_strong("crop-overlay", weak, |page: &mut PlaylistPage, _w, cx| {
+            page.crop_cancel(cx)
+        })
+        .child(
+            div()
+                .v_flex()
+                .gap(px(14.0))
+                .rounded(px(theme::RADIUS_LG))
+                .bg(theme::surface())
+                .p(px(20.0))
+                .child(
+                    div()
+                        .text_lg()
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(theme::text_primary())
+                        .child("裁剪封面（拖拽选择正方形区域）"),
+                )
+                .child(stage)
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_end()
+                        .gap(px(spacing::SM))
+                        .child(Button::new("crop-cancel").label("取消").on_click(move |_ev, _w, cx| {
+                            weak_cancel.update(cx, |page, cx| page.crop_cancel(cx)).ok();
+                        }))
+                        .child(
+                            Button::new("crop-ok")
+                                .primary()
+                                .label("确定")
+                                .on_click(move |_ev, _w, cx| {
+                                    weak_ok.update(cx, |page, cx| page.crop_confirm(cx)).ok();
+                                }),
+                        ),
+                ),
+        )
+        .into_any_element()
     }
 
     /// 重命名成功后更新页内标题。
@@ -911,46 +884,37 @@ impl PlaylistPage {
                     ),
             );
         }
-        div()
-            .id("add-overlay")
-            .occlude()
-            .absolute()
-            .top_0()
-            .left_0()
-            .w_full()
-            .h_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(theme::scrim())
-            .child(
-                div()
-                    .v_flex()
-                    .w(px(420.0))
-                    .h(px(520.0))
-                    .gap(px(spacing::MD))
-                    .rounded(px(theme::RADIUS_LG))
-                    .bg(theme::surface())
-                    .p(px(18.0))
-                    .child(
-                        div()
-                            .text_lg()
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(theme::text_primary())
-                            .child("添加歌曲"),
-                    )
-                    .child(Input::new(&self.add_input))
-                    .child(smooth_scroll("add-scroll", list, window, cx))
-                    .child(
-                        div()
-                            .flex()
-                            .justify_end()
-                            .child(Button::new("add-close").label("完成").on_click(move |_ev, _w, cx| {
-                                weak_close.update(cx, |page, cx| page.close_add(cx)).ok();
-                            })),
-                    ),
-            )
-            .into_any_element()
+        overlay_scrim("add-overlay", weak, |page: &mut PlaylistPage, _w, cx| {
+            page.close_add(cx)
+        })
+        .child(
+            div()
+                .v_flex()
+                .w(px(420.0))
+                .h(px(520.0))
+                .gap(px(spacing::MD))
+                .rounded(px(theme::RADIUS_LG))
+                .bg(theme::surface())
+                .p(px(18.0))
+                .child(
+                    div()
+                        .text_lg()
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(theme::text_primary())
+                        .child("添加歌曲"),
+                )
+                .child(Input::new(&self.add_input))
+                .child(smooth_scroll("add-scroll", list, window, cx))
+                .child(
+                    div()
+                        .flex()
+                        .justify_end()
+                        .child(Button::new("add-close").label("完成").on_click(move |_ev, _w, cx| {
+                            weak_close.update(cx, |page, cx| page.close_add(cx)).ok();
+                        })),
+                ),
+        )
+        .into_any_element()
     }
 
     /// 当前展示（过滤 + 排序后）的曲目。
