@@ -6,6 +6,7 @@ use gpui_kit::assets::IconName;
 use gpui_kit::base::StyledExt;
 use gpui_kit::component::button::Button;
 use gpui_kit::component::menu::{ContextMenuExt, PopupMenuItem};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use siren_core::model::AlbumDetail;
@@ -322,6 +323,11 @@ impl Render for AlbumPage {
                             .items_center()
                             .gap(px(14.0))
                             .p(px(16.0))
+                            // 顶部背景取封面主色（上深下淡渐变）。
+                            .when_some(
+                                self.services.covers.color(&detail.cover_url).map(theme::cover_backdrop),
+                                |el, bg| el.bg(bg),
+                            )
                             .child(cover)
                             .child(
                                 div()

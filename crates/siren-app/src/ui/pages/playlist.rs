@@ -905,12 +905,15 @@ impl Render for PlaylistPage {
                         .into_any_element()
                 };
 
+                // 顶部 hero 背景取封面主色（上深下淡渐变）；主色未就绪时无背景。
+                let hero_bg = self.services.covers.color(&detail.cover_url).map(theme::cover_backdrop);
                 let hero = div()
                     .w_full()
                     .flex()
                     .items_end()
                     .gap(px(20.0))
                     .p(px(24.0))
+                    .when_some(hero_bg, |el, bg| el.bg(bg))
                     .child(cover)
                     .child(
                         div()

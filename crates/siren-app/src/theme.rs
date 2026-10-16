@@ -5,7 +5,7 @@
 //! 与自定义界面保持一致。
 
 use gpui_kit::component::Theme;
-use gpui_kit::{rgb, App, Rgba};
+use gpui_kit::{linear_color_stop, linear_gradient, rgb, App, Background, Rgba};
 
 pub fn window_bg() -> Rgba {
     rgb(0x000000)
@@ -36,6 +36,27 @@ pub fn cover_placeholder() -> Rgba {
 }
 
 pub const PLAYER_BAR_H: f32 = 80.0;
+
+/// 降低亮度（用于封面取色背景）。
+pub fn darken(color: Rgba, factor: f32) -> Rgba {
+    Rgba {
+        r: color.r * factor,
+        g: color.g * factor,
+        b: color.b * factor,
+        a: 1.0,
+    }
+}
+
+/// 由封面主色生成的「顶部取色背景」：上深下淡，垂直渐变融入面板底色。
+///
+/// 用于歌单/专辑详情页顶部 hero（对齐 Melodia 的封面回衬），无主色时调用方回退纯色。
+pub fn cover_backdrop(color: Rgba) -> Background {
+    linear_gradient(
+        180.0,
+        linear_color_stop(darken(color, 0.42), 0.0),
+        linear_color_stop(pane(), 1.0),
+    )
+}
 
 /// 把 Melodia 调色板注入 gpui-kit 语义主题。
 ///
