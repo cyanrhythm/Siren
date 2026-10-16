@@ -52,6 +52,7 @@ impl Root {
         let shuffle_active = state.mode == PlayMode::Shuffle;
         let repeat_active = state.mode == PlayMode::SingleLoop;
         div()
+            .id("shell-player-bar")
             .w_full()
             .h(px(theme::PLAYER_BAR_H))
             .flex()

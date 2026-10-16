@@ -30,6 +30,7 @@ impl Root {
         if !self.np.open {
             let weak_expand = weak;
             return div()
+                .id("shell-now-playing-rail")
                 .v_flex()
                 .w(px(44.0))
                 .min_w(px(44.0))
@@ -147,6 +148,7 @@ impl Root {
         }
 
         div()
+            .id("shell-now-playing")
             .v_flex()
             .w(px(np_width))
             .min_w(px(np_width))
@@ -272,8 +274,13 @@ fn source_title(source: Option<PlaySource>, weak: WeakEntity<Root>) -> AnyElemen
 }
 
 /// 信息卡外壳：圆角底 + 标题 + 内容（对齐 `InfoCard`）。
-fn info_card(title: &str, content: AnyElement) -> AnyElement {
+///
+/// `id` 为本卡片的元素 id：卡片流由同一 view 渲染，**每张卡必须自带 id**，
+/// 否则卡内交互元素（按钮等）的元素 id 路径会与同帧其它卡片完全相同，
+/// 触发 gpui 的 a11y 重复节点断言（debug 构建崩溃）。
+fn info_card(id: &'static str, title: &str, content: AnyElement) -> AnyElement {
     div()
+        .id(id)
         .v_flex()
         .w_full()
         .gap(px(10.0))
@@ -321,7 +328,7 @@ fn lyrics_card(lines: &[siren_core::lyrics::LyricLine], position_ms: i64) -> Any
         }
         col = col.child(item);
     }
-    info_card("歌词预览", col.into_any_element())
+    info_card("np-card-lyrics", "歌词预览", col.into_any_element())
 }
 
 /// 评论预览卡（前两条 + 查看全部）。
@@ -370,7 +377,7 @@ fn comments_preview_card(page: &siren_core::model::CommentPage, weak: WeakEntity
                 }),
         ),
     );
-    info_card("评论", col.into_any_element())
+    info_card("np-card-comments", "评论", col.into_any_element())
 }
 
 /// 回忆坐标卡。
@@ -396,6 +403,7 @@ fn music_memory_card(mem: &siren_core::model::MusicMemory) -> AnyElement {
         }
     }
     info_card(
+        "np-card-memory",
         "回忆坐标",
         div()
             .w_full()
@@ -471,7 +479,7 @@ fn about_artist_card(
                     .ok();
             }),
     );
-    info_card("关于歌手", col.into_any_element())
+    info_card("np-card-about-artist", "关于歌手", col.into_any_element())
 }
 
 /// 歌手专辑卡（横向列表）。
@@ -620,6 +628,7 @@ fn paged_card(
                 )),
         );
     div()
+        .id(card)
         .v_flex()
         .w_full()
         .gap(px(10.0))
@@ -774,7 +783,7 @@ fn song_detail_card(wiki: Option<&SongWiki>, song: Option<&Song>, detail: Option
                 ),
         );
     }
-    Some(info_card("歌曲详情", col.into_any_element()))
+    Some(info_card("np-card-song-detail", "歌曲详情", col.into_any_element()))
 }
 
 fn toggle_button(id: &'static str, name: IconName, weak: WeakEntity<Root>) -> impl IntoElement {

@@ -328,6 +328,7 @@ impl Root {
         };
 
         div()
+            .id("shell-title-bar")
             .w_full()
             .h(px(64.0))
             .flex()
