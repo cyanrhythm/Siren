@@ -1250,10 +1250,10 @@ impl Render for Root {
                             .w(px(page_w))
                             .flex_none()
                             .h_full()
-                            // 中间列与两侧栏同为圆角面板（侧栏与右栏早已是 RADIUS_MD），
-                            // 否则页面自己的 `bg(pane)` 会画成直角方块。
-                            .rounded(px(theme::RADIUS_MD))
                             .overflow_hidden()
+                            // 圆角**不在这里**：gpui 只用矩形内容遮罩裁剪子元素，外层圆角裁不掉
+                            // 页面自己画的 `bg(pane)`（见 `page_shell_with_header` 注释），
+                            // 故中间列的圆角由各页面外壳自带。
                             .child(self.page(weak_page, window, cx)),
                     )
                     .child(
@@ -1295,15 +1295,39 @@ pub(crate) fn page_shell(title: String, body: AnyElement) -> impl IntoElement {
     )
 }
 
+/// 页面外壳：圆角面板 + 标题行 + 内容。
+///
+/// ⚠️ 圆角必须落在**画背景的这一层**：gpui 只用**矩形**内容遮罩裁剪子元素
+/// （见 gpui-base `RoundedFrameCover` 的说明），父元素圆角并不会把子元素自己画的
+/// `bg(pane)` 裁圆——所以中间列的圆角由各页面外壳自己带，而不是外层容器。
 pub(crate) fn page_shell_with_header(header: AnyElement, body: AnyElement) -> impl IntoElement {
     div()
         .v_flex()
         .flex_1()
         .min_w(px(0.0))
         .h_full()
+        .rounded(px(theme::RADIUS_MD))
+        .overflow_hidden()
         .bg(theme::pane())
         .child(div().w_full().p(px(theme::spacing::MD)).child(header))
         .child(body)
+}
+
+/// 页面空白区（hero / 操作栏 / 列头）的滚轮转发：把纵向滚轮送给页面里那个虚拟列表，
+/// 于是光标不必压在列表上也能滚动整页。
+///
+/// 列表自身已处理并 `stop_propagation`，所以压在列表上时不会重复滚动。
+pub(crate) fn wheel_to_list(el: Stateful<Div>, list: &'static str) -> Stateful<Div> {
+    el.on_scroll_wheel(move |event, window, cx| {
+        let delta = event.delta.pixel_delta(window.line_height());
+        let (dx, dy) = (f32::from(delta.x), f32::from(delta.y));
+        // 横向 pan 留给内层（如表格横向滚动）。
+        if dx.abs() > dy.abs() {
+            return;
+        }
+        smooth_scroll::smooth_scroll_by(list, dy, window, cx);
+        cx.stop_propagation();
+    })
 }
 
 /// 顶部收起因子：0 = 展开，1 = 收起。

@@ -601,6 +601,9 @@ impl Render for HomePage {
         div()
             .v_flex()
             .size_full()
+            // 中间列的圆角由页面外壳自带（gpui 裁子元素用矩形遮罩，外层圆角裁不到这里）。
+            .rounded(px(theme::RADIUS_MD))
+            .overflow_hidden()
             .bg(theme::pane())
             .child(self.pills(cx))
             .child(body)

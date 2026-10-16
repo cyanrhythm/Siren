@@ -501,6 +501,7 @@ impl Render for ArtistPage {
         let weak_bar_play = cx.weak_entity();
         let sticky_bar = div()
             .w_full()
+            .rounded_t(px(theme::RADIUS_MD))
             .h(px(dim::STICKY_BAR_H * fold))
             .overflow_hidden()
             .flex()
@@ -545,6 +546,8 @@ impl Render for ArtistPage {
             .flex_1()
             .min_w(px(0.0))
             .h_full()
+            .rounded(px(theme::RADIUS_MD))
+            .overflow_hidden()
             .bg(theme::pane())
             .child(
                 // padding 必须放内层：折叠容器自身带 padding 时，高度插值到 0 也仍占 padding，

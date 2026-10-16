@@ -18,7 +18,7 @@ use super::super::components::{like_button, overlay_close, overlay_scrim, overla
 use super::super::playback::Playback;
 use super::super::services::Services;
 use super::super::smooth_scroll::{smooth_scroll, smooth_virtual_list};
-use super::super::{collapse_box, fmt_time, header_fold, icon, PageEvent};
+use super::super::{collapse_box, fmt_time, header_fold, icon, wheel_to_list, PageEvent};
 use super::dim;
 use crate::theme::{self, spacing};
 use siren_core::player::{PlaySource, PlaySourceKind};
@@ -1049,6 +1049,7 @@ impl Render for PlaylistPage {
                     );
                 let sticky_bar = div()
                     .w_full()
+                    .rounded_t(px(theme::RADIUS_MD))
                     .h(px(dim::STICKY_BAR_H * fold_hero))
                     .overflow_hidden()
                     .flex()
@@ -1108,6 +1109,8 @@ impl Render for PlaylistPage {
                 // 收起后就会在横栏上方留下一条空白（`p(XL)` = 48px）。padding 一律放到内层。
                 let hero = div()
                     .w_full()
+                    // 顶部圆角跟着页面外壳走（外壳圆角裁不到子元素自己画的背景，见 page_shell_with_header 注释）。
+                    .rounded_t(px(theme::RADIUS_MD))
                     .h(px(HERO_H * (1.0 - fold_hero)))
                     .overflow_hidden()
                     .opacity(1.0 - fold_hero)
@@ -1467,13 +1470,15 @@ impl Render for PlaylistPage {
                     .into_any_element()
                 };
 
-                div()
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .min_w(px(0.0))
-                    .w_full()
-                    .child(hero)
+                wheel_to_list(
+                    div()
+                        .id("pl-body")
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .w_full()
+                        .child(hero)
                     .child(sticky_bar)
                     // 二阶段：胶囊随 hero 一起收起（Melodia 里胶囊在 header 末段，先滚走）。
                     .child(collapse_box(fold_hero, PILLS_H, pills))
@@ -1485,8 +1490,10 @@ impl Render for PlaylistPage {
                         action_row.into_any_element(),
                     ))
                     .child(column_header)
-                    .child(rows)
-                    .into_any_element()
+                    .child(rows),
+                    "playlist-tracks",
+                )
+                .into_any_element()
             }
             None => {
                 if self.failed {
@@ -1525,6 +1532,8 @@ impl Render for PlaylistPage {
             .flex_1()
             .min_w(px(0.0))
             .h_full()
+            .rounded(px(theme::RADIUS_MD))
+            .overflow_hidden()
             .bg(theme::pane())
             .child(body)
             .into_any_element();

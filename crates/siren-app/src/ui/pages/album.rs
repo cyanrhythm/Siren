@@ -15,7 +15,7 @@ use super::super::components::like_button;
 use super::super::playback::Playback;
 use super::super::services::Services;
 use super::super::smooth_scroll::smooth_virtual_list;
-use super::super::{collapse_box, fmt_time, header_fold, icon, PageEvent};
+use super::super::{collapse_box, fmt_time, header_fold, icon, wheel_to_list, PageEvent};
 use super::dim;
 use crate::theme::{self, spacing};
 
@@ -331,6 +331,7 @@ impl Render for AlbumPage {
                 let bar_cover = self.services.covers.color(&detail.cover_url);
                 let sticky_bar = div()
                     .w_full()
+                    .rounded_t(px(theme::RADIUS_MD))
                     .h(px(dim::STICKY_BAR_H * fold))
                     .overflow_hidden()
                     .flex()
@@ -414,18 +415,22 @@ impl Render for AlbumPage {
                             .child(div().w_full().h(px(1.0)).bg(theme::surface_light().opacity(0.6))),
                     );
 
-                div()
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .min_w(px(0.0))
-                    .w_full()
+                wheel_to_list(
+                    div()
+                        .id("album-body")
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .w_full()
                     // 顶部 hero：收起时让位给横栏（padding 放内层，见 collapse_box 注释）。
                     .child(collapse_box(
                         fold,
                         HERO_BLOCK_H,
                         div()
                             .w_full()
+                            // 顶部圆角跟着页面外壳走（gpui 裁子元素时用矩形遮罩）。
+                            .rounded_t(px(theme::RADIUS_MD))
                             .flex()
                             .items_center()
                             .gap(px(14.0))
@@ -509,8 +514,10 @@ impl Render for AlbumPage {
                     ))
                     .child(sticky_bar)
                     .child(column_header)
-                    .child(rows)
-                    .into_any_element()
+                    .child(rows),
+                    "album-tracks",
+                )
+                .into_any_element()
             }
             None => {
                 if self.failed {
@@ -544,6 +551,8 @@ impl Render for AlbumPage {
             .flex_1()
             .min_w(px(0.0))
             .h_full()
+            .rounded(px(theme::RADIUS_MD))
+            .overflow_hidden()
             .bg(theme::pane())
             .child(body)
     }

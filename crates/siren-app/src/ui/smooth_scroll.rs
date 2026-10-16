@@ -265,6 +265,21 @@ fn scroll_bar(name: &'static str, thumb_h: f32, thumb_top: f32, opacity: f32) ->
         .child(thumb)
 }
 
+/// 按滚轮增量滚动某个滚动区（供页面空白区把滚轮转发给列表用）。
+///
+/// 只改目标偏移：边界由注册表里的 `max` 收口，动画、滚动条与重绘由该滚动区自己的渲染接管。
+pub(crate) fn smooth_scroll_by(name: &'static str, dy: f32, window: &mut Window, cx: &mut App) {
+    {
+        let entry = cx.global_mut::<Registry>().0.entry(entry_id(name)).or_default();
+        if entry.max <= 0.0 {
+            return;
+        }
+        entry.target = (entry.target - dy).clamp(0.0, entry.max);
+    }
+    reveal_bar(name, window, cx);
+    window.refresh();
+}
+
 /// 拖动滚动条：指针在任意位置都持续更新偏移（drag 系统的 `on_drag_move` 是全局的）。
 fn on_bar_drag_move(name: &'static str, event: &DragMoveEvent<ScrollbarDrag>, window: &mut Window, cx: &mut App) {
     let ry = f32::from(event.event.position.y - event.bounds.origin.y);
