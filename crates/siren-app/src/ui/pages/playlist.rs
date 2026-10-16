@@ -1171,23 +1171,26 @@ impl Render for PlaylistPage {
                             })
                             .child(icon(IconName::Shuffle, 28.0, theme::text_gray())),
                     )
-                    .child(
-                        div()
-                            .id("pl-fav")
-                            .cursor_pointer()
-                            .on_click(move |_ev, _window, cx| {
-                                weak_star.update(cx, |page, cx| page.toggle_subscribe(cx)).ok();
-                            })
-                            .child(icon(
-                                if subscribed { IconName::Star } else { IconName::StarOff },
-                                28.0,
-                                if subscribed {
-                                    theme::accent()
-                                } else {
-                                    theme::text_gray()
-                                },
-                            )),
-                    )
+                    .when(!owned, |row| {
+                        // 自建歌单没有「收藏」语义（点了等于收藏自己的歌单），不展示。
+                        row.child(
+                            div()
+                                .id("pl-fav")
+                                .cursor_pointer()
+                                .on_click(move |_ev, _window, cx| {
+                                    weak_star.update(cx, |page, cx| page.toggle_subscribe(cx)).ok();
+                                })
+                                .child(icon(
+                                    if subscribed { IconName::Star } else { IconName::StarOff },
+                                    28.0,
+                                    if subscribed {
+                                        theme::accent()
+                                    } else {
+                                        theme::text_gray()
+                                    },
+                                )),
+                        )
+                    })
                     .child(div().id("pl-download").cursor_pointer().child(icon(
                         IconName::Download,
                         28.0,
