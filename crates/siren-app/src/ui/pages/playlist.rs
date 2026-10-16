@@ -19,21 +19,17 @@ use super::super::motion;
 use super::super::playback::Playback;
 use super::super::services::Services;
 use super::super::smooth_scroll::{smooth_scroll, smooth_scroll_offset, smooth_virtual_list};
-use super::super::{fmt_time, icon, page_shell_with_header, PageEvent};
+use super::super::{fmt_time, icon, PageEvent};
 use super::dim;
 use crate::theme::{self, spacing};
 use siren_core::player::{PlaySource, PlaySourceKind};
 
 /// 顶部 hero 的固定高度：`p(XL) * 2 + 封面 200`（收起动画按它插值）。
 const HERO_H: f32 = 248.0;
-/// 收起后的紧凑横栏高度，对齐 Melodia `StickyBarHeight = 64.dp`。
-const STICKY_BAR_H: f32 = 64.0;
 /// 操作栏高度：播放键 56 + `pb(10)`。
 const ACTION_ROW_H: f32 = 66.0;
 /// 自建歌单「添加 / 名称和详情」胶囊行高度：pill 32 + `pb(14)`。
 const PILLS_H: f32 = 46.0;
-/// 曲目区滚动超过该偏移即收起 hero（滚回顶部再展开）。
-const COLLAPSE_AT_PX: f32 = 8.0;
 
 /// 封面裁剪状态。
 struct CropState {
@@ -982,7 +978,6 @@ impl Render for PlaylistPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let weak_back = cx.weak_entity();
         let weak_star = cx.weak_entity();
-        let weak_menu = cx.weak_entity();
         let owned = self.owned();
         let weak_play = cx.weak_entity();
         let weak_shuffle = cx.weak_entity();
@@ -991,25 +986,15 @@ impl Render for PlaylistPage {
         let sort = self.sort;
         let pid = self.id;
 
-        let header = div()
+        // 顶部收起因子：0 = 展开（导航行 + hero + 操作栏），1 = 收起（只剩一条横栏）。
+        // 提到最前面算：导航行与 body 里的 hero / 横栏都要用它。
+        let fold = self.header_fold("playlist-tracks", window, cx);
+
+        let nav_row = div()
             .flex()
             .items_center()
             .gap(px(10.0))
-            .child(
-                div()
-                    .id("nav-back")
-                    .size(px(dim::ROUND_BTN))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded_full()
-                    .cursor_pointer()
-                    .hover(|s| s.bg(theme::surface()))
-                    .on_click(move |_ev, _window, cx| {
-                        weak_back.update(cx, |_page, cx| cx.emit(PageEvent::Back)).ok();
-                    })
-                    .child(icon(IconName::ChevronLeft, 18.0, theme::text_gray())),
-            )
+            .child(back_button("nav-back", weak_back))
             .child(
                 div()
                     .flex_1()
@@ -1017,52 +1002,10 @@ impl Render for PlaylistPage {
                     .text_color(theme::text_primary())
                     .child(self.name.clone()),
             )
-            .child({
-                let weak = weak_menu;
-                // 删除确认浮层需要歌单名（标题 `删除"{name}"？`）。
-                let pname = self.name.clone();
-                Button::new("pl-more")
-                    .ghost()
-                    .icon(IconName::Ellipsis)
-                    .dropdown_menu(move |menu, _w, _cx| {
-                        if owned {
-                            let weak_edit = weak.clone();
-                            let weak_cover = weak.clone();
-                            let weak_rename = weak.clone();
-                            let weak_del = weak.clone();
-                            let pname = pname.clone();
-                            menu.item(PopupMenuItem::new("编辑简介").on_click(move |_ev, _w, cx| {
-                                weak_edit
-                                    .update(cx, |_p, cx| cx.emit(PageEvent::EditPlaylistDesc { id: pid }))
-                                    .ok();
-                            }))
-                            .item(PopupMenuItem::new("更换封面").on_click(move |_ev, _w, cx| {
-                                weak_cover.update(cx, |page, cx| page.change_cover(cx)).ok();
-                            }))
-                            .item(PopupMenuItem::new("重命名").on_click(move |_ev, _w, cx| {
-                                weak_rename
-                                    .update(cx, |_p, cx| cx.emit(PageEvent::RenamePlaylist { id: pid }))
-                                    .ok();
-                            }))
-                            .item(PopupMenuItem::new("删除歌单").on_click(move |_ev, _w, cx| {
-                                weak_del
-                                    .update(cx, |_p, cx| {
-                                        cx.emit(PageEvent::DeletePlaylist {
-                                            id: pid,
-                                            name: pname.clone(),
-                                        })
-                                    })
-                                    .ok();
-                            }))
-                        } else {
-                            // 非本人创建：只能移除（取消收藏），不能编辑
-                            let weak_rm = weak.clone();
-                            menu.item(PopupMenuItem::new("移除歌单").on_click(move |_ev, _w, cx| {
-                                weak_rm.update(cx, |page, cx| page.ask_remove_playlist(cx)).ok();
-                            }))
-                        }
-                    })
-            });
+            .child(more_button("pl-more", cx.weak_entity(), owned, pid, self.name.clone()))
+            .into_any_element();
+
+        let header = nav_row;
 
         let body: AnyElement = match &self.detail {
             Some(detail) => {
@@ -1093,27 +1036,23 @@ impl Render for PlaylistPage {
                 // 随曲目区滚动收起 hero（对齐 Melodia 的 `PlaylistStickyBar`）：
                 // 滚过阈值后大封面让位给「封面取色底 + 歌单名」的紧凑横栏，把纵向空间还给曲目表；
                 // 滚回顶部平滑展开。`transition` 可逆，且尊重系统「减少动态效果」。
-                let collapsed = smooth_scroll_offset("playlist-tracks", cx) > COLLAPSE_AT_PX;
-                let fold = transition(
-                    "playlist-header-collapse",
-                    if collapsed { 1.0f32 } else { 0.0 },
-                    Transition::new(motion::HEADER_COLLAPSE).ease(motion::ease_in_out()),
-                    window,
-                    cx,
-                );
+                //（fold 已在 render 开头算好：导航行与 hero、横栏共用同一个因子。）
                 // 横栏里的播放键（对齐 Melodia `StickyPlayButtonSize = 48.dp`）：
-                // 操作栏收起后，这里是唯一的播放入口。
+                // 操作栏收起后，这里是唯一的播放入口；同时把导航行收起后失效的
+                // 返回键 / 「⋯」菜单一并放进来——两处共用 `back_button` / `more_button`，
+                // 收起后顶部只有这一行，不再出现「导航行 + 横栏」两行同名标题。
                 let weak_bar_play = cx.weak_entity();
                 let sticky_bar = div()
                     .w_full()
-                    .h(px(STICKY_BAR_H * fold))
+                    .h(px(dim::STICKY_BAR_H * fold))
                     .overflow_hidden()
                     .flex()
                     .items_center()
-                    .gap(px(spacing::MD))
-                    .px(px(spacing::XL))
+                    .gap(px(spacing::SM))
+                    .px(px(spacing::MD))
                     // 底色同 Melodia：用同一封面主色的实色（不是 hero 的渐变，64px 内渐变会近乎全黑）。
                     .when_some(base_color.map(|c| theme::darken(c, 0.42)), |el, bg| el.bg(bg))
+                    .child(back_button("pl-bar-back", cx.weak_entity()))
                     .child(
                         div()
                             .id("pl-bar-play")
@@ -1146,7 +1085,8 @@ impl Render for PlaylistPage {
                             .text_color(theme::text_primary())
                             .truncate()
                             .child(detail.name.clone()),
-                    );
+                    )
+                    .child(more_button("pl-bar-more", cx.weak_entity(), owned, pid, detail.name.clone()));
 
                 // 吸顶列头：与曲目行共用列宽（`dim::*`），滚不滚都钉在列表之上
                 //（Melodia 用 stickyHeader + translationY 让表头停在横栏下，Siren 的 hero/操作栏
@@ -1583,7 +1523,27 @@ impl Render for PlaylistPage {
                 }
             }
         };
-        let shell = page_shell_with_header(header.into_any_element(), body).into_any_element();
+        // 外壳：导航行与 hero/操作栏同步收起——收起后顶部只剩横栏一行
+        //（对齐 Melodia：它的导航行本就在全局顶栏，页面内只有一条 sticky bar）。
+        // `NAV_BLOCK_H` = `p(MD) * 2 + 返回键 30`。
+        const NAV_BLOCK_H: f32 = 54.0;
+        let shell = div()
+            .v_flex()
+            .flex_1()
+            .min_w(px(0.0))
+            .h_full()
+            .bg(theme::pane())
+            .child(
+                div()
+                    .w_full()
+                    .h(px(NAV_BLOCK_H * (1.0 - fold)))
+                    .overflow_hidden()
+                    .opacity(1.0 - fold)
+                    .p(px(theme::spacing::MD))
+                    .child(header),
+            )
+            .child(body)
+            .into_any_element();
         let overlay = self.crop.is_some().then(|| self.crop_overlay(cx.weak_entity()));
         let add_overlay = self.add_open.then(|| self.add_overlay(cx.weak_entity(), window, cx));
         let remove_track_overlay = self
@@ -1613,6 +1573,93 @@ fn fmt_duration(ms: i64) -> String {
     } else {
         format!("{total_min} 分钟")
     }
+}
+
+impl PlaylistPage {
+    /// 顶部收起因子：0 = 展开，1 = 收起。导航行、hero、操作栏与横栏共用同一个值，
+    /// 保证它们在同一段时间里同步收放（`transition` 可逆且尊重「减少动态效果」）。
+    fn header_fold(&self, scroll_id: &'static str, window: &mut Window, cx: &mut Context<Self>) -> f32 {
+        let collapsed = smooth_scroll_offset(scroll_id, cx) > dim::HEADER_COLLAPSE_AT_PX;
+        transition(
+            "playlist-header-collapse",
+            if collapsed { 1.0f32 } else { 0.0 },
+            Transition::new(motion::HEADER_COLLAPSE).ease(motion::ease_in_out()),
+            window,
+            cx,
+        )
+    }
+}
+
+/// 返回键：展开态的导航行与收起后的横栏共用同一实现。
+///
+/// `id` 必须逐处不同——**收起态的横栏即使高度为 0 也仍在元素树里渲染**，
+/// 与导航行同名就会在同一 view 内产生重复的元素 id（gpui a11y 树断言，debug 构建直接崩）。
+fn back_button(id: &'static str, weak: WeakEntity<PlaylistPage>) -> impl IntoElement {
+    div()
+        .id(id)
+        .flex_none()
+        .size(px(dim::ROUND_BTN))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_full()
+        .cursor_pointer()
+        .hover(|s| s.bg(theme::surface()))
+        .on_click(move |_ev, _window, cx| {
+            weak.update(cx, |_page, cx| cx.emit(PageEvent::Back)).ok();
+        })
+        .child(icon(IconName::ChevronLeft, 18.0, theme::text_gray()))
+}
+
+/// 「⋯」更多菜单键：展开态导航行与收起后横栏共用。`id` 同样必须逐处不同（见 [`back_button`]）。
+fn more_button(
+    id: &'static str,
+    weak: WeakEntity<PlaylistPage>,
+    owned: bool,
+    pid: i64,
+    name: String,
+) -> impl IntoElement {
+    Button::new(id)
+        .ghost()
+        .icon(IconName::Ellipsis)
+        .dropdown_menu(move |menu, _w, _cx| {
+            if owned {
+                let weak_edit = weak.clone();
+                let weak_cover = weak.clone();
+                let weak_rename = weak.clone();
+                let weak_del = weak.clone();
+                let pname = name.clone();
+                menu.item(PopupMenuItem::new("编辑简介").on_click(move |_ev, _w, cx| {
+                    weak_edit
+                        .update(cx, |_p, cx| cx.emit(PageEvent::EditPlaylistDesc { id: pid }))
+                        .ok();
+                }))
+                .item(PopupMenuItem::new("更换封面").on_click(move |_ev, _w, cx| {
+                    weak_cover.update(cx, |page, cx| page.change_cover(cx)).ok();
+                }))
+                .item(PopupMenuItem::new("重命名").on_click(move |_ev, _w, cx| {
+                    weak_rename
+                        .update(cx, |_p, cx| cx.emit(PageEvent::RenamePlaylist { id: pid }))
+                        .ok();
+                }))
+                .item(PopupMenuItem::new("删除歌单").on_click(move |_ev, _w, cx| {
+                    weak_del
+                        .update(cx, |_p, cx| {
+                            cx.emit(PageEvent::DeletePlaylist {
+                                id: pid,
+                                name: pname.clone(),
+                            })
+                        })
+                        .ok();
+                }))
+            } else {
+                // 非本人创建：只能移除（取消收藏），不能编辑
+                let weak_rm = weak.clone();
+                menu.item(PopupMenuItem::new("移除歌单").on_click(move |_ev, _w, cx| {
+                    weak_rm.update(cx, |page, cx| page.ask_remove_playlist(cx)).ok();
+                }))
+            }
+        })
 }
 
 /// 「添加 / 名称和详情」胶囊按钮（对齐 Melodia PlaylistPill）。
