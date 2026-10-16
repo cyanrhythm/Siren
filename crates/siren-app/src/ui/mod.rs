@@ -20,7 +20,7 @@ mod smooth_scroll;
 use std::sync::Arc;
 
 use gpui_kit::assets::IconName;
-use gpui_kit::base::StyledExt;
+use gpui_kit::base::{transition, StyledExt, Transition};
 use gpui_kit::component::button::Button;
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::slider::{SliderEvent, SliderState, SliderValue};
@@ -1298,6 +1298,36 @@ pub(crate) fn page_shell_with_header(header: AnyElement, body: AnyElement) -> im
         .bg(theme::pane())
         .child(div().w_full().p(px(theme::spacing::MD)).child(header))
         .child(body)
+}
+
+/// 顶部收起因子：0 = 展开，1 = 收起。
+///
+/// 依据是内容区的平滑滚动偏移（[`smooth_scroll::smooth_scroll_offset`]），用 kit 的
+/// `transition` 插值——可逆（滚回顶部自动展开），且自动尊重系统「减少动态效果」。
+/// `id` 需**逐页唯一**：同一 view 内重复的元素 id 会触发 gpui 的 a11y 断言。
+pub(crate) fn header_fold(id: &'static str, scroll_id: &'static str, window: &mut Window, cx: &mut App) -> f32 {
+    let collapsed = smooth_scroll::smooth_scroll_offset(scroll_id, cx) > pages::dim::HEADER_COLLAPSE_AT_PX;
+    transition(
+        id,
+        if collapsed { 1.0f32 } else { 0.0 },
+        Transition::new(motion::HEADER_COLLAPSE).ease(motion::ease_in_out()),
+        window,
+        cx,
+    )
+}
+
+/// 可折叠区外壳：高度随 `fold` 收缩到 0，并裁掉内容与淡出。
+///
+/// ⚠️ **`content` 必须自带 padding，外壳不能有**——外壳若带 padding，高度插值到 0 时
+/// padding 仍占位，收起后会在横栏上方留一条空白。
+pub(crate) fn collapse_box(fold: f32, full_h: f32, content: AnyElement) -> AnyElement {
+    div()
+        .w_full()
+        .h(px(full_h * (1.0 - fold)))
+        .overflow_hidden()
+        .opacity(1.0 - fold)
+        .child(content)
+        .into_any_element()
 }
 
 pub(crate) fn fmt_time(ms: i64) -> String {

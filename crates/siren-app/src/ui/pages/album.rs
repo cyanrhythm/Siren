@@ -15,9 +15,14 @@ use super::super::components::like_button;
 use super::super::playback::Playback;
 use super::super::services::Services;
 use super::super::smooth_scroll::smooth_virtual_list;
-use super::super::{fmt_time, icon, page_shell_with_header, PageEvent};
+use super::super::{collapse_box, fmt_time, header_fold, icon, PageEvent};
 use super::dim;
 use crate::theme::{self, spacing};
+
+/// 顶部 hero 区块高度：`p(LG) * 2 + 封面 120`。
+const HERO_BLOCK_H: f32 = 152.0;
+/// 播放键操作栏高度：播放键 56 + `pb(SM)`。
+const ACTION_ROW_H: f32 = 64.0;
 use siren_core::player::{PlaySource, PlaySourceKind};
 
 pub(crate) struct AlbumPage {
@@ -143,7 +148,9 @@ impl Render for AlbumPage {
         let weak_star = cx.weak_entity();
         let weak_play = cx.weak_entity();
         let subscribed = self.subscribed;
-        let header = div()
+        // 顶部收起因子（0 展开 / 1 收起）：导航行、hero、操作栏、横栏共用。
+        let fold = header_fold("album-header-collapse", "album-tracks", window, cx);
+        let nav_row = div()
             .flex()
             .items_center()
             .gap(px(10.0))
@@ -191,7 +198,9 @@ impl Render for AlbumPage {
                             theme::text_gray()
                         },
                     )),
-            );
+            )
+            .into_any_element();
+        let header = nav_row;
 
         let body: AnyElement = match &self.detail {
             Some(detail) => {
@@ -338,13 +347,136 @@ impl Render for AlbumPage {
                     .into_any_element()
                 };
 
+                // 收起后的横栏（对齐 Melodia 的同款 sticky bar）：封面取色实色底 +
+                // 播放键 + 专辑名，返回键与收藏键一并搬进来（收起后导航行/操作栏都不在）。
+                let weak_bar_play = cx.weak_entity();
+                let weak_bar_back = cx.weak_entity();
+                let weak_bar_star = cx.weak_entity();
+                let bar_cover = self.services.covers.color(&detail.cover_url);
+                let sticky_bar = div()
+                    .w_full()
+                    .h(px(dim::STICKY_BAR_H * fold))
+                    .overflow_hidden()
+                    .flex()
+                    .items_center()
+                    .gap(px(spacing::SM))
+                    .px(px(spacing::MD))
+                    .when_some(bar_cover.map(|c| theme::darken(c, 0.42)), |el, bg| el.bg(bg))
+                    .child(
+                        div()
+                            .id("album-bar-back")
+                            .flex_none()
+                            .size(px(dim::ROUND_BTN))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded_full()
+                            .cursor_pointer()
+                            .hover(|s| s.bg(theme::surface()))
+                            .on_click(move |_ev, _window, cx| {
+                                weak_bar_back.update(cx, |_p, cx| cx.emit(PageEvent::Back)).ok();
+                            })
+                            .child(icon(IconName::ChevronLeft, 18.0, theme::text_gray())),
+                    )
+                    .child(
+                        div()
+                            .id("album-bar-play")
+                            .flex_none()
+                            .size(px(48.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded_full()
+                            .bg(theme::accent())
+                            .cursor_pointer()
+                            .on_click(move |_ev, _window, cx| {
+                                weak_bar_play
+                                    .update(cx, |page, cx| {
+                                        let items = page.detail.as_ref().map(|d| d.songs.clone()).unwrap_or_default();
+                                        let source = page.source();
+                                        page.playback
+                                            .update(cx, |pb, cx| pb.play_from_source(items, 0, Some(source), cx));
+                                    })
+                                    .ok();
+                            })
+                            .child(icon(IconName::Play, 22.0, theme::text_primary())),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .text_lg()
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(theme::text_primary())
+                            .truncate()
+                            .child(detail.name.clone()),
+                    )
+                    .child(
+                        div()
+                            .id("album-bar-subscribe")
+                            .flex_none()
+                            .size(px(dim::ROUND_BTN))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded_full()
+                            .cursor_pointer()
+                            .on_click(move |_ev, _window, cx| {
+                                weak_bar_star.update(cx, |p, cx| p.toggle_subscribe(cx)).ok();
+                            })
+                            .child(icon(
+                                if subscribed { IconName::Star } else { IconName::StarOff },
+                                18.0,
+                                if subscribed {
+                                    theme::accent()
+                                } else {
+                                    theme::text_gray()
+                                },
+                            )),
+                    );
+
+                // 吸顶列头：专辑行没有「专辑」列，故列头为 # / 标题 / 时长（列宽与行共用 `dim::*`）。
+                let column_header = div()
+                    .w_full()
+                    .v_flex()
+                    .bg(theme::pane())
+                    .child(
+                        div()
+                            .w_full()
+                            .flex()
+                            .items_center()
+                            .gap(px(spacing::MD))
+                            .px(px(spacing::LG))
+                            .py(px(spacing::SM))
+                            .text_xs()
+                            .text_color(theme::text_gray())
+                            .child(div().w(px(dim::INDEX_W)).flex().justify_end().child("#"))
+                            .child(div().w(px(dim::COVER_SONG)))
+                            .child(div().flex_1().min_w(px(0.0)).child("标题"))
+                            .child(div().w(px(dim::LIKE_W)))
+                            .child(div().w(px(dim::DURATION_W)).flex().justify_end().child(icon(
+                                IconName::Clock,
+                                14.0,
+                                theme::text_gray(),
+                            ))),
+                    )
+                    .child(
+                        div()
+                            .w_full()
+                            .px(px(spacing::LG))
+                            .child(div().w_full().h(px(1.0)).bg(theme::surface_light().opacity(0.6))),
+                    );
+
                 div()
                     .flex()
                     .flex_col()
                     .flex_1()
                     .min_w(px(0.0))
                     .w_full()
-                    .child(
+                    // 顶部 hero：收起时让位给横栏（padding 放内层，见 collapse_box 注释）。
+                    .child(collapse_box(
+                        fold,
+                        HERO_BLOCK_H,
                         div()
                             .w_full()
                             .flex()
@@ -383,9 +515,12 @@ impl Render for AlbumPage {
                                             .text_color(theme::text_gray())
                                             .child(format!("{} 首", detail.songs.len())),
                                     ),
-                            ),
-                    )
-                    .child(
+                            )
+                            .into_any_element(),
+                    ))
+                    .child(collapse_box(
+                        fold,
+                        ACTION_ROW_H,
                         div()
                             .w_full()
                             .flex()
@@ -421,8 +556,11 @@ impl Render for AlbumPage {
                                         })
                                         .child(icon(IconName::Play, 26.0, theme::text_primary())),
                                 )
-                            }),
-                    )
+                            })
+                            .into_any_element(),
+                    ))
+                    .child(sticky_bar)
+                    .child(column_header)
                     .child(rows)
                     .into_any_element()
             }
@@ -452,6 +590,24 @@ impl Render for AlbumPage {
                 }
             }
         };
-        page_shell_with_header(header.into_any_element(), body)
+        // 外壳：导航行与 hero / 操作栏同步收起，收起后顶部只剩横栏一行（同歌单页）。
+        // `NAV_BLOCK_H` = `p(MD) * 2 + 返回键 30`。
+        const NAV_BLOCK_H: f32 = 54.0;
+        div()
+            .v_flex()
+            .flex_1()
+            .min_w(px(0.0))
+            .h_full()
+            .bg(theme::pane())
+            .child(collapse_box(
+                fold,
+                NAV_BLOCK_H,
+                div()
+                    .w_full()
+                    .p(px(theme::spacing::MD))
+                    .child(header)
+                    .into_any_element(),
+            ))
+            .child(body)
     }
 }
