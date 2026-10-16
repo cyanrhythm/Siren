@@ -22,6 +22,10 @@ pub(crate) mod dim {
     pub(crate) const COVER_LIST: f32 = 48.0;
     /// 圆形小按钮（返回/收藏等）尺寸。
     pub(crate) const ROUND_BTN: f32 = 30.0;
+    /// 顶部 hero 收起后的紧凑横栏高度，对齐 Melodia `StickyBarHeight = 64.dp`。
+    pub(crate) const STICKY_BAR_H: f32 = 64.0;
+    /// 内容区滚动超过该偏移即收起顶部 hero（滚回顶部再展开）。
+    pub(crate) const HEADER_COLLAPSE_AT_PX: f32 = 8.0;
 }
 
 mod account;

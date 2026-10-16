@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use gpui_kit::assets::IconName;
-use gpui_kit::base::StyledExt;
+use gpui_kit::base::{transition, StyledExt, Transition};
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::menu::{ContextMenuExt, PopupMenuItem};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -12,10 +12,11 @@ use gpui_kit::*;
 use siren_core::model::{Artist, ArtistAlbum, ArtistDetail, Song};
 
 use super::super::components::like_button;
+use super::super::motion;
 use super::super::playback::Playback;
 use super::super::services::Services;
-use super::super::smooth_scroll::smooth_scroll;
-use super::super::{fmt_date, icon, load_error, page_shell_with_header, PageEvent};
+use super::super::smooth_scroll::{smooth_scroll, smooth_scroll_offset};
+use super::super::{fmt_date, icon, load_error, PageEvent};
 use super::dim;
 use crate::theme::{self, spacing};
 
@@ -502,7 +503,91 @@ impl Render for ArtistPage {
         body = body.child(section("简介", about));
 
         let scroll = smooth_scroll("artist-scroll", body, window, cx);
-        page_shell_with_header(header, scroll.into_any_element())
+
+        // 顶部 hero 随内容区滚动收起为紧凑横栏（对齐 Melodia `ArtistPage` 的同款 sticky bar：
+        // 大图/名字滚走后，固定区只留「播放键 + 歌手名」，纵向空间还给内容）。
+        let collapsed = smooth_scroll_offset("artist-scroll", cx) > dim::HEADER_COLLAPSE_AT_PX;
+        let fold = transition(
+            "artist-header-collapse",
+            if collapsed { 1.0f32 } else { 0.0 },
+            Transition::new(motion::HEADER_COLLAPSE).ease(motion::ease_in_out()),
+            window,
+            cx,
+        );
+        let weak_bar_play = cx.weak_entity();
+        let weak_bar_back = cx.weak_entity();
+        let sticky_bar = div()
+            .w_full()
+            .h(px(dim::STICKY_BAR_H * fold))
+            .overflow_hidden()
+            .flex()
+            .items_center()
+            .gap(px(spacing::MD))
+            .px(px(spacing::MD))
+            .bg(theme::pane())
+            .child(
+                div()
+                    .id("artist-bar-play")
+                    .flex_none()
+                    .size(px(48.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_full()
+                    .bg(theme::accent())
+                    .cursor_pointer()
+                    .on_click(move |_ev, _window, cx| {
+                        weak_bar_play.update(cx, |this, cx| this.play_all(cx)).ok();
+                    })
+                    .child(icon(IconName::Play, 22.0, theme::text_primary())),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .text_lg()
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(theme::text_primary())
+                    .truncate()
+                    .child(self.name.clone()),
+            )
+            // 返回键在 hero 里位于右端，收起后仍需可达，故横栏原样保留。
+            .child(
+                div()
+                    .id("artist-bar-back")
+                    .flex_none()
+                    .size(px(dim::ROUND_BTN))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_full()
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme::surface()))
+                    .on_click(move |_ev, _window, cx| {
+                        weak_bar_back.update(cx, |_p, cx| cx.emit(PageEvent::Back)).ok();
+                    })
+                    .child(icon(IconName::ChevronLeft, 18.0, theme::text_gray())),
+            );
+
+        // hero 区占位高度 = `p(MD) * 2 + 头像 108`。
+        const HERO_BLOCK_H: f32 = 132.0;
+        div()
+            .v_flex()
+            .flex_1()
+            .min_w(px(0.0))
+            .h_full()
+            .bg(theme::pane())
+            .child(
+                div()
+                    .w_full()
+                    .h(px(HERO_BLOCK_H * (1.0 - fold)))
+                    .overflow_hidden()
+                    .opacity(1.0 - fold)
+                    .p(px(spacing::MD))
+                    .child(header),
+            )
+            .child(sticky_bar)
+            .child(scroll)
     }
 }
 
