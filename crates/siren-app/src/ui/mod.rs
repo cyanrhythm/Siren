@@ -1305,54 +1305,48 @@ pub(crate) fn fmt_time(ms: i64) -> String {
     format!("{}:{:02}", total / 60, total % 60)
 }
 
-/// 毫秒时间戳 → `M月D日`。
+/// 毫秒时间戳 → `M月D日`（本地时区；见 `siren_core::time`）。
 pub(crate) fn fmt_month_day(ms: i64) -> String {
     if ms <= 0 {
         return String::new();
     }
-    let (_, m, d) = civil_from_days(ms / 86_400_000);
-    format!("{m}月{d}日")
+    match siren_core::time::local_date(ms) {
+        Some((_, m, d, _)) => format!("{m}月{d}日"),
+        None => String::new(),
+    }
 }
 
 /// 毫秒时间戳 → 分区块标题（`8月24日 周一`；跨年补年份）。无时间返回空串。
+///
+/// 按**本地**日历日切分：原先用 `ms / 86_400_000` 是 UTC 切日，东八区凌晨的记录
+/// 会被归到前一天（整改清单 K5）。
 pub(crate) fn fmt_day_label(ms: i64, now_ms: i64) -> String {
+    const WEEKDAYS: [&str; 7] = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
     if ms <= 0 {
         return String::new();
     }
-    const WEEKDAYS: [&str; 7] = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
-    let days = ms / 86_400_000;
-    let (y, m, d) = civil_from_days(days);
-    let (ny, _, _) = civil_from_days(now_ms / 86_400_000);
-    let weekday = WEEKDAYS[(days + 4).rem_euclid(7) as usize];
+    let (Some((y, m, d, weekday)), Some((ny, _, _, _))) =
+        (siren_core::time::local_date(ms), siren_core::time::local_date(now_ms))
+    else {
+        return String::new();
+    };
     let date = if y == ny {
         format!("{m}月{d}日")
     } else {
         format!("{y}年{m}月{d}日")
     };
-    format!("{date} {weekday}")
+    format!("{date} {}", WEEKDAYS[(weekday.clamp(1, 7) - 1) as usize])
 }
 
-/// 毫秒时间戳 → `YYYY-MM-DD`（无日期时返回空串）。
+/// 毫秒时间戳 → `YYYY-MM-DD`（本地时区；无日期时返回空串）。
 pub(crate) fn fmt_date(ms: i64) -> String {
     if ms <= 0 {
         return String::new();
     }
-    let (y, m, d) = civil_from_days(ms / 86_400_000);
-    format!("{y}-{m:02}-{d:02}")
-}
-
-/// 自 1970-01-01 起的天数 → (年, 月, 日)（Howard Hinnant 算法）。
-fn civil_from_days(days: i64) -> (i64, i64, i64) {
-    let z = days + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    (if m <= 2 { y + 1 } else { y }, m, d)
+    match siren_core::time::local_date(ms) {
+        Some((y, m, d, _)) => format!("{y}-{m:02}-{d:02}"),
+        None => String::new(),
+    }
 }
 
 pub(crate) fn icon(name: IconName, size: f32, color: Rgba) -> Icon {

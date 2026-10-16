@@ -28,5 +28,6 @@ pub mod playback_session;
 pub mod player;
 pub mod recent_playlists;
 pub mod settings;
+pub mod time;
 
 pub use error::{Error, Result};

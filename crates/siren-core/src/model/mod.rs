@@ -916,6 +916,10 @@ pub fn parse_playlist_detail(value: &Value) -> Option<PlaylistDetail> {
 }
 
 /// 解析专辑详情（`/weapi/v1/album/{id}`）。
+///
+/// 收藏态取自**顶层 `resourceState`**——实测该接口既不返回顶层 `subscribed`，
+/// 也不返回 `album.subscribed`（已收藏专辑 5/5 为 `resourceState: true`，
+/// 未收藏专辑该字段整体缺失）。`album.subscribed` 仅作兼容回退。
 pub fn parse_album_detail(value: &Value) -> Option<AlbumDetail> {
     let album = value.get("album")?;
     let artists = album
@@ -948,7 +952,11 @@ pub fn parse_album_detail(value: &Value) -> Option<AlbumDetail> {
             .to_string(),
         artists,
         songs,
-        subscribed: album.get("subscribed").and_then(Value::as_bool).unwrap_or(false),
+        subscribed: value
+            .get("resourceState")
+            .and_then(Value::as_bool)
+            .or_else(|| album.get("subscribed").and_then(Value::as_bool))
+            .unwrap_or(false),
     })
 }
 
@@ -1065,6 +1073,23 @@ mod tests {
     fn missing_fields_are_default() {
         let songs = parse_search_songs(&json!({}));
         assert!(songs.is_empty());
+    }
+
+    #[test]
+    fn album_subscribed_comes_from_top_level_resource_state() {
+        // 已收藏：接口只在顶层给 resourceState，`album` 内没有 subscribed（实测）。
+        let collected = json!({
+            "resourceState": true,
+            "album": { "id": 35088097, "name": "Cytus - Chapter K" },
+            "songs": []
+        });
+        let detail = parse_album_detail(&collected).expect("已收藏专辑应可解析");
+        assert!(detail.subscribed, "顶层 resourceState=true 应解析为已收藏");
+
+        // 未收藏：该字段整体缺失。
+        let plain = json!({ "album": { "id": 18909, "name": "Partners 拍档" }, "songs": [] });
+        let detail = parse_album_detail(&plain).expect("未收藏专辑应可解析");
+        assert!(!detail.subscribed, "缺少 resourceState 应视为未收藏");
     }
 
     #[test]

@@ -52,6 +52,9 @@ pub struct Player {
     /// 此窗口内引擎仍在报告**上一首**的 `time-pos`/`duration`，必须忽略，
     /// 否则会把刚重置的进度又覆盖回旧曲尾部（表现为进度条尾部来回跳动）。
     awaiting_load: bool,
+    /// 等待加载窗口内收到的 seek：此时引擎仍指向**上一首**，直接 seek 会作用到旧文件
+    /// 并让新曲从错误位置开始。记在这里，等 [`Player::play_url_from`] 加载完新文件后补发。
+    pending_seek_ms: Option<i64>,
     /// 上一次观察到的 eof 状态（仅用于日志）。
     last_eof: bool,
 }
@@ -67,6 +70,7 @@ impl Player {
             tx,
             eof_latched: false,
             awaiting_load: false,
+            pending_seek_ms: None,
             last_eof: false,
         }
     }
@@ -220,6 +224,8 @@ impl Player {
         self.state.playing = false;
         self.awaiting_load = true;
         self.eof_latched = false;
+        // 新的一次恢复：清掉上一轮遗留的待补发 seek。
+        self.pending_seek_ms = None;
         self.publish();
         self.state.song.clone()
     }
@@ -259,9 +265,17 @@ impl Player {
             self.engine.set_paused(false);
             log::debug!("引擎已加载新文件，恢复进度同步");
             self.state.playing = true;
-            if let Some(ms) = start_ms {
-                self.state.position_ms = ms.max(0);
+            // 起播点：等待窗口内用户拖过的位置优先于调用方给的 `start_ms`
+            //（前者更新，且代表用户最后一次意图）。
+            let start = self.pending_seek_ms.or(start_ms);
+            if let Some(ms) = start {
+                let ms = ms.max(0);
+                if self.pending_seek_ms.is_some() {
+                    self.engine.seek_to_ms(ms);
+                }
+                self.state.position_ms = ms;
             }
+            self.pending_seek_ms = None;
         } else {
             // 加载失败（含 mpv < 0.38 不识别 `-1` 参数）：不进入「播放中」的假死态。
             log::error!("引擎加载播放地址失败（检查 libmpv 版本，需 ≥ 0.38）: len={}", url.len());
@@ -310,8 +324,19 @@ impl Player {
     }
 
     /// 跳转到绝对位置（毫秒）。
+    ///
+    /// 等待新文件加载期间（[`Player::restore`] 冷启动恢复或刚切歌后），引擎仍指向上一首，
+    /// 此时**不能**把 seek 交给引擎——否则新曲会从错误位置开始。只更新界面位置并记为
+    /// 待补发，等 [`Player::play_url_from`] 加载完成后作用于新文件。
     pub fn seek_ms(&mut self, position_ms: i64) {
         let ms = position_ms.max(0);
+        if self.awaiting_load {
+            log::debug!("等待新文件加载期间收到 seek={ms}ms，延后到加载完成后补发");
+            self.pending_seek_ms = Some(ms);
+            self.state.position_ms = ms;
+            self.publish();
+            return;
+        }
         self.engine.seek_to_ms(ms);
         self.state.position_ms = ms;
         self.publish();
@@ -408,6 +433,8 @@ impl Player {
         self.state.playing = false;
         // 已选中新曲但 URL 尚未加载：进入等待加载窗口，暂不同步引擎进度。
         self.awaiting_load = true;
+        // 切歌后上一首的待补发 seek 不再适用。
+        self.pending_seek_ms = None;
         // 同步闩锁：若引擎此刻仍报旧曲的 eof（上一首刚播完），手动切歌后不应再被
         // 这个陈旧 eof 推进一步（否则会跳掉一首）；新文件播放（eof 变假）时自动解除。
         self.eof_latched = true;
@@ -424,6 +451,7 @@ impl Player {
         self.state.playing = false;
         // 自然播完的切歌同样要等新 URL 送达引擎，期间忽略旧曲残留进度。
         self.awaiting_load = true;
+        self.pending_seek_ms = None;
         self.state.song.clone()
     }
 
@@ -593,9 +621,52 @@ mod tests {
     #[test]
     fn seek_updates_position() {
         let (mut player, engine) = setup(1);
+        // 先加载：`set_queue` 会进入「等待加载」窗口，此窗口内 seek 是延后补发的（见下个测试）。
+        player.play_url("u");
         player.seek_ms(12_000);
         assert_eq!(player.state().position_ms, 12_000);
         assert_eq!(engine.0.lock().unwrap().pos_ms, 12_000);
+    }
+
+    #[test]
+    fn seek_during_pending_load_defers_to_new_file() {
+        let (mut player, engine) = setup(2);
+        // 进入等待加载窗口（冷启动恢复语义），引擎此刻仍指向上一首。
+        player.restore(songs(2), 1, PlayMode::ListLoop, 0, 0, None, None);
+        engine.set(|i| i.pos_ms = 999);
+
+        player.seek_ms(45_000);
+        assert_eq!(
+            engine.0.lock().unwrap().pos_ms,
+            999,
+            "等待加载期间不得把 seek 打到旧文件上"
+        );
+        assert_eq!(player.state().position_ms, 45_000, "界面位置应立即跟手");
+
+        // 新文件送达后补发 seek。
+        player.play_url("http://new");
+        assert_eq!(
+            engine.0.lock().unwrap().pos_ms,
+            45_000,
+            "加载完成后应把延后的 seek 作用于新文件"
+        );
+        assert_eq!(player.state().position_ms, 45_000);
+    }
+
+    #[test]
+    fn deferred_seek_is_dropped_when_track_changes() {
+        let (mut player, engine) = setup(3);
+        player.restore(songs(3), 0, PlayMode::ListLoop, 0, 0, None, None);
+        player.seek_ms(30_000);
+        // 切到下一首：上一首的待补发 seek 不再适用。
+        player.next_track();
+        engine.set(|i| i.pos_ms = 0);
+        player.play_url("http://next");
+        assert_eq!(
+            engine.0.lock().unwrap().pos_ms,
+            0,
+            "旧曲遗留的待补发 seek 不应作用到新曲"
+        );
     }
 
     #[test]

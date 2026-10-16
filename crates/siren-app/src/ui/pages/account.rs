@@ -11,7 +11,7 @@ use siren_core::model::{AccountBinding, UserLevel, VipInfo};
 
 use super::super::services::Services;
 use super::super::session::Session;
-use super::super::{page_shell, PageEvent};
+use super::super::{fmt_date, page_shell, PageEvent};
 use crate::theme::{self, spacing};
 
 pub(crate) struct AccountPage {
@@ -516,22 +516,6 @@ fn normalize_progress(progress: f64, now: f64, next: f64) -> f32 {
     } else {
         0.0
     }
-}
-
-/// 毫秒时间戳 → `YYYY-MM-DD`。
-fn fmt_date(ms: i64) -> String {
-    let days = ms / 86_400_000;
-    let z = days + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    format!("{y}-{m:02}-{d:02}")
 }
 
 /// 居中裁成正方形并压缩为 JPEG（最长边 512）。
