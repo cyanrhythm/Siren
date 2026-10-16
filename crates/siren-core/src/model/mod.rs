@@ -127,6 +127,8 @@ pub struct PlaylistDetail {
     pub creator_avatar: String,
     /// 是否隐私歌单（10 为隐私）。
     pub privacy: i64,
+    /// 歌单简介（「名称和详情」对话框展示当前值用）。
+    pub description: String,
     /// 曲目总数（详情可能截断，供展示）。
     pub track_count: i64,
 }
@@ -912,6 +914,11 @@ pub fn parse_playlist_detail(value: &Value) -> Option<PlaylistDetail> {
             .unwrap_or_default()
             .to_string(),
         privacy: playlist.get("privacy").and_then(Value::as_i64).unwrap_or_default(),
+        description: playlist
+            .get("description")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
     })
 }
 
@@ -1073,6 +1080,21 @@ mod tests {
     fn missing_fields_are_default() {
         let songs = parse_search_songs(&json!({}));
         assert!(songs.is_empty());
+    }
+
+    #[test]
+    fn playlist_detail_reads_description() {
+        // 「名称和详情」对话框要展示当前简介，故详情必须带出 description。
+        let value = json!({
+            "playlist": {
+                "id": 1, "name": "歌单", "subscribed": false, "privacy": 0, "trackCount": 0,
+                "description": "简介文本",
+                "creator": { "userId": 9, "nickname": "我", "avatarUrl": "" },
+                "tracks": []
+            }
+        });
+        let detail = parse_playlist_detail(&value).expect("应可解析");
+        assert_eq!(detail.description, "简介文本");
     }
 
     #[test]
