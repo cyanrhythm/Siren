@@ -12,6 +12,10 @@ pub(crate) mod dim {
     pub(crate) const INDEX_W: f32 = 28.0;
     /// 时长列宽。
     pub(crate) const DURATION_W: f32 = 56.0;
+    /// 专辑列宽（歌单/专辑详情曲目行）。表头与行共用，避免两处各写一份（O4.2）。
+    pub(crate) const ALBUM_W: f32 = 240.0;
+    /// 「红心」槽宽：kit Button 默认尺寸（`Size::Medium` = 32）。表头留同宽空格以对齐时长列。
+    pub(crate) const LIKE_W: f32 = 32.0;
     /// 歌曲行封面边长。
     pub(crate) const COVER_SONG: f32 = 40.0;
     /// 列表行封面边长（歌单/专辑/艺人）。

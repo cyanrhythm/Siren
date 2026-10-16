@@ -28,6 +28,10 @@ use siren_core::player::{PlaySource, PlaySourceKind};
 const HERO_H: f32 = 248.0;
 /// 收起后的紧凑横栏高度，对齐 Melodia `StickyBarHeight = 64.dp`。
 const STICKY_BAR_H: f32 = 64.0;
+/// 操作栏高度：播放键 56 + `pb(10)`。
+const ACTION_ROW_H: f32 = 66.0;
+/// 自建歌单「添加 / 名称和详情」胶囊行高度：pill 32 + `pb(14)`。
+const PILLS_H: f32 = 46.0;
 /// 曲目区滚动超过该偏移即收起 hero（滚回顶部再展开）。
 const COLLAPSE_AT_PX: f32 = 8.0;
 
@@ -1097,6 +1101,9 @@ impl Render for PlaylistPage {
                     window,
                     cx,
                 );
+                // 横栏里的播放键（对齐 Melodia `StickyPlayButtonSize = 48.dp`）：
+                // 操作栏收起后，这里是唯一的播放入口。
+                let weak_bar_play = cx.weak_entity();
                 let sticky_bar = div()
                     .w_full()
                     .h(px(STICKY_BAR_H * fold))
@@ -1109,6 +1116,29 @@ impl Render for PlaylistPage {
                     .when_some(base_color.map(|c| theme::darken(c, 0.42)), |el, bg| el.bg(bg))
                     .child(
                         div()
+                            .id("pl-bar-play")
+                            .flex_none()
+                            .size(px(48.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded_full()
+                            .bg(theme::accent())
+                            .cursor_pointer()
+                            .on_click(move |_ev, _window, cx| {
+                                weak_bar_play
+                                    .update(cx, |page, cx| {
+                                        let items = page.detail.as_ref().map(|d| d.tracks.clone()).unwrap_or_default();
+                                        let source = page.source();
+                                        page.playback
+                                            .update(cx, |pb, cx| pb.play_from_source(items, 0, Some(source), cx));
+                                    })
+                                    .ok();
+                            })
+                            .child(icon(IconName::Play, 22.0, theme::text_primary())),
+                    )
+                    .child(
+                        div()
                             .flex_1()
                             .min_w(px(0.0))
                             .text_lg()
@@ -1116,13 +1146,41 @@ impl Render for PlaylistPage {
                             .text_color(theme::text_primary())
                             .truncate()
                             .child(detail.name.clone()),
+                    );
+
+                // 吸顶列头：与曲目行共用列宽（`dim::*`），滚不滚都钉在列表之上
+                //（Melodia 用 stickyHeader + translationY 让表头停在横栏下，Siren 的 hero/操作栏
+                // 是固定区，表头放固定区即可得到同样的吸顶效果）。
+                let column_header = div()
+                    .w_full()
+                    .v_flex()
+                    .bg(theme::pane())
+                    .child(
+                        div()
+                            .w_full()
+                            .flex()
+                            .items_center()
+                            .gap(px(spacing::MD))
+                            .px(px(spacing::XL))
+                            .py(px(spacing::SM))
+                            .text_xs()
+                            .text_color(theme::text_gray())
+                            .child(div().w(px(dim::INDEX_W)).flex().justify_end().child("#"))
+                            .child(div().w(px(dim::COVER_SONG)))
+                            .child(div().flex_1().min_w(px(0.0)).child("标题"))
+                            .child(div().w(px(dim::ALBUM_W)).child("专辑"))
+                            .child(div().w(px(dim::LIKE_W)))
+                            .child(div().w(px(dim::DURATION_W)).flex().justify_end().child(icon(
+                                IconName::Clock,
+                                14.0,
+                                theme::text_gray(),
+                            ))),
                     )
                     .child(
                         div()
-                            .flex_none()
-                            .text_sm()
-                            .text_color(theme::text_gray())
-                            .child(format!("{count} 首")),
+                            .w_full()
+                            .px(px(spacing::XL))
+                            .child(div().w_full().h(px(1.0)).bg(theme::surface_light().opacity(0.6))),
                     );
 
                 let hero = div()
@@ -1398,7 +1456,7 @@ impl Render for PlaylistPage {
                                         )
                                         .child(
                                             div()
-                                                .w(px(240.0))
+                                                .w(px(dim::ALBUM_W))
                                                 .text_xs()
                                                 .text_color(theme::text_gray())
                                                 .truncate()
@@ -1480,8 +1538,18 @@ impl Render for PlaylistPage {
                     .w_full()
                     .child(hero)
                     .child(sticky_bar)
-                    .child(action_row)
-                    .child(pills)
+                    // 操作栏与胶囊随 hero 一起收起（Melodia 里这两块本来就在列表内、会滚走）：
+                    // 收起后只剩「横栏 + 列头」，纵向空间全给曲目表。滚回顶部自动复原。
+                    .child(
+                        div()
+                            .w_full()
+                            .h(px((ACTION_ROW_H + if owned { PILLS_H } else { 0.0 }) * (1.0 - fold)))
+                            .overflow_hidden()
+                            .opacity(1.0 - fold)
+                            .child(action_row)
+                            .child(pills),
+                    )
+                    .child(column_header)
                     .child(rows)
                     .into_any_element()
             }
