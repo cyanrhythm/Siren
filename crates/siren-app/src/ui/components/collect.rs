@@ -6,6 +6,7 @@ use std::collections::{HashMap, HashSet};
 use gpui_kit::base::{ElementExt as _, StyledExt};
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::super::session::Session;
@@ -59,19 +60,24 @@ pub(crate) fn overlay_scrim_strong<E: 'static>(
     overlay_scrim_with(id, weak, close, theme::scrim_strong())
 }
 
+/// 浮层里字段上方的说明文字（灰、小号）。
+fn field_label(text: String) -> impl IntoElement {
+    div().text_xs().text_color(theme::text_gray()).child(text)
+}
+
 /// 同 [`overlay_scrim`]，但打开后把焦点直接落到浮层内的输入框（`inner`），
 /// 用户打开即可输入，无需先点一下输入框（整改清单 O0.2）。
 ///
-/// `reset_input` 非空时，打开的首帧会把该输入框清空——避免上次没提交就关掉时
-/// 残留的文字带到下一次打开。
+/// `reset_inputs` 里的输入框会在打开的首帧被清空——避免上次没提交就关掉时
+/// 残留的文字带到下一次打开（如「新建歌单」上一次没提交的名字）。
 pub(crate) fn overlay_scrim_focusing<E: 'static>(
     id: &'static str,
     weak: WeakEntity<E>,
     close: impl Fn(&mut E, &mut Window, &mut Context<E>) + Clone + 'static,
     inner: FocusHandle,
-    reset_input: Option<Entity<InputState>>,
+    reset_inputs: Vec<Entity<InputState>>,
 ) -> Stateful<Div> {
-    overlay_scrim_inner(id, weak, close, theme::scrim(), Some(inner), reset_input)
+    overlay_scrim_inner(id, weak, close, theme::scrim(), Some(inner), reset_inputs)
 }
 
 fn overlay_scrim_with<E: 'static>(
@@ -80,7 +86,7 @@ fn overlay_scrim_with<E: 'static>(
     close: impl Fn(&mut E, &mut Window, &mut Context<E>) + Clone + 'static,
     scrim: Rgba,
 ) -> Stateful<Div> {
-    overlay_scrim_inner(id, weak, close, scrim, None, None)
+    overlay_scrim_inner(id, weak, close, scrim, None, Vec::new())
 }
 
 /// 关闭浮层时调用：把焦点归还到打开前的位置（没有记录时退回「清空焦点」）。
@@ -99,7 +105,7 @@ fn overlay_scrim_inner<E: 'static>(
     close: impl Fn(&mut E, &mut Window, &mut Context<E>) + Clone + 'static,
     scrim: Rgba,
     inner: Option<FocusHandle>,
-    reset_input: Option<Entity<InputState>>,
+    reset_inputs: Vec<Entity<InputState>>,
 ) -> Stateful<Div> {
     let weak_click = weak.clone();
     let weak_esc = weak;
@@ -144,7 +150,7 @@ fn overlay_scrim_inner<E: 'static>(
                 // 记录打开前的焦点，关闭时归还（无障碍：浮层关闭后焦点不应凭空消失）。
                 OVERLAY_PREV_FOCUS.with(|map| map.borrow_mut().insert(id, window.focused(cx)));
                 // 带输入框的浮层顺手清空上次残留（上次没提交就关掉时留在框里的文字）。
-                if let Some(input) = reset_input.clone() {
+                for input in reset_inputs.clone() {
                     input.update(cx, |state, cx| state.set_value("", window, cx));
                 }
                 let focus = inner.clone().unwrap_or_else(|| overlay_focus(id, cx));
@@ -321,8 +327,8 @@ impl Root {
             weak,
             Root::close_create,
             self.ops.create_input.read(cx).focus_handle(cx),
-            // 新建歌单：每次打开清空上次残留（重命名/简介要保留原值，故只有这里传 Some）。
-            Some(self.ops.create_input.clone()),
+            // 每次打开清空上次残留（未提交就关掉的文字不带到下一次）。
+            vec![self.ops.create_input.clone()],
         )
         .child(
             div()
@@ -481,48 +487,86 @@ impl Root {
             .into_any_element()
     }
 
-    /// 打开重命名歌单浮层。
-    pub(crate) fn open_rename(&mut self, id: i64, cx: &mut Context<Self>) {
-        overlay_focus("rename-overlay", cx);
-        self.ops.rename_pid = Some(id);
+    /// 打开「名称和详情」对话框（名称 / 简介 / 封面三合一）。
+    ///
+    /// `name` / `description` / `cover_url` 是**当前值**，只用于在对话框里展示：
+    /// kit 的 `InputState` 没有公开的写入接口（`replace_all` 是 crate 私有），
+    /// 所以输入框不预填，改为「留空 = 该项不修改」——同时也避免了旧版
+    /// 「编辑简介打开是空框、保存就把简介清空」的隐患。
+    pub(crate) fn open_edit(
+        &mut self,
+        id: i64,
+        name: String,
+        description: String,
+        cover_url: String,
+        cx: &mut Context<Self>,
+    ) {
+        overlay_focus("edit-overlay", cx);
+        self.ops.edit = Some((id, name, description, cover_url));
         cx.notify();
     }
 
-    pub(crate) fn close_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.ops.rename_pid = None;
-        overlay_close("rename-overlay", window, cx);
+    pub(crate) fn close_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.ops.edit = None;
+        overlay_close("edit-overlay", window, cx);
         cx.notify();
     }
 
-    /// 提交重命名。
-    pub(crate) fn submit_rename(&mut self, cx: &mut Context<Self>) {
-        let Some(id) = self.ops.rename_pid else { return };
-        let name = self.ops.rename_input.read(cx).value().trim().to_string();
-        if name.is_empty() {
-            self.services.toast_error("歌单名不能为空", cx);
+    /// 「更换封面」：先关闭对话框再进入选图 → 裁剪 → 上传流程。
+    ///
+    /// 裁剪浮层属于页面元素树，若与对话框同开会被对话框压住，故先关窗。
+    fn change_edit_cover(&mut self, cx: &mut Context<Self>) {
+        self.ops.edit = None;
+        cx.notify();
+        if let Some(page) = self.playlist_page.clone() {
+            page.update(cx, |page, cx| page.change_cover(cx));
+        }
+    }
+
+    /// 提交「名称和详情」：只提交非空字段（留空 = 该项不修改）。
+    pub(crate) fn submit_edit(&mut self, cx: &mut Context<Self>) {
+        let Some((id, _cur_name, _cur_desc, _)) = self.ops.edit.clone() else {
+            return;
+        };
+        let name = self.ops.edit_name_input.read(cx).value().trim().to_string();
+        let desc = self.ops.edit_desc_input.read(cx).value().trim().to_string();
+        if name.is_empty() && desc.is_empty() {
+            self.services.toast_error("名称与简介均为空，没有可保存的修改", cx);
             return;
         }
         let client = self.services.client.clone();
         let new_name = name.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.services.handle.spawn(async move {
-            let ok = siren_core::network::api::playlist_rename(&client, id, &name)
-                .await
-                .is_ok();
+            let mut ok = true;
+            if !name.is_empty() {
+                ok = ok
+                    && siren_core::network::api::playlist_rename(&client, id, &name)
+                        .await
+                        .is_ok();
+            }
+            if !desc.is_empty() {
+                ok = ok
+                    && siren_core::network::api::playlist_update_desc(&client, id, &desc)
+                        .await
+                        .is_ok();
+            }
             let _ = tx.send(ok);
         });
-        self.ops.rename_pid = None;
+        self.ops.edit = None;
         cx.notify();
-        // 待接口返回后再刷新列表，并即时更新当前打开歌单页的标题
+        // 待接口返回后再刷新列表，并即时更新当前打开歌单页的标题。
         cx.spawn(async move |this, cx| {
             let ok = rx.await.unwrap_or(false);
             this.update(cx, |this, cx| {
                 if ok {
-                    this.services.toast_success("已重命名歌单", cx);
+                    this.services.toast_success("已保存歌单信息", cx);
                     this.library.update(cx, |page, cx| page.reload_playlists(cx));
-                    this.update_open_playlist_name(id, &new_name, cx);
+                    if !new_name.is_empty() {
+                        this.update_open_playlist_name(id, &new_name, cx);
+                    }
                 } else {
-                    this.services.toast_error("重命名失败", cx);
+                    this.services.toast_error("保存失败", cx);
                 }
                 cx.notify();
             })
@@ -589,35 +633,62 @@ impl Root {
         }
     }
 
-    /// 重命名浮层。
-    pub(crate) fn rename_overlay(&self, weak: WeakEntity<Self>, cx: &App) -> AnyElement {
+    /// 「名称和详情」对话框：名称 + 简介 + 封面（对齐 Melodia `EditPlaylistDialog`）。
+    pub(crate) fn edit_overlay(&self, weak: WeakEntity<Self>, cx: &App) -> AnyElement {
+        let Some((_id, name, desc, cover_url)) = self.ops.edit.clone() else {
+            return div().into_any_element();
+        };
         let weak_cancel = weak.clone();
         let weak_ok = weak.clone();
+        let weak_cover = weak;
+        let cover = (!cover_url.is_empty()).then(|| self.services.covers.image(&cover_url, 72.0));
+        let cur_desc = if desc.trim().is_empty() {
+            "（暂无简介）".to_string()
+        } else {
+            desc.clone()
+        };
         overlay_scrim_focusing(
-            "rename-overlay",
-            weak,
-            Root::close_rename,
-            self.ops.rename_input.read(cx).focus_handle(cx),
-            None,
+            "edit-overlay",
+            weak_cancel.clone(),
+            Root::close_edit,
+            self.ops.edit_name_input.read(cx).focus_handle(cx),
+            vec![self.ops.edit_name_input.clone(), self.ops.edit_desc_input.clone()],
         )
         .child(
             div()
                 .v_flex()
-                .w(px(360.0))
-                .gap(px(14.0))
+                .w(px(430.0))
+                .gap(px(spacing::MD))
                 .rounded(px(theme::RADIUS_LG))
                 .bg(theme::surface())
                 .p(px(20.0))
-                .id("rename-panel")
+                .id("edit-panel")
                 .on_click(move |_ev, _window, cx| cx.stop_propagation())
                 .child(
                     div()
                         .text_lg()
                         .font_weight(FontWeight::BOLD)
                         .text_color(theme::text_primary())
-                        .child("重命名歌单"),
+                        .child("名称和详情"),
                 )
-                .child(Input::new(&self.ops.rename_input))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(spacing::MD))
+                        .when_some(cover, |row, cover| row.child(cover))
+                        .child(
+                            Button::new("edit-cover")
+                                .label("更换封面")
+                                .on_click(move |_ev, _w, cx| {
+                                    weak_cover.update(cx, |root, cx| root.change_edit_cover(cx)).ok();
+                                }),
+                        ),
+                )
+                .child(field_label(format!("当前名称：{name}")))
+                .child(Input::new(&self.ops.edit_name_input))
+                .child(field_label(format!("当前简介：{cur_desc}")))
+                .child(Input::new(&self.ops.edit_desc_input))
                 .child(
                     div()
                         .flex()
@@ -625,18 +696,18 @@ impl Root {
                         .justify_end()
                         .gap(px(spacing::SM))
                         .child(
-                            Button::new("rename-cancel")
+                            Button::new("edit-cancel")
                                 .label("取消")
                                 .on_click(move |_ev, window, cx| {
-                                    weak_cancel.update(cx, |root, cx| root.close_rename(window, cx)).ok();
+                                    weak_cancel.update(cx, |root, cx| root.close_edit(window, cx)).ok();
                                 }),
                         )
                         .child(
-                            Button::new("rename-ok")
+                            Button::new("edit-ok")
                                 .primary()
-                                .label("确定")
+                                .label("保存")
                                 .on_click(move |_ev, _w, cx| {
-                                    weak_ok.update(cx, |root, cx| root.submit_rename(cx)).ok();
+                                    weak_ok.update(cx, |root, cx| root.submit_edit(cx)).ok();
                                 }),
                         ),
                 ),
@@ -695,103 +766,5 @@ impl Root {
                     ),
             )
             .into_any_element()
-    }
-
-    /// 打开编辑简介浮层。
-    pub(crate) fn open_desc(&mut self, id: i64, cx: &mut Context<Self>) {
-        overlay_focus("desc-overlay", cx);
-        self.ops.desc_pid = Some(id);
-        cx.notify();
-    }
-
-    pub(crate) fn close_desc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.ops.desc_pid = None;
-        overlay_close("desc-overlay", window, cx);
-        cx.notify();
-    }
-
-    /// 提交编辑简介。
-    pub(crate) fn submit_desc(&mut self, cx: &mut Context<Self>) {
-        let Some(id) = self.ops.desc_pid else { return };
-        let desc = self.ops.desc_input.read(cx).value().to_string();
-        let client = self.services.client.clone();
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        self.services.handle.spawn(async move {
-            let ok = siren_core::network::api::playlist_update_desc(&client, id, &desc)
-                .await
-                .is_ok();
-            let _ = tx.send(ok);
-        });
-        self.ops.desc_pid = None;
-        cx.notify();
-        cx.spawn(async move |this, cx| {
-            let ok = rx.await.unwrap_or(false);
-            this.update(cx, |this, cx| {
-                if ok {
-                    this.services.toast_success("简介已更新", cx);
-                    this.library.update(cx, |page, cx| page.reload_playlists(cx));
-                } else {
-                    this.services.toast_error("简介更新失败", cx);
-                }
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
-    }
-
-    /// 编辑简介浮层。
-    pub(crate) fn desc_overlay(&self, weak: WeakEntity<Self>, cx: &App) -> AnyElement {
-        let weak_cancel = weak.clone();
-        let weak_ok = weak.clone();
-        overlay_scrim_focusing(
-            "desc-overlay",
-            weak,
-            Root::close_desc,
-            self.ops.desc_input.read(cx).focus_handle(cx),
-            None,
-        )
-        .child(
-            div()
-                .v_flex()
-                .w(px(420.0))
-                .gap(px(14.0))
-                .rounded(px(theme::RADIUS_LG))
-                .bg(theme::surface())
-                .p(px(20.0))
-                .id("desc-panel")
-                .on_click(move |_ev, _window, cx| cx.stop_propagation())
-                .child(
-                    div()
-                        .text_lg()
-                        .font_weight(FontWeight::BOLD)
-                        .text_color(theme::text_primary())
-                        .child("编辑简介"),
-                )
-                .child(Input::new(&self.ops.desc_input))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_end()
-                        .gap(px(spacing::SM))
-                        .child(
-                            Button::new("desc-cancel")
-                                .label("取消")
-                                .on_click(move |_ev, window, cx| {
-                                    weak_cancel.update(cx, |root, cx| root.close_desc(window, cx)).ok();
-                                }),
-                        )
-                        .child(
-                            Button::new("desc-ok")
-                                .primary()
-                                .label("保存")
-                                .on_click(move |_ev, _w, cx| {
-                                    weak_ok.update(cx, |root, cx| root.submit_desc(cx)).ok();
-                                }),
-                        ),
-                ),
-        )
-        .into_any_element()
     }
 }

@@ -152,18 +152,18 @@ pub(crate) enum PageEvent {
     AddToPlaylist {
         song_id: i64,
     },
-    /// 请求重命名歌单。
-    RenamePlaylist {
+    /// 请求打开「名称和详情」对话框（名称 / 简介 / 封面三合一）。
+    /// `name` / `description` 为当前值，仅供对话框展示——输入框留空表示不修改该项。
+    EditPlaylist {
         id: i64,
+        name: String,
+        description: String,
+        cover_url: String,
     },
     /// 请求删除歌单（name 供删除确认浮层展示）。
     DeletePlaylist {
         id: i64,
         name: String,
-    },
-    /// 请求编辑歌单简介。
-    EditPlaylistDesc {
-        id: i64,
     },
     /// 歌单信息已变更（封面等），请外壳刷新。
     PlaylistChanged,
@@ -347,11 +347,10 @@ pub(crate) struct PlaylistOpsState {
     /// 「加入歌单」列表分页：已加载条数与是否还有更多（K1）。
     pub(crate) picker_offset: u32,
     pub(crate) picker_more: bool,
-    pub(crate) rename_pid: Option<i64>,
-    pub(crate) rename_input: Entity<InputState>,
+    pub(crate) edit: Option<(i64, String, String, String)>,
+    pub(crate) edit_name_input: Entity<InputState>,
+    pub(crate) edit_desc_input: Entity<InputState>,
     pub(crate) delete_pid: Option<i64>,
-    pub(crate) desc_pid: Option<i64>,
-    pub(crate) desc_input: Entity<InputState>,
 }
 
 /// 正在播放栏的 UI 状态。
@@ -464,8 +463,8 @@ impl Root {
         let pl_add_input = cx.new(|cx| InputState::new(window, cx).placeholder("搜索要添加的歌曲"));
         let account_nickname_input = cx.new(|cx| InputState::new(window, cx).placeholder("新昵称"));
         let account_signature_input = cx.new(|cx| InputState::new(window, cx).placeholder("个性签名"));
-        let rename_input = cx.new(|cx| InputState::new(window, cx).placeholder("新名称"));
-        let desc_input = cx.new(|cx| InputState::new(window, cx).placeholder("歌单简介"));
+        let edit_name_input = cx.new(|cx| InputState::new(window, cx).placeholder("新名称（留空则不修改）"));
+        let edit_desc_input = cx.new(|cx| InputState::new(window, cx).placeholder("新简介（留空则不修改）"));
 
         let np_width = SettingsStore::of(cx).np_width();
         let np_width_slider = cx.new(|_| {
@@ -514,16 +513,20 @@ impl Root {
                     root.submit_create(cx);
                 }
             }));
-            subs.push(cx.subscribe(&rename_input, |root: &mut Root, _i, ev: &InputEvent, cx| {
-                if let InputEvent::PressEnter { .. } = ev {
-                    root.submit_rename(cx);
-                }
-            }));
-            subs.push(cx.subscribe(&desc_input, |root: &mut Root, _i, ev: &InputEvent, cx| {
-                if let InputEvent::PressEnter { .. } = ev {
-                    root.submit_desc(cx);
-                }
-            }));
+            subs.push(
+                cx.subscribe(&edit_name_input, |root: &mut Root, _i, ev: &InputEvent, cx| {
+                    if let InputEvent::PressEnter { .. } = ev {
+                        root.submit_edit(cx);
+                    }
+                }),
+            );
+            subs.push(
+                cx.subscribe(&edit_desc_input, |root: &mut Root, _i, ev: &InputEvent, cx| {
+                    if let InputEvent::PressEnter { .. } = ev {
+                        root.submit_edit(cx);
+                    }
+                }),
+            );
             subs.push(
                 cx.subscribe(&np_width_slider, |root: &mut Root, _slider, event: &SliderEvent, cx| {
                     match event {
@@ -591,11 +594,10 @@ impl Root {
                     picker_playlists: Vec::new(),
                     picker_offset: 0,
                     picker_more: false,
-                    rename_pid: None,
-                    rename_input,
+                    edit: None,
+                    edit_name_input,
+                    edit_desc_input,
                     delete_pid: None,
-                    desc_pid: None,
-                    desc_input,
                 },
                 _subs: subs,
                 _search_sub,
@@ -645,9 +647,13 @@ impl Root {
             PageEvent::OpenAccount => self.open_account(cx),
             PageEvent::OpenCreate => self.open_create(cx),
             PageEvent::AddToPlaylist { song_id } => self.open_picker(*song_id, cx),
-            PageEvent::RenamePlaylist { id } => self.open_rename(*id, cx),
+            PageEvent::EditPlaylist {
+                id,
+                name,
+                description,
+                cover_url,
+            } => self.open_edit(*id, name.clone(), description.clone(), cover_url.clone(), cx),
             PageEvent::DeletePlaylist { id, name } => self.open_delete(*id, name.clone(), cx),
-            PageEvent::EditPlaylistDesc { id } => self.open_desc(*id, cx),
             PageEvent::PlaylistChanged => self.library.update(cx, |page, cx| page.reload_playlists(cx)),
         }
     }
@@ -1202,12 +1208,10 @@ impl Render for Root {
             .ops
             .picker_song
             .map(|_| self.picker_overlay(weak_picker, window, cx));
-        let weak_rename = cx.weak_entity();
+        let weak_edit = cx.weak_entity();
         let weak_delete = cx.weak_entity();
-        let rename_overlay = self.ops.rename_pid.map(|_| self.rename_overlay(weak_rename, cx));
+        let edit_overlay = self.ops.edit.is_some().then(|| self.edit_overlay(weak_edit, cx));
         let delete_overlay = self.ops.delete_pid.map(|_| self.delete_overlay(weak_delete));
-        let weak_desc = cx.weak_entity();
-        let desc_overlay = self.ops.desc_pid.map(|_| self.desc_overlay(weak_desc, cx));
         let weak_queue = cx.weak_entity();
         let queue_overlay = self.queue_open.then(|| self.queue_overlay(weak_queue, window, cx));
         // 中间列显式分配宽度，规避 gpui `flex_1` 的横向过度伸展。
@@ -1264,9 +1268,8 @@ impl Render for Root {
             .when_some(comments_overlay, |this, overlay| this.child(overlay))
             .when_some(create_overlay, |this, overlay| this.child(overlay))
             .when_some(picker_overlay, |this, overlay| this.child(overlay))
-            .when_some(rename_overlay, |this, overlay| this.child(overlay))
+            .when_some(edit_overlay, |this, overlay| this.child(overlay))
             .when_some(delete_overlay, |this, overlay| this.child(overlay))
-            .when_some(desc_overlay, |this, overlay| this.child(overlay))
             .when_some(queue_overlay, |this, overlay| this.child(overlay))
             .child(self.notifications_overlay(cx));
         // CSD 的阴影 / 窗口边缘缩放区 / client inset 由 gpui-kit 的 Root
