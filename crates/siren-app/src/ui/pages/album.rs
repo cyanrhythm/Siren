@@ -144,11 +144,10 @@ impl AlbumPage {
 
 impl Render for AlbumPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let weak_back = cx.weak_entity();
         let weak_star = cx.weak_entity();
         let weak_play = cx.weak_entity();
         let subscribed = self.subscribed;
-        // 顶部收起因子（0 展开 / 1 收起）：导航行、hero、操作栏、横栏共用。
+        // 顶部收起因子（0 展开 / 1 收起）：hero、操作栏、横栏共用。
         let fold = header_fold(
             "album-header-collapse",
             "album-tracks",
@@ -156,57 +155,30 @@ impl Render for AlbumPage {
             window,
             cx,
         );
-        let nav_row = div()
+        // 页面顶部不再有自己的导航行（返回键在应用标题栏、专辑名在 hero 里，皆重复）；
+        // 原来的收藏星标下沉到操作栏（与歌单页把 ⋯ 下沉到操作栏同一处理）。
+        let star_button = div()
+            .id("album-star")
+            .size(px(dim::ROUND_BTN))
             .flex()
             .items_center()
-            .gap(px(10.0))
-            .child(
-                div()
-                    .id("album-back")
-                    .size(px(dim::ROUND_BTN))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded_full()
-                    .cursor_pointer()
-                    .hover(|s| s.bg(theme::surface()))
-                    .on_click(move |_ev, _window, cx| {
-                        weak_back.update(cx, |_p, cx| cx.emit(PageEvent::Back)).ok();
-                    })
-                    .child(icon(IconName::ChevronLeft, 18.0, theme::text_gray())),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .text_lg()
-                    .text_color(theme::text_primary())
-                    .child(self.name.clone()),
-            )
-            .child(
-                div()
-                    .id("album-subscribe")
-                    .size(px(dim::ROUND_BTN))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded_full()
-                    .cursor_pointer()
-                    .hover(|s| s.bg(theme::surface()))
-                    .on_click(move |_ev, _window, cx| {
-                        weak_star.update(cx, |p, cx| p.toggle_subscribe(cx)).ok();
-                    })
-                    .child(icon(
-                        if subscribed { IconName::Star } else { IconName::StarOff },
-                        18.0,
-                        if subscribed {
-                            theme::accent()
-                        } else {
-                            theme::text_gray()
-                        },
-                    )),
-            )
+            .justify_center()
+            .rounded_full()
+            .cursor_pointer()
+            .hover(|s| s.bg(theme::surface()))
+            .on_click(move |_ev, _window, cx| {
+                weak_star.update(cx, |p, cx| p.toggle_subscribe(cx)).ok();
+            })
+            .child(icon(
+                if subscribed { IconName::Star } else { IconName::StarOff },
+                24.0,
+                if subscribed {
+                    theme::accent()
+                } else {
+                    theme::text_gray()
+                },
+            ))
             .into_any_element();
-        let header = nav_row;
 
         let body: AnyElement = match &self.detail {
             Some(detail) => {
@@ -354,10 +326,8 @@ impl Render for AlbumPage {
                 };
 
                 // 收起后的横栏（对齐 Melodia 的同款 sticky bar）：封面取色实色底 +
-                // 播放键 + 专辑名，返回键与收藏键一并搬进来（收起后导航行/操作栏都不在）。
+                // 播放键 + 专辑名（与歌单页横栏同形）；收藏星标下沉到操作栏，故这里不再有它。
                 let weak_bar_play = cx.weak_entity();
-                let weak_bar_back = cx.weak_entity();
-                let weak_bar_star = cx.weak_entity();
                 let bar_cover = self.services.covers.color(&detail.cover_url);
                 let sticky_bar = div()
                     .w_full()
@@ -368,22 +338,6 @@ impl Render for AlbumPage {
                     .gap(px(spacing::SM))
                     .px(px(spacing::MD))
                     .when_some(bar_cover.map(|c| theme::darken(c, 0.42)), |el, bg| el.bg(bg))
-                    .child(
-                        div()
-                            .id("album-bar-back")
-                            .flex_none()
-                            .size(px(dim::ROUND_BTN))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .rounded_full()
-                            .cursor_pointer()
-                            .hover(|s| s.bg(theme::surface()))
-                            .on_click(move |_ev, _window, cx| {
-                                weak_bar_back.update(cx, |_p, cx| cx.emit(PageEvent::Back)).ok();
-                            })
-                            .child(icon(IconName::ChevronLeft, 18.0, theme::text_gray())),
-                    )
                     .child(
                         div()
                             .id("album-bar-play")
@@ -419,26 +373,13 @@ impl Render for AlbumPage {
                     )
                     .child(
                         div()
-                            .id("album-bar-subscribe")
-                            .flex_none()
-                            .size(px(dim::ROUND_BTN))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .rounded_full()
-                            .cursor_pointer()
-                            .on_click(move |_ev, _window, cx| {
-                                weak_bar_star.update(cx, |p, cx| p.toggle_subscribe(cx)).ok();
-                            })
-                            .child(icon(
-                                if subscribed { IconName::Star } else { IconName::StarOff },
-                                18.0,
-                                if subscribed {
-                                    theme::accent()
-                                } else {
-                                    theme::text_gray()
-                                },
-                            )),
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .text_lg()
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(theme::text_primary())
+                            .truncate()
+                            .child(detail.name.clone()),
                     );
 
                 // 吸顶列头：专辑行没有「专辑」列，故列头为 # / 标题 / 时长（列宽与行共用 `dim::*`）。
@@ -534,6 +475,7 @@ impl Render for AlbumPage {
                             .gap(px(spacing::LG))
                             .px(px(spacing::LG))
                             .pb(px(spacing::SM))
+                            .child(star_button)
                             .when(count > 0, |el| {
                                 el.child(
                                     div()
@@ -596,24 +538,13 @@ impl Render for AlbumPage {
                 }
             }
         };
-        // 外壳：导航行与 hero / 操作栏同步收起，收起后顶部只剩横栏一行（同歌单页）。
-        // `NAV_BLOCK_H` = `p(MD) * 2 + 返回键 30`。
-        const NAV_BLOCK_H: f32 = 54.0;
+        // 外壳：页面顶部不再有自己的导航行，收起后顶部只剩横栏一行（同歌单页）。
         div()
             .v_flex()
             .flex_1()
             .min_w(px(0.0))
             .h_full()
             .bg(theme::pane())
-            .child(collapse_box(
-                fold,
-                NAV_BLOCK_H,
-                div()
-                    .w_full()
-                    .p(px(theme::spacing::MD))
-                    .child(header)
-                    .into_any_element(),
-            ))
             .child(body)
     }
 }

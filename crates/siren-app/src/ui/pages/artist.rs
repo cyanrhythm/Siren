@@ -159,7 +159,6 @@ impl ArtistPage {
     }
 
     fn header(&self, cx: &Context<Self>) -> AnyElement {
-        let weak_back = cx.weak_entity();
         let weak_play = cx.weak_entity();
         let weak_follow = cx.weak_entity();
         let cover = self
@@ -217,21 +216,6 @@ impl ArtistPage {
                                     }),
                             ),
                     ),
-            )
-            .child(
-                div()
-                    .id("artist-back")
-                    .size(px(dim::ROUND_BTN))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded_full()
-                    .cursor_pointer()
-                    .hover(|s| s.bg(theme::surface()))
-                    .on_click(move |_ev, _window, cx| {
-                        weak_back.update(cx, |_p, cx| cx.emit(PageEvent::Back)).ok();
-                    })
-                    .child(icon(IconName::ChevronLeft, 18.0, theme::text_gray())),
             )
             .into_any_element()
     }
@@ -515,7 +499,6 @@ impl Render for ArtistPage {
             cx,
         );
         let weak_bar_play = cx.weak_entity();
-        let weak_bar_back = cx.weak_entity();
         let sticky_bar = div()
             .w_full()
             .h(px(dim::STICKY_BAR_H * fold))
@@ -551,23 +534,9 @@ impl Render for ArtistPage {
                     .truncate()
                     .child(self.name.clone()),
             )
-            // 返回键在 hero 里位于右端，收起后仍需可达，故横栏原样保留。
-            .child(
-                div()
-                    .id("artist-bar-back")
-                    .flex_none()
-                    .size(px(dim::ROUND_BTN))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded_full()
-                    .cursor_pointer()
-                    .hover(|s| s.bg(theme::surface()))
-                    .on_click(move |_ev, _window, cx| {
-                        weak_bar_back.update(cx, |_p, cx| cx.emit(PageEvent::Back)).ok();
-                    })
-                    .child(icon(IconName::ChevronLeft, 18.0, theme::text_gray())),
-            );
+            // 横栏与歌单页同形：[播放键][歌手名]——返回键不在这里，应用标题栏已有全局前进/后退，
+            // 页面自带的返回键（hero 右端那个）已按同一逻辑删除。
+            .into_any_element();
 
         // hero 区占位高度 = `p(MD) * 2 + 头像 108`。
         const HERO_BLOCK_H: f32 = 132.0;
