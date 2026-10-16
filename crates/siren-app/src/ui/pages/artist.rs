@@ -6,6 +6,7 @@ use gpui_kit::assets::IconName;
 use gpui_kit::base::StyledExt;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::menu::{ContextMenuExt, PopupMenuItem};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use siren_core::model::{Artist, ArtistAlbum, ArtistDetail, Song};
@@ -15,7 +16,8 @@ use super::super::playback::Playback;
 use super::super::services::Services;
 use super::super::smooth_scroll::smooth_scroll;
 use super::super::{fmt_date, icon, load_error, page_shell_with_header, PageEvent};
-use crate::theme;
+use super::dim;
+use crate::theme::{self, spacing};
 
 pub(crate) struct ArtistPage {
     services: Services,
@@ -31,6 +33,8 @@ pub(crate) struct ArtistPage {
     load_gen: u64,
     /// 主接口全部失败（离线等）：展示失败态而非空数据（K8）。
     failed: bool,
+    /// 是否已拿到响应（区分「加载中」与真空数据）。
+    loaded: bool,
 }
 
 impl EventEmitter<PageEvent> for ArtistPage {}
@@ -56,6 +60,7 @@ impl ArtistPage {
             fans: 0,
             load_gen: 0,
             failed: false,
+            loaded: false,
         };
         page.load(cx);
         page
@@ -95,6 +100,7 @@ impl ArtistPage {
                 }
                 if let Some((detail, songs, albums, similar, (fans, followed), failed)) = payload {
                     this.failed = failed;
+                    this.loaded = true;
                     let urls: Vec<String> = albums.iter().map(|a| a.cover_url.clone()).collect();
                     this.services.covers.prefetch(urls, 48.0, cx);
                     let song_covers: Vec<String> = songs.iter().map(|s| s.cover_url.clone()).collect();
@@ -139,7 +145,7 @@ impl ArtistPage {
                 if !ok {
                     this.followed = !follow;
                     this.fans += if follow { -1 } else { 1 };
-                    this.services.toast_error("操作失败", cx);
+                    this.services.toast_error("关注歌手失败，请重试", cx);
                 } else {
                     this.services
                         .toast(if follow { "已关注歌手" } else { "已取消关注" }, cx);
@@ -162,24 +168,19 @@ impl ArtistPage {
             .filter(|s| !s.is_empty())
             .unwrap_or_default();
         let avatar = self.services.covers.image_round(&cover, 108.0);
-        let play_label = if self.top_songs.is_empty() {
-            "播放热门"
-        } else {
-            "播放热门歌曲"
-        };
 
         div()
             .w_full()
             .flex()
             .items_center()
-            .gap(px(16.0))
+            .gap(px(spacing::LG))
             .child(avatar)
             .child(
                 div()
                     .v_flex()
                     .flex_1()
                     .min_w(px(0.0))
-                    .gap(px(6.0))
+                    .gap(px(spacing::XXS))
                     .child(
                         div()
                             .text_2xl()
@@ -199,11 +200,14 @@ impl ArtistPage {
                             .flex()
                             .items_center()
                             .gap(px(10.0))
-                            .child(Button::new("artist-play").primary().label(play_label).on_click(
-                                move |_ev, _window, cx| {
-                                    weak_play.update(cx, |this, cx| this.play_all(cx)).ok();
-                                },
-                            ))
+                            // 无热门歌曲时隐藏（点了无反应的假控件）。
+                            .when(!self.top_songs.is_empty(), |el| {
+                                el.child(Button::new("artist-play").primary().label("播放热门歌曲").on_click(
+                                    move |_ev, _window, cx| {
+                                        weak_play.update(cx, |this, cx| this.play_all(cx)).ok();
+                                    },
+                                ))
+                            })
                             .child(
                                 Button::new("artist-follow")
                                     .label(if self.followed { "已关注" } else { "关注" })
@@ -216,7 +220,7 @@ impl ArtistPage {
             .child(
                 div()
                     .id("artist-back")
-                    .size(px(30.0))
+                    .size(px(dim::ROUND_BTN))
                     .flex()
                     .items_center()
                     .justify_center()
@@ -245,7 +249,7 @@ impl ArtistPage {
         let weak = cx.weak_entity();
         let mut col = div().v_flex().w_full();
         for (i, song) in songs.iter().enumerate() {
-            let cover = covers.image(&song.cover_url, 40.0);
+            let cover = covers.image(&song.cover_url, dim::COVER_SONG);
             let weak = weak.clone();
             let weak_ctx = weak.clone();
             let sid = song.id;
@@ -256,12 +260,12 @@ impl ArtistPage {
                     .id(format!("artist-song-{sid}"))
                     .group(format!("artist-song-{sid}"))
                     .w_full()
-                    .h(px(48.0))
-                    .px(px(6.0))
+                    .h(px(dim::ROW_H_SM))
+                    .px(px(spacing::XXS))
                     .flex()
                     .items_center()
-                    .gap(px(12.0))
-                    .rounded(px(6.0))
+                    .gap(px(spacing::MD))
+                    .rounded(px(theme::RADIUS_SM))
                     .hover(|s| s.bg(theme::card_surface()))
                     .cursor_pointer()
                     .on_click(move |_ev, _window, cx| {
@@ -297,6 +301,8 @@ impl ArtistPage {
                     .child(
                         div()
                             .w(px(24.0))
+                            .flex()
+                            .justify_end()
                             .text_xs()
                             .text_color(theme::text_gray())
                             .child(format!("{}", i + 1)),
@@ -319,7 +325,9 @@ impl ArtistPage {
                     ))
                     .child(
                         div()
-                            .w(px(56.0))
+                            .w(px(dim::DURATION_W))
+                            .flex()
+                            .justify_end()
                             .text_xs()
                             .text_color(theme::text_gray())
                             .child(super::super::fmt_time(song.duration_ms)),
@@ -335,7 +343,7 @@ impl ArtistPage {
         let weak = cx.weak_entity();
         let mut col = div().v_flex().w_full();
         for album in albums.iter() {
-            let cover = covers.image(&album.cover_url, 48.0);
+            let cover = covers.image(&album.cover_url, dim::COVER_LIST);
             let weak = weak.clone();
             let (id, name) = (album.id, album.name.clone());
             let meta = {
@@ -357,12 +365,12 @@ impl ArtistPage {
                 div()
                     .id(format!("artist-album-{id}"))
                     .w_full()
-                    .h(px(56.0))
-                    .px(px(6.0))
+                    .h(px(dim::ROW_H_LIST))
+                    .px(px(spacing::XXS))
                     .flex()
                     .items_center()
-                    .gap(px(12.0))
-                    .rounded(px(6.0))
+                    .gap(px(spacing::MD))
+                    .rounded(px(theme::RADIUS_SM))
                     .hover(|s| s.bg(theme::card_surface()))
                     .cursor_pointer()
                     .on_click(move |_ev, _window, cx| {
@@ -398,19 +406,19 @@ impl ArtistPage {
         let weak = cx.weak_entity();
         let mut col = div().v_flex().w_full();
         for artist in similar.iter() {
-            let cover = covers.image_round(&artist.cover_url, 40.0);
+            let cover = covers.image_round(&artist.cover_url, dim::COVER_SONG);
             let weak = weak.clone();
             let (id, name) = (artist.id, artist.name.clone());
             col = col.child(
                 div()
                     .id(format!("artist-simi-{id}"))
                     .w_full()
-                    .h(px(52.0))
-                    .px(px(6.0))
+                    .h(px(dim::ROW_H))
+                    .px(px(spacing::XXS))
                     .flex()
                     .items_center()
-                    .gap(px(12.0))
-                    .rounded(px(6.0))
+                    .gap(px(spacing::MD))
+                    .rounded(px(theme::RADIUS_SM))
                     .hover(|s| s.bg(theme::card_surface()))
                     .cursor_pointer()
                     .on_click(move |_ev, _window, cx| {
@@ -438,7 +446,7 @@ impl ArtistPage {
 impl Render for ArtistPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let header = self.header(cx);
-        let mut body = div().v_flex().w_full().gap(px(18.0)).p(px(16.0));
+        let mut body = div().v_flex().w_full().gap(px(18.0)).p(px(spacing::LG));
         if self.failed {
             body = body.child(load_error(
                 "artist-retry",
@@ -448,9 +456,12 @@ impl Render for ArtistPage {
             ));
         }
 
+        // 未返回时显示「加载中」，返回后真空才显示「暂无 XX」。
         body = body.child(section(
             "热门歌曲",
-            if self.top_songs.is_empty() {
+            if !self.loaded {
+                empty_hint("加载中…")
+            } else if self.top_songs.is_empty() {
                 empty_hint("暂无歌曲")
             } else {
                 self.song_rows(cx)
@@ -458,7 +469,9 @@ impl Render for ArtistPage {
         ));
         body = body.child(section(
             "专辑",
-            if self.albums.is_empty() {
+            if !self.loaded {
+                empty_hint("加载中…")
+            } else if self.albums.is_empty() {
                 empty_hint("暂无专辑")
             } else {
                 self.album_rows(cx)
@@ -497,7 +510,7 @@ fn section(title: &str, body: AnyElement) -> AnyElement {
     div()
         .v_flex()
         .w_full()
-        .gap(px(8.0))
+        .gap(px(spacing::SM))
         .child(
             div()
                 .text_lg()
@@ -512,7 +525,7 @@ fn section(title: &str, body: AnyElement) -> AnyElement {
 fn empty_hint(text: &str) -> AnyElement {
     div()
         .w_full()
-        .py(px(12.0))
+        .py(px(spacing::MD))
         .text_xs()
         .text_color(theme::text_gray())
         .child(text.to_string())

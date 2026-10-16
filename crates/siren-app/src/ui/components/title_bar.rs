@@ -1,4 +1,4 @@
-//! 标题栏：前进/后退、首页、搜索框、下载、账户、窗口按钮。
+//! 标题栏：前进/后退、首页、搜索框、账户、窗口按钮。
 //!
 //! 对齐 Melodia 桌面端的 `TitleBar.kt`。
 //!
@@ -30,6 +30,7 @@ impl Root {
         cx: &App,
     ) -> impl IntoElement {
         let is_home = matches!(self.route(), Route::Home);
+        let is_search = matches!(self.route(), Route::Search);
 
         let weak_back = weak.clone();
         let weak_fwd = weak.clone();
@@ -136,7 +137,7 @@ impl Root {
             .flex_none()
             .flex()
             .items_center()
-            .gap(px(2.0))
+            .gap(px(theme::spacing::XXS))
             .child(
                 div()
                     .id("nav-back")
@@ -150,7 +151,15 @@ impl Root {
                     .on_click(move |_ev, _window, cx| {
                         weak_back.update(cx, |root, cx| root.back(cx)).ok();
                     })
-                    .child(icon(IconName::ChevronLeft, 18.0, theme::text_gray())),
+                    .child(icon(
+                        IconName::ChevronLeft,
+                        18.0,
+                        if self.can_back() {
+                            theme::text_gray()
+                        } else {
+                            theme::surface_light()
+                        },
+                    )),
             )
             .child(
                 div()
@@ -176,14 +185,17 @@ impl Root {
                     )),
             );
 
-        // 中：首页 + 搜索框
+        // 中：首页 + 搜索框。窗口变窄时中段不硬撑 472：搜索框收缩（保最小宽），
+        // 左右各留 24px 拖拽区。
+        let middle_w = 472.0_f32.min((vw - 84.0 - 182.0 - 48.0).max(0.0));
+        let search_w = (middle_w - 52.0).max(120.0);
         let middle = div()
-            .w(px(472.0))
+            .w(px(middle_w))
             .flex_none()
             .flex()
             .items_center()
             .justify_center()
-            .gap(px(8.0))
+            .gap(px(theme::spacing::SM))
             .child(
                 div()
                     .id("home")
@@ -192,33 +204,31 @@ impl Root {
                     .items_center()
                     .justify_center()
                     .rounded_full()
-                    .bg(theme::surface())
+                    // 选中指示：surface_light 填充（与搜索框同一风格）。
+                    .bg(if is_home { theme::surface_light() } else { theme::surface() })
                     .cursor_pointer()
                     .hover(|s| s.bg(theme::surface_light()))
                     .on_click(move |_ev, _window, cx| {
                         weak_home.update(cx, |root, cx| root.navigate(Route::Home, cx)).ok();
                     })
-                    .child(icon(
-                        IconName::House,
-                        20.0,
-                        if is_home {
-                            theme::text_primary()
-                        } else {
-                            theme::text_gray()
-                        },
-                    )),
+                    .child(icon(IconName::House, 20.0, theme::text_gray())),
             )
             .child(
                 div()
                     .id("search-box")
-                    .w(px(420.0))
+                    .w(px(search_w))
+                    .min_w(px(120.0))
                     .h(px(44.0))
                     .flex()
                     .items_center()
                     .gap(px(10.0))
                     .px(px(14.0))
-                    .rounded(px(22.0))
-                    .bg(theme::surface())
+                    .rounded_full()
+                    .bg(if is_search {
+                        theme::surface_light()
+                    } else {
+                        theme::surface()
+                    })
                     .on_click(move |_ev, _window, cx| {
                         weak_search.update(cx, |root, cx| root.navigate(Route::Search, cx)).ok();
                     })
@@ -229,23 +239,14 @@ impl Root {
                             .child(Input::new(&self.search_input).appearance(false))),
             );
 
-        // 右：下载、账户、窗口按钮
+        // 右：账户、窗口按钮（下载按钮暂无落地功能，先移除）。
         let right = div()
-            .w(px(224.0))
+            .w(px(182.0))
             .flex_none()
             .flex()
             .items_center()
             .justify_end()
-            .gap(px(4.0))
-            .child(
-                div()
-                    .size(px(34.0))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded_full()
-                    .child(icon(IconName::Download, 18.0, theme::text_gray())),
-            )
+            .gap(px(theme::spacing::XS))
             .child(account_button)
             .child(window_button(
                 "win-min",
@@ -282,7 +283,7 @@ impl Root {
         //   避免系统对 HTCAPTION 的默认最大化。
         // - CSD（Linux 自绘装饰）：按下只置位，**首次移动**才把拖动交给合成器
         //   （对齐 gpui-component `TitleBar`，避免双击的首击误启动移动）；双击最大化/还原。
-        let fixed = 84.0 + 472.0 + 224.0;
+        let fixed = 84.0 + middle_w + 182.0;
         let sp = ((vw - 24.0 - fixed) / 2.0).max(0.0);
         let drag = |id: &'static str| {
             let weak_down = weak_drag.clone();
@@ -331,7 +332,7 @@ impl Root {
             .h(px(64.0))
             .flex()
             .items_center()
-            .px(px(12.0))
+            .px(px(theme::spacing::MD))
             .child(left)
             .child(drag("tb-drag-l"))
             .child(middle)

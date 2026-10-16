@@ -15,8 +15,9 @@ use siren_core::model::{Album, Artist, Playlist};
 use super::super::services::Services;
 use super::super::session::{Account, Session};
 use super::super::smooth_scroll::smooth_virtual_list;
-use super::super::{icon, PageEvent, PLAYLIST_PAGE};
-use crate::theme;
+use super::super::{icon, load_error, PageEvent, PLAYLIST_PAGE};
+use super::dim;
+use crate::theme::{self, spacing};
 
 /// 音乐库分栏。
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -44,6 +45,12 @@ pub(crate) struct LibraryPage {
     playlists_loaded: bool,
     albums_loaded: bool,
     artists_loaded: bool,
+    /// 各分栏最近一次加载是否失败（除 toast 外在列表区给错误 + 重试）。
+    playlists_failed: bool,
+    albums_failed: bool,
+    artists_failed: bool,
+    /// 当前在详情页打开的歌单 id（侧栏当前项选中态）。
+    open_playlist: Option<i64>,
     /// 账号刷新代次：logout 时自增，使在途的 account() 响应失效（避免被“登回”）。
     account_gen: u64,
     _login_sub: Subscription,
@@ -85,6 +92,10 @@ impl LibraryPage {
             playlists_loaded: false,
             albums_loaded: false,
             artists_loaded: false,
+            playlists_failed: false,
+            albums_failed: false,
+            artists_failed: false,
+            open_playlist: None,
             account_gen: 0,
             _login_sub,
         };
@@ -120,6 +131,10 @@ impl LibraryPage {
         self.playlists_loaded = false;
         self.albums_loaded = false;
         self.artists_loaded = false;
+        self.playlists_failed = false;
+        self.albums_failed = false;
+        self.artists_failed = false;
+        self.open_playlist = None;
         // 使在途的 account() 响应作废，避免退出后被迟到的响应“登回”。
         self.account_gen = self.account_gen.wrapping_add(1);
         cx.emit(PageEvent::LoggedOut);
@@ -242,6 +257,7 @@ impl LibraryPage {
                     return;
                 }
                 this.playlists_loaded = true;
+                this.playlists_failed = result.as_ref().map(|r| r.is_err()).unwrap_or(true);
                 match result {
                     Some(Ok(list)) => {
                         this.playlists_offset = list.len() as u32;
@@ -320,6 +336,7 @@ impl LibraryPage {
                     return;
                 }
                 this.albums_loaded = true;
+                this.albums_failed = result.as_ref().map(|r| r.is_err()).unwrap_or(true);
                 match result {
                     Some(Ok(list)) => {
                         let urls: Vec<String> = list.iter().map(|a| a.cover_url.clone()).collect();
@@ -353,6 +370,7 @@ impl LibraryPage {
                     return;
                 }
                 this.artists_loaded = true;
+                this.artists_failed = result.as_ref().map(|r| r.is_err()).unwrap_or(true);
                 match result {
                     Some(Ok(list)) => {
                         let urls: Vec<String> = list.iter().map(|a| a.cover_url.clone()).collect();
@@ -413,7 +431,7 @@ impl LibraryPage {
             .flex()
             .items_center()
             .justify_between()
-            .px(px(6.0))
+            .px(px(spacing::XXS))
             .pb(px(10.0))
             .child(
                 div()
@@ -423,27 +441,22 @@ impl LibraryPage {
                     .child("音乐库"),
             )
             .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(6.0))
-                    .child(
-                        div()
-                            .id("lib-add")
-                            .size(px(30.0))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .rounded_full()
-                            .bg(theme::surface())
-                            .cursor_pointer()
-                            .hover(|s| s.bg(theme::surface_light()))
-                            .on_click(move |_ev, _window, cx| {
-                                weak_add.update(cx, |_p, cx| cx.emit(PageEvent::OpenCreate)).ok();
-                            })
-                            .child(icon(IconName::Plus, 18.0, theme::text_gray())),
-                    )
-                    .child(round_button("lib-expand", IconName::Maximize2)),
+                div().flex().items_center().gap(px(spacing::XXS)).child(
+                    div()
+                        .id("lib-add")
+                        .size(px(30.0))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded_full()
+                        .bg(theme::surface())
+                        .cursor_pointer()
+                        .hover(|s| s.bg(theme::surface_light()))
+                        .on_click(move |_ev, _window, cx| {
+                            weak_add.update(cx, |_p, cx| cx.emit(PageEvent::OpenCreate)).ok();
+                        })
+                        .child(icon(IconName::Plus, 18.0, theme::text_gray())),
+                ),
             )
     }
 
@@ -452,8 +465,8 @@ impl LibraryPage {
             .w_full()
             .flex()
             .items_center()
-            .gap(px(6.0))
-            .pb(px(6.0))
+            .gap(px(spacing::XXS))
+            .pb(px(spacing::XXS))
             .child(lib_tab(
                 "歌单",
                 self.tab == LibraryTab::Playlist,
@@ -474,27 +487,30 @@ impl LibraryPage {
             ))
     }
 
-    fn toolbar(&self) -> impl IntoElement {
-        div()
-            .w_full()
-            .flex()
-            .items_center()
-            .justify_between()
-            .px(px(6.0))
-            .py(px(6.0))
-            .child(icon(IconName::Search, 16.0, theme::text_gray()))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(6.0))
-                    .child(div().text_xs().text_color(theme::text_gray()).child("默认"))
-                    .child(icon(IconName::List, 16.0, theme::text_gray())),
-            )
+    /// 打开歌单：记下当前项（侧栏选中态），并从「专辑/艺人」分栏自动切回「歌单」。
+    fn open_playlist(&mut self, id: i64, name: String, cx: &mut Context<Self>) {
+        self.open_playlist = Some(id);
+        self.tab = LibraryTab::Playlist;
+        cx.emit(PageEvent::OpenPlaylist { id, name });
+        cx.notify();
     }
 
     /// 收藏专辑列表。
     fn album_list(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        if self.albums_failed {
+            return load_error(
+                "lib-albums-retry",
+                cx.weak_entity(),
+                "收藏专辑加载失败",
+                LibraryPage::load_albums,
+            );
+        }
+        if !self.albums_loaded {
+            return list_hint("加载中…");
+        }
+        if self.albums.is_empty() {
+            return list_hint("暂无收藏专辑");
+        }
         let albums = self.albums.clone();
         let count = albums.len();
         let covers = self.services.covers.clone();
@@ -502,23 +518,23 @@ impl LibraryPage {
         smooth_virtual_list(
             "lib-albums",
             count,
-            56.0,
+            dim::ROW_H_LIST,
             move |range, _window, _cx| {
                 range
                     .map(|i| {
                         let album = &albums[i];
-                        let cover = covers.image(&album.cover_url, 48.0);
+                        let cover = covers.image(&album.cover_url, dim::COVER_LIST);
                         let weak = weak.clone();
                         let (id, name) = (album.id, album.name.clone());
                         div()
                             .id(format!("lib-album-{id}"))
                             .w_full()
-                            .h(px(56.0))
-                            .px(px(6.0))
+                            .h(px(dim::ROW_H_LIST))
+                            .px(px(spacing::XXS))
                             .flex()
                             .items_center()
-                            .gap(px(12.0))
-                            .rounded(px(6.0))
+                            .gap(px(spacing::MD))
+                            .rounded(px(theme::RADIUS_SM))
                             .hover(|s| s.bg(theme::card_surface()))
                             .cursor_pointer()
                             .on_click(move |_ev, _window, cx| {
@@ -561,6 +577,20 @@ impl LibraryPage {
 
     /// 收藏歌手列表。
     fn artist_list(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        if self.artists_failed {
+            return load_error(
+                "lib-artists-retry",
+                cx.weak_entity(),
+                "关注歌手加载失败",
+                LibraryPage::load_artists,
+            );
+        }
+        if !self.artists_loaded {
+            return list_hint("加载中…");
+        }
+        if self.artists.is_empty() {
+            return list_hint("暂无关注歌手");
+        }
         let artists = self.artists.clone();
         let count = artists.len();
         let covers = self.services.covers.clone();
@@ -568,23 +598,23 @@ impl LibraryPage {
         smooth_virtual_list(
             "lib-artists",
             count,
-            56.0,
+            dim::ROW_H_LIST,
             move |range, _window, _cx| {
                 range
                     .map(|i| {
                         let artist = &artists[i];
-                        let cover = covers.image_round(&artist.cover_url, 40.0);
+                        let cover = covers.image_round(&artist.cover_url, dim::COVER_SONG);
                         let weak = weak.clone();
                         let (id, name) = (artist.id, artist.name.clone());
                         div()
                             .id(format!("lib-artist-{id}"))
                             .w_full()
-                            .h(px(56.0))
-                            .px(px(6.0))
+                            .h(px(dim::ROW_H_LIST))
+                            .px(px(spacing::XXS))
                             .flex()
                             .items_center()
-                            .gap(px(12.0))
-                            .rounded(px(6.0))
+                            .gap(px(spacing::MD))
+                            .rounded(px(theme::RADIUS_SM))
                             .hover(|s| s.bg(theme::card_surface()))
                             .cursor_pointer()
                             .on_click(move |_ev, _window, cx| {
@@ -681,38 +711,58 @@ impl LibraryPage {
 
     /// 我的歌单列表。
     fn playlist_list(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        if self.playlists_failed {
+            return load_error(
+                "lib-playlists-retry",
+                cx.weak_entity(),
+                "我的歌单加载失败",
+                LibraryPage::load_my_playlists,
+            );
+        }
+        if !self.playlists_loaded {
+            return list_hint("加载中…");
+        }
+        if self.my_playlists.is_empty() {
+            return list_hint("还没有歌单，点击右上角 + 新建");
+        }
         let playlists = self.my_playlists.clone();
         let count = playlists.len();
         let covers = self.services.covers.clone();
         let weak = cx.weak_entity();
+        let open_playlist = self.open_playlist;
         let list = smooth_virtual_list(
             "lib-playlists",
             count,
-            56.0,
+            dim::ROW_H_LIST,
             move |range, _window, _cx| {
                 range
                     .map(|i| {
                         let pl = &playlists[i];
-                        let cover = covers.image(&pl.cover_url, 48.0);
+                        let cover = covers.image(&pl.cover_url, dim::COVER_LIST);
                         let weak = weak.clone();
                         let weak_ctx = weak.clone();
                         let (id, name) = (pl.id, pl.name.clone());
+                        // 当前打开的歌单：surface_light 选中填充。
+                        let selected = open_playlist == Some(id);
                         div()
                             .id(format!("lib-playlist-{id}"))
                             .w_full()
-                            .h(px(56.0))
-                            .px(px(6.0))
+                            .h(px(dim::ROW_H_LIST))
+                            .px(px(spacing::XXS))
                             .flex()
                             .items_center()
-                            .gap(px(12.0))
-                            .rounded(px(6.0))
+                            .gap(px(spacing::MD))
+                            .rounded(px(theme::RADIUS_SM))
+                            .bg(if selected {
+                                theme::surface_light()
+                            } else {
+                                rgba(0x00000000)
+                            })
                             .hover(|s| s.bg(theme::card_surface()))
                             .cursor_pointer()
                             .on_click(move |_ev, _window, cx| {
-                                weak.update(cx, |_page, cx| {
-                                    cx.emit(PageEvent::OpenPlaylist { id, name: name.clone() });
-                                })
-                                .ok();
+                                weak.update(cx, |page, cx| page.open_playlist(id, name.clone(), cx))
+                                    .ok();
                             })
                             .context_menu(move |menu, _w, _cx| {
                                 let w_pin = weak_ctx.clone();
@@ -767,14 +817,21 @@ impl LibraryPage {
                 div()
                     .id("lib-playlists-more")
                     .w_full()
-                    .py(px(8.0))
+                    .py(px(spacing::SM))
                     .flex()
                     .justify_center()
                     .cursor_pointer()
+                    .hover(|s| s.bg(theme::card_surface()))
                     .on_click(move |_ev, _window, cx| {
                         weak_more.update(cx, |page, cx| page.load_more_playlists(cx)).ok();
                     })
-                    .child(div().text_sm().text_color(theme::accent()).child("加载更多")),
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(theme::text_gray())
+                            .hover(|s| s.text_color(theme::accent()))
+                            .child("加载更多"),
+                    ),
             );
         }
         col.into_any_element()
@@ -785,8 +842,28 @@ impl Render for LibraryPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let logged_in = Session::account(cx).is_some();
         let content: AnyElement = if !logged_in {
-            // 未登录：不显示提示卡片（登录入口在标题栏账号按钮）
-            div().flex_1().w_full().into_any_element()
+            // 未登录：空态 + 登录引导（登录入口在标题栏账号按钮）。
+            div()
+                .flex_1()
+                .w_full()
+                .flex()
+                .flex_col()
+                .items_center()
+                .justify_center()
+                .gap(px(spacing::SM))
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme::text_gray())
+                        .child("登录后查看你的音乐库"),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme::text_gray())
+                        .child("点击标题栏账号按钮登录"),
+                )
+                .into_any_element()
         } else {
             match self.tab {
                 LibraryTab::Playlist => self.playlist_list(window, cx),
@@ -798,29 +875,25 @@ impl Render for LibraryPage {
         div()
             .v_flex()
             .size_full()
-            .rounded(px(8.0))
+            .rounded(px(theme::RADIUS_MD))
             .bg(theme::pane())
-            .p(px(12.0))
-            .gap(px(2.0))
+            .p(px(spacing::MD))
+            .gap(px(spacing::XXS))
             .child(self.header(cx.weak_entity()))
             .child(self.tabs(cx.weak_entity()))
-            .child(self.toolbar())
             .child(content)
     }
 }
 
-fn round_button(id: &'static str, name: IconName) -> impl IntoElement {
+/// 列表区占位文案（加载中 / 空态）。
+fn list_hint(text: &str) -> AnyElement {
     div()
-        .id(id)
-        .size(px(34.0))
+        .w_full()
+        .py(px(spacing::XL))
         .flex()
-        .items_center()
         .justify_center()
-        .rounded_full()
-        .bg(theme::surface())
-        .cursor_pointer()
-        .hover(|s| s.bg(theme::surface_light()))
-        .child(icon(name, 18.0, theme::text_primary()))
+        .child(div().text_sm().text_color(theme::text_gray()).child(text.to_string()))
+        .into_any_element()
 }
 
 fn lib_tab(label: &str, active: bool, weak: WeakEntity<LibraryPage>, tab: LibraryTab) -> AnyElement {
@@ -830,7 +903,7 @@ fn lib_tab(label: &str, active: bool, weak: WeakEntity<LibraryPage>, tab: Librar
         .h(px(38.0))
         .flex()
         .items_center()
-        .rounded(px(19.0))
+        .rounded_full()
         .cursor_pointer()
         .bg(if active {
             theme::surface_light()

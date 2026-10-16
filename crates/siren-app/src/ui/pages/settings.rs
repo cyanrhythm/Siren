@@ -14,10 +14,13 @@ use siren_core::model::AudioQuality;
 use super::super::settings_store::SettingsStore;
 use super::super::smooth_scroll::smooth_scroll;
 use super::super::{icon, motion, page_shell, Root};
-use crate::theme;
+use crate::theme::{self, spacing};
 
 /// 正在播放卡片编辑器行高。
 const CARD_ROW_H: f32 = 44.0;
+
+/// 音质 pill 水平内边距（非 spacing 档位的固定尺寸）。
+const PILL_PAD_X: f32 = 12.0;
 
 /// 拖动拾起时跟随光标的浮动预览（拾起入场：淡入 + 轻微上浮）。
 struct CardDragPreview {
@@ -31,8 +34,8 @@ impl Render for CardDragPreview {
             .px(px(14.0))
             .flex()
             .items_center()
-            .gap(px(8.0))
-            .rounded(px(8.0))
+            .gap(px(spacing::SM))
+            .rounded(px(theme::RADIUS_MD))
             .bg(theme::card_surface())
             .shadow_lg()
             .child(icon(IconName::GripVertical, 18.0, theme::text_gray()))
@@ -103,8 +106,8 @@ impl Root {
         let content = div()
             .v_flex()
             .w_full()
-            .gap(px(16.0))
-            .p(px(16.0))
+            .gap(px(spacing::LG))
+            .p(px(spacing::LG))
             .child(section(
                 "音质",
                 "在线播放的音质档位（更高档位需登录 / 会员）",
@@ -165,7 +168,7 @@ impl Root {
                 .h(px(CARD_ROW_H))
                 .flex()
                 .items_center()
-                .gap(px(8.0))
+                .gap(px(spacing::SM))
                 .child(
                     div()
                         .id(("card-drag", i))
@@ -256,7 +259,7 @@ impl Root {
             .w_full()
             .flex()
             .items_center()
-            .gap(px(12.0))
+            .gap(px(spacing::MD))
             .child(div().w(px(240.0)).child(Slider::new(self.np_width_slider())))
             .child(
                 div()
@@ -273,9 +276,9 @@ fn section(title: &str, subtitle: &str, control: AnyElement) -> AnyElement {
     div()
         .v_flex()
         .w_full()
-        .gap(px(8.0))
+        .gap(px(spacing::SM))
         .p(px(14.0))
-        .rounded(px(8.0))
+        .rounded(px(theme::RADIUS_MD))
         .bg(theme::card_surface())
         .child(
             div()
@@ -300,7 +303,7 @@ fn toggle_row(label: &str, control: AnyElement) -> AnyElement {
         .w_full()
         .flex()
         .items_center()
-        .gap(px(12.0))
+        .gap(px(spacing::MD))
         .child(
             div()
                 .flex_1()
@@ -315,19 +318,24 @@ fn toggle_row(label: &str, control: AnyElement) -> AnyElement {
 
 /// 音质档位选择（pills）。
 fn quality_row(current: AudioQuality, weak: WeakEntity<Root>) -> AnyElement {
-    let mut row = div().flex().flex_wrap().gap(px(8.0));
+    let mut row = div().flex().flex_wrap().gap(px(spacing::SM));
     for quality in AudioQuality::ALL {
         let active = quality == current;
         let weak = weak.clone();
         row = row.child(
             div()
                 .id(("quality", quality as usize))
-                .px(px(12.0))
-                .py(px(6.0))
+                .px(px(PILL_PAD_X))
+                .py(px(spacing::XXS))
                 .rounded_full()
                 .cursor_pointer()
-                .bg(if active { theme::accent() } else { theme::pane() })
-                .hover(|s| s.bg(theme::surface_light()))
+                // 选中态统一：surface_light 背景（白字），hover 只在非选中时生效。
+                .bg(if active {
+                    theme::surface_light()
+                } else {
+                    theme::pane()
+                })
+                .when(!active, |s| s.hover(|s| s.bg(theme::surface_light())))
                 .on_click(move |_ev, _window, cx| {
                     weak.update(cx, |root, cx| {
                         root.playback.update(cx, |pb, cx| pb.set_quality(quality, cx));
@@ -338,7 +346,7 @@ fn quality_row(current: AudioQuality, weak: WeakEntity<Root>) -> AnyElement {
                     div()
                         .flex()
                         .items_center()
-                        .gap(px(4.0))
+                        .gap(px(spacing::XS))
                         .child(
                             div()
                                 .text_sm()

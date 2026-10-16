@@ -1,6 +1,7 @@
 //! 歌曲喜欢按钮：未喜欢时默认隐藏，悬停所在行显示空心，喜欢后常驻红色实心。
 
 use gpui_kit::assets::IconName;
+use gpui_kit::component::button::{Button, ButtonCustomVariant, ButtonVariants};
 use gpui_kit::component::Icon;
 use gpui_kit::*;
 
@@ -17,34 +18,25 @@ const HEART_FILLED: &[u8] = include_bytes!("../../../../../assets/icons/heart-fi
 pub(crate) fn like_button(playback: &Entity<Playback>, song: Song, group: String, cx: &App) -> AnyElement {
     let liked = playback.read(cx).is_liked(song.id);
     let pb = playback.clone();
-    let heart: AnyElement = if liked {
+    let heart: Icon = if liked {
         Icon::new(IconName::Heart)
             .data(HEART_FILLED)
-            .size(px(16.0))
             .text_color(theme::accent())
-            .into_any_element()
     } else {
-        icon(IconName::Heart, 16.0, theme::text_gray()).into_any_element()
+        icon(IconName::Heart, 16.0, theme::text_gray())
     };
-    let el = div()
-        .id(format!("like-{}", song.id))
-        .size(px(28.0))
-        .flex_none()
-        .flex()
-        .items_center()
-        .justify_center()
-        .cursor_pointer()
+    // kit Button 统一 hover/focus/tooltip；未喜欢时随所在行悬停显隐。
+    let mut el = Button::new(format!("like-{}", song.id))
+        .custom(ButtonCustomVariant::new(cx).hover(theme::surface_light().into()))
+        .icon(heart)
+        .tooltip(if liked { "取消喜欢" } else { "喜欢" })
         .on_click(move |_ev, _window, cx| {
             // 阻止冒泡到行点击（播放）。
             cx.stop_propagation();
             pb.update(cx, |pb, cx| pb.toggle_like_song(song.clone(), cx));
-        })
-        .child(heart);
-    if liked {
-        el.into_any_element()
-    } else {
-        el.opacity(0.0)
-            .group_hover(group, |s| s.opacity(1.0))
-            .into_any_element()
+        });
+    if !liked {
+        el = el.opacity(0.0).group_hover(group, |s| s.opacity(1.0));
     }
+    el.into_any_element()
 }

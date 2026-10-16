@@ -80,6 +80,8 @@ struct Entry {
     drag_grab: Option<f32>,
     /// 是否正在拖动滚动条（拖动时偏移跟手、不缓动）。
     dragging: bool,
+    /// 待生效的目标偏移：内容尚未量出（max=0）时先挂起，首帧量出后恢复（N5.6）。
+    pending: Option<f32>,
 }
 
 impl Entry {
@@ -164,7 +166,7 @@ fn scroll_bar(name: &'static str, thumb_h: f32, thumb_top: f32, opacity: f32) ->
     let thumb = div()
         .absolute()
         .top(px(thumb_top))
-        .right(px(2.0))
+        .right(px(theme::spacing::XXS))
         .w(px(BAR_THUMB_W))
         .h(px(thumb_h))
         .rounded(px(BAR_THUMB_W / 2.0))
@@ -284,14 +286,34 @@ fn on_bar_drag_move(name: &'static str, event: &DragMoveEvent<ScrollbarDrag>, wi
 
 /// 处理滚轮：累积目标偏移、置「驻留中」并（重新）安排驻留结束。
 fn on_wheel(name: &'static str, event: &ScrollWheelEvent, window: &mut Window, cx: &mut App) {
+    let delta = event.delta.pixel_delta(window.line_height());
+    let (dx, dy) = (f32::from(delta.x), f32::from(delta.y));
+    // 触控板横向 pan：本容器只有纵向滚动，横向不吞，透传给内层/外层滚动区。
+    if dx.abs() > dy.abs() {
+        return;
+    }
     cx.stop_propagation();
-    let dy = f32::from(event.delta.pixel_delta(window.line_height()).y);
     {
         let entry = cx.global_mut::<Registry>().0.entry(entry_id(name)).or_default();
         entry.target = (entry.target - dy).clamp(0.0, entry.max);
     }
     reveal_bar(name, window, cx);
     window.refresh();
+}
+
+/// 设定某滚动区的目标偏移（内容坐标像素）：打开浮层定位到当前曲等场景调用。
+///
+/// 内容尚未量出（max=0）时先记入 `pending`，待首帧内容高度量出后恢复并钳制（N5.6：
+/// 首帧滚轮/定位不被「max=0 时 clamp 归 0」吞掉）。
+pub(crate) fn smooth_scroll_to(name: &'static str, target: f32, cx: &mut App) {
+    ensure_registry(cx);
+    let entry = cx.global_mut::<Registry>().0.entry(entry_id(name)).or_default();
+    if entry.max > 0.0 {
+        entry.target = target.clamp(0.0, entry.max);
+        entry.pending = None;
+    } else {
+        entry.pending = Some(target);
+    }
 }
 
 /// 由视口/内容高算滑块长度与可移动距离。
@@ -369,6 +391,12 @@ fn smooth_scroll_with(
     {
         let entry = cx.global_mut::<Registry>().0.entry(id.clone()).or_default();
         entry.max = max;
+        // max 从 0 变大（首帧内容量出）：恢复挂起的目标，再按当前量程钳制并写回。
+        if max > 0.0 {
+            if let Some(pending) = entry.pending.take() {
+                entry.target = pending;
+            }
+        }
         entry.target = entry.target.clamp(0.0, max);
     }
     let ease = if dragging { Duration::ZERO } else { SCROLL_EASE };

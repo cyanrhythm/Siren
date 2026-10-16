@@ -4,6 +4,8 @@
 
 use gpui_kit::assets::IconName;
 use gpui_kit::base::StyledExt;
+use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::Disableable as _;
 use gpui_kit::*;
 
 use siren_core::model::CommentItem;
@@ -11,11 +13,13 @@ use siren_core::network::api;
 
 use super::super::smooth_scroll::smooth_scroll;
 use super::super::{fmt_date, icon, Root};
-use crate::theme;
+use super::collect::{overlay_focus, overlay_scrim};
+use crate::theme::{self, spacing};
 
 impl Root {
     /// 打开评论面板（用播放器已载入的首页数据播种）。
     pub(crate) fn open_comments(&mut self, cx: &mut Context<Self>) {
+        overlay_focus("comments-overlay", cx);
         let page = self.playback.read(cx).comments().clone();
         self.comments.items = page.comments.clone();
         self.comments.total = page.total;
@@ -27,7 +31,7 @@ impl Root {
         };
         self.comments.floor_open = None;
         self.comments.floor_items.clear();
-        self.comments.song_id = self.playback.read(cx).state().song.as_ref().map(|s| s.id);
+        self.comments.song_id = self.playback.read(cx).current_song_id();
         self.comments.loading_more = false;
         self.comments.open = true;
         let avatars: Vec<String> = page.comments.iter().map(|c| c.user.avatar_url.clone()).collect();
@@ -35,8 +39,9 @@ impl Root {
         cx.notify();
     }
 
-    pub(crate) fn close_comments(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn close_comments(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.comments.open = false;
+        window.blur(cx);
         cx.notify();
     }
 
@@ -45,10 +50,9 @@ impl Root {
         if self.comments.loading_more {
             return;
         }
-        let Some(song) = self.playback.read(cx).state().song else {
+        let Some(owner) = self.playback.read(cx).current_song_id() else {
             return;
         };
-        let owner = song.id;
         self.comments.loading_more = true;
         let tid = api::comment_thread_id(owner);
         let cursor = self.comments.cursor.clone();
@@ -73,6 +77,8 @@ impl Root {
                     this.comments.cursor = page.cursor;
                     this.comments.has_more = page.has_more;
                     this.services.covers.prefetch(avatars, 32.0, cx);
+                } else {
+                    this.services.toast_error("评论加载失败，请重试", cx);
                 }
                 cx.notify();
             })
@@ -82,10 +88,10 @@ impl Root {
     }
 
     fn toggle_comment_like(&mut self, id: i64, cx: &mut Context<Self>) {
-        let Some(song) = self.playback.read(cx).state().song else {
+        let Some(song_id) = self.playback.read(cx).current_song_id() else {
             return;
         };
-        let tid = api::comment_thread_id(song.id);
+        let tid = api::comment_thread_id(song_id);
         // 顶层评论与楼层回复都要查（回复在 floor_items 中）；都没找到就不发请求，
         // 避免对从未喜欢过的评论发出「取消喜欢」。
         let flip = |item: &mut CommentItem| {
@@ -106,9 +112,31 @@ impl Root {
         };
         cx.notify();
         let client = self.services.client.clone();
+        let (tx, rx) = tokio::sync::oneshot::channel();
         self.services.handle.spawn(async move {
-            let _ = api::comment_like(&client, &tid, id, like).await;
+            let _ = tx.send(api::comment_like(&client, &tid, id, like).await);
         });
+        // 失败回滚本地喜欢态与计数（对齐 playback.rs toggle_like_song 的乐观+回滚）。
+        cx.spawn(async move |this, cx| {
+            let result = rx.await.ok();
+            this.update(cx, |this, cx| {
+                match result {
+                    Some(Ok(())) => {}
+                    Some(Err(err)) => {
+                        if let Some(item) = this.comments.items.iter_mut().find(|c| c.comment_id == id) {
+                            flip(item);
+                        } else if let Some(item) = this.comments.floor_items.iter_mut().find(|c| c.comment_id == id) {
+                            flip(item);
+                        }
+                        this.services.toast_error(err.user_message(), cx);
+                    }
+                    None => this.services.toast_error("操作失败，请重试", cx),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn load_comment_floor(&mut self, parent_id: i64, cx: &mut Context<Self>) {
@@ -118,10 +146,9 @@ impl Root {
             cx.notify();
             return;
         }
-        let Some(song) = self.playback.read(cx).state().song else {
+        let Some(owner) = self.playback.read(cx).current_song_id() else {
             return;
         };
-        let owner = song.id;
         let tid = api::comment_thread_id(owner);
         let client = self.services.client.clone();
         self.comments.floor_open = Some(parent_id);
@@ -143,6 +170,8 @@ impl Root {
                     let avatars: Vec<String> = page.comments.iter().map(|c| c.user.avatar_url.clone()).collect();
                     this.comments.floor_items = page.comments;
                     this.services.covers.prefetch(avatars, 32.0, cx);
+                } else {
+                    this.services.toast_error("回复加载失败，请重试", cx);
                 }
                 cx.notify();
             })
@@ -158,7 +187,7 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let mut list = div().v_flex().w_full().gap(px(12.0));
+        let mut list = div().v_flex().w_full().gap(px(spacing::MD));
 
         for item in &self.comments.items {
             list = list.child(self.comment_row(item, weak.clone()));
@@ -168,21 +197,31 @@ impl Root {
                 }
             }
         }
+        if self.comments.items.is_empty() {
+            list = list.child(
+                div()
+                    .w_full()
+                    .py(px(spacing::XXL))
+                    .flex()
+                    .justify_center()
+                    .child(div().text_sm().text_color(theme::text_gray()).child("暂无评论")),
+            );
+        }
 
         let footer: AnyElement = if self.comments.has_more {
+            let loading = self.comments.loading_more;
             let weak_more = weak.clone();
             div()
                 .w_full()
                 .flex()
                 .justify_center()
-                .py(px(8.0))
+                .py(px(spacing::SM))
                 .child(
-                    div()
-                        .id("comments-more")
-                        .cursor_pointer()
-                        .text_sm()
-                        .text_color(theme::accent())
-                        .child("加载更多")
+                    Button::new("comments-more")
+                        .ghost()
+                        .label(if loading { "加载中…" } else { "加载更多" })
+                        .loading(loading)
+                        .disabled(loading)
                         .on_click(move |_ev, _window, cx| {
                             weak_more.update(cx, |root, cx| root.load_more_comments(cx)).ok();
                         }),
@@ -193,27 +232,18 @@ impl Root {
         };
 
         let weak_close = weak.clone();
-        div()
-            .id("comments-overlay")
-            .occlude()
-            .absolute()
-            .top_0()
-            .left_0()
-            .w_full()
-            .h_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(rgba(0x00000088))
+        overlay_scrim("comments-overlay", weak, Root::close_comments)
             .child(
                 div()
                     .v_flex()
                     .w(px(520.0))
                     .h(px(640.0))
                     .gap(px(10.0))
-                    .rounded(px(12.0))
+                    .rounded(px(theme::RADIUS_LG))
                     .bg(theme::pane())
-                    .p(px(16.0))
+                    .p(px(spacing::MD))
+                    .id("comments-panel")
+                    .on_click(move |_ev, _window, cx| cx.stop_propagation())
                     .child(
                         div()
                             .w_full()
@@ -228,19 +258,13 @@ impl Root {
                                     .child(format!("评论 ({})", self.comments.total)),
                             )
                             .child(
-                                div()
-                                    .id("comments-close")
-                                    .size(px(28.0))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .rounded_full()
-                                    .cursor_pointer()
-                                    .hover(|s| s.bg(theme::surface()))
-                                    .on_click(move |_ev, _window, cx| {
-                                        weak_close.update(cx, |root, cx| root.close_comments(cx)).ok();
-                                    })
-                                    .child(icon(IconName::X, 16.0, theme::text_gray())),
+                                Button::new("comments-close")
+                                    .ghost()
+                                    .icon(icon(IconName::X, 16.0, theme::text_gray()))
+                                    .tooltip("关闭")
+                                    .on_click(move |_ev, window, cx| {
+                                        weak_close.update(cx, |root, cx| root.close_comments(window, cx)).ok();
+                                    }),
                             ),
                     )
                     .child(smooth_scroll("comments-scroll", list, window, cx))
@@ -263,12 +287,12 @@ impl Root {
                     .v_flex()
                     .flex_1()
                     .min_w(px(0.0))
-                    .gap(px(4.0))
+                    .gap(px(spacing::XS))
                     .child(
                         div()
                             .flex()
                             .items_center()
-                            .gap(px(8.0))
+                            .gap(px(spacing::SM))
                             .child(
                                 div()
                                     .text_sm()
@@ -292,13 +316,13 @@ impl Root {
                         div()
                             .flex()
                             .items_center()
-                            .gap(px(16.0))
+                            .gap(px(spacing::MD))
                             .child(
                                 div()
                                     .id(format!("comment-like-{id}"))
                                     .flex()
                                     .items_center()
-                                    .gap(px(4.0))
+                                    .gap(px(spacing::XS))
                                     .cursor_pointer()
                                     .on_click(move |_ev, _window, cx| {
                                         weak_like.update(cx, |root, cx| root.toggle_comment_like(id, cx)).ok();
@@ -315,21 +339,17 @@ impl Root {
                                             .child(item.liked_count.to_string()),
                                     ),
                             )
-                            .child(
-                                div()
-                                    .id(format!("comment-floor-{id}"))
-                                    .text_xs()
-                                    .text_color(theme::text_gray())
-                                    .cursor_pointer()
-                                    .child(if replies > 0 {
-                                        format!("{replies} 条回复")
-                                    } else {
-                                        String::new()
-                                    })
+                            .child(if replies > 0 {
+                                Button::new(format!("comment-floor-{id}"))
+                                    .ghost()
+                                    .label(format!("{replies} 条回复"))
                                     .on_click(move |_ev, _window, cx| {
                                         weak_floor.update(cx, |root, cx| root.load_comment_floor(id, cx)).ok();
-                                    }),
-                            ),
+                                    })
+                                    .into_any_element()
+                            } else {
+                                div().into_any_element()
+                            }),
                     ),
             ),
         );

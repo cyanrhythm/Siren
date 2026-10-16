@@ -12,9 +12,11 @@ use siren_core::model::{RecentAlbum, RecentPlaylist, RecentSong};
 use super::super::components::like_button;
 use super::super::playback::Playback;
 use super::super::services::Services;
+use super::super::session::Session;
 use super::super::smooth_scroll::smooth_scroll;
 use super::super::{fmt_day_label, load_error, page_shell_with_header, PageEvent};
-use crate::theme;
+use super::dim;
+use crate::theme::{self, spacing};
 
 pub(crate) struct RecentPage {
     services: Services,
@@ -123,7 +125,14 @@ impl RecentPage {
     ) -> AnyElement {
         let weak = cx.weak_entity();
         let covers = self.services.covers.clone();
-        let mut row = div().id(id_prefix).flex().gap(px(12.0));
+        // 横向溢出处理：单行横向滚动（对齐首页货架卡片行），窄窗口不撑破布局。
+        let mut row = div()
+            .id(id_prefix)
+            .flex()
+            .gap(px(spacing::MD))
+            .w_full()
+            .overflow_x_scroll()
+            .restrict_scroll_to_axis();
         for (id, name, cover_url) in items {
             let cover = covers.image(&cover_url, 108.0);
             let weak = weak.clone();
@@ -134,7 +143,7 @@ impl RecentPage {
                     .w(px(108.0))
                     .flex_none()
                     .v_flex()
-                    .gap(px(6.0))
+                    .gap(px(spacing::SM))
                     .cursor_pointer()
                     .on_click(move |_ev, _window, cx| {
                         weak.update(cx, |_page, cx| cx.emit(on_open(id, name.clone()))).ok();
@@ -168,14 +177,14 @@ impl RecentPage {
                         div()
                             .w_full()
                             .pt(px(10.0))
-                            .pb(px(2.0))
+                            .pb(px(spacing::XXS))
                             .text_xs()
                             .text_color(theme::text_gray())
                             .child(label),
                     );
                 }
             }
-            let cover = covers.image(&item.song.cover_url, 40.0);
+            let cover = covers.image(&item.song.cover_url, dim::COVER_SONG);
             let weak = weak.clone();
             let weak_ctx = weak.clone();
             let idx = i;
@@ -187,12 +196,12 @@ impl RecentPage {
                     .id(format!("recent-song-{sid}"))
                     .group(format!("recent-song-{sid}"))
                     .w_full()
-                    .h(px(48.0))
-                    .px(px(16.0))
+                    .h(px(dim::ROW_H_SM))
+                    .px(px(spacing::LG))
                     .flex()
                     .items_center()
-                    .gap(px(12.0))
-                    .rounded(px(6.0))
+                    .gap(px(spacing::MD))
+                    .rounded(px(theme::RADIUS_SM))
                     .hover(|s| s.bg(theme::card_surface()))
                     .cursor_pointer()
                     .on_click(move |_ev, _window, cx| {
@@ -233,7 +242,9 @@ impl RecentPage {
                     ))
                     .child(
                         div()
-                            .w(px(56.0))
+                            .w(px(dim::DURATION_W))
+                            .flex()
+                            .justify_end()
                             .text_xs()
                             .text_color(theme::text_gray())
                             .child(siren_core::recent_playlists::fmt_clock_time(item.play_time)),
@@ -285,51 +296,80 @@ impl Render for RecentPage {
             .child(self.status.to_string())
             .into_any_element();
 
-        let mut body = div().v_flex().w_full().p(px(16.0)).gap(px(12.0));
-        if self.failed {
-            body = body.child(load_error(
-                "recent-retry",
-                cx.weak_entity(),
-                "最近播放加载失败",
-                RecentPage::load,
-            ));
-        }
+        let mut body = div().v_flex().w_full().p(px(spacing::LG)).gap(px(spacing::MD));
+        let logged_in = Session::account(cx).is_some();
+        if !logged_in {
+            // 未登录：页面主体给空态 + 登录引导，而不是空壳。
+            body = body.child(
+                div()
+                    .flex_1()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .justify_center()
+                    .gap(px(spacing::SM))
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(theme::text_gray())
+                            .child("登录后可查看最近播放"),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme::text_gray())
+                            .child("点击标题栏账号按钮登录"),
+                    ),
+            );
+        } else {
+            if self.failed {
+                body = body.child(load_error(
+                    "recent-retry",
+                    cx.weak_entity(),
+                    "最近播放加载失败",
+                    RecentPage::load,
+                ));
+            }
 
-        let playlist_items: Vec<(i64, String, String)> = self
-            .playlists
-            .iter()
-            .map(|p| (p.id, p.name.clone(), p.cover_url.clone()))
-            .collect();
-        if !playlist_items.is_empty() {
-            body = body.child(section(
-                "最近播放歌单",
-                self.card_row(
-                    "recent-pl",
-                    playlist_items,
-                    |id, name| PageEvent::OpenPlaylist { id, name },
-                    cx,
-                ),
-            ));
-        }
+            let playlist_items: Vec<(i64, String, String)> = self
+                .playlists
+                .iter()
+                .map(|p| (p.id, p.name.clone(), p.cover_url.clone()))
+                .collect();
+            if !playlist_items.is_empty() {
+                body = body.child(section(
+                    "最近播放歌单",
+                    self.card_row(
+                        "recent-pl",
+                        playlist_items,
+                        |id, name| PageEvent::OpenPlaylist { id, name },
+                        cx,
+                    ),
+                ));
+            }
 
-        let album_items: Vec<(i64, String, String)> = self
-            .albums
-            .iter()
-            .map(|a| (a.id, a.name.clone(), a.cover_url.clone()))
-            .collect();
-        if !album_items.is_empty() {
-            body = body.child(section(
-                "最近播放专辑",
-                self.card_row(
-                    "recent-al",
-                    album_items,
-                    |id, name| PageEvent::OpenAlbum { id, name },
-                    cx,
-                ),
-            ));
-        }
+            let album_items: Vec<(i64, String, String)> = self
+                .albums
+                .iter()
+                .map(|a| (a.id, a.name.clone(), a.cover_url.clone()))
+                .collect();
+            if !album_items.is_empty() {
+                body = body.child(section(
+                    "最近播放专辑",
+                    self.card_row(
+                        "recent-al",
+                        album_items,
+                        |id, name| PageEvent::OpenAlbum { id, name },
+                        cx,
+                    ),
+                ));
+            }
 
-        body = body.child(section("最近播放歌曲", self.songs_grouped(now_ms, cx)));
+            // 「最近播放歌曲」为空时不渲染该分组标题。
+            if !self.songs.is_empty() {
+                body = body.child(section("最近播放歌曲", self.songs_grouped(now_ms, cx)));
+            }
+        }
 
         page_shell_with_header(
             header,
@@ -342,7 +382,7 @@ fn section(title: &str, content: AnyElement) -> AnyElement {
     div()
         .v_flex()
         .w_full()
-        .gap(px(8.0))
+        .gap(px(spacing::SM))
         .child(
             div()
                 .text_sm()

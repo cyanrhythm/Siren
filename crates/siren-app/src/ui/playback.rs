@@ -493,7 +493,7 @@ impl Playback {
         self.artist_fans
     }
 
-    /// 切换对当前歌手的关注。
+    /// 切换对当前歌手的关注（乐观更新 + 失败回滚，对齐 `toggle_like_song`）。
     pub(crate) fn toggle_artist_follow(&mut self, cx: &mut Context<Self>) {
         let Some(id) = self.artist.as_ref().map(|a| a.id) else {
             return;
@@ -502,9 +502,30 @@ impl Playback {
         self.artist_followed = follow;
         cx.notify();
         let client = self.client.clone();
+        let (tx, rx) = tokio::sync::oneshot::channel();
         self.handle.spawn(async move {
-            let _ = siren_core::network::api::artist_follow(&client, id, follow).await;
+            let _ = tx.send(siren_core::network::api::artist_follow(&client, id, follow).await);
         });
+        cx.spawn(async move |this, cx| {
+            let result = rx.await.ok();
+            this.update(cx, |this, cx| {
+                match result {
+                    Some(Ok(())) => {}
+                    Some(Err(err)) => {
+                        // 失败回滚开关并提示，避免「看似已关注实则未生效」。
+                        this.artist_followed = !follow;
+                        this.notifications.update(cx, |n, cx| n.error(err.user_message(), cx));
+                    }
+                    // 通道断开（任务取消等）：保持现状不重试，仅回滚乐观态。
+                    None => {
+                        this.artist_followed = !follow;
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// 相似歌曲漫游：以当前歌曲的相似歌曲建队列并播放。
@@ -873,6 +894,11 @@ impl Playback {
     /// 播放队列快照与当前下标（供队列面板渲染）。
     pub(crate) fn queue_snapshot(&self) -> (Vec<Song>, Option<usize>) {
         (self.player.queue_items(), self.player.current_index())
+    }
+
+    /// 当前播放歌曲 id（无当前曲返回 `None`；供页面高亮当前行）。
+    pub(crate) fn current_song_id(&self) -> Option<i64> {
+        self.player.state().song.map(|s| s.id)
     }
 
     /// 播放队列中指定下标的曲目。

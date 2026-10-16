@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::base::StyledExt;
-use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::button::Button;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -13,7 +13,8 @@ use siren_core::model::{Playlist, UserBrief, UserProfile};
 use super::super::services::Services;
 use super::super::smooth_scroll::smooth_scroll;
 use super::super::{icon, load_error, page_shell_with_header, PageEvent};
-use crate::theme;
+use super::dim;
+use crate::theme::{self, spacing};
 
 pub(crate) struct ProfilePage {
     services: Services,
@@ -26,6 +27,8 @@ pub(crate) struct ProfilePage {
     load_gen: u64,
     /// 主接口全部失败（离线等）：展示失败态而非空数据（K8）。
     failed: bool,
+    /// 是否已拿到响应（区分「加载中」与真空数据）。
+    loaded: bool,
 }
 
 impl EventEmitter<PageEvent> for ProfilePage {}
@@ -42,6 +45,7 @@ impl ProfilePage {
             followeds: Vec::new(),
             load_gen: 0,
             failed: false,
+            loaded: false,
         };
         page.load(cx);
         page
@@ -79,6 +83,7 @@ impl ProfilePage {
                 }
                 if let Some((profile, playlists, follows, followeds, failed)) = payload {
                     this.failed = failed;
+                    this.loaded = true;
                     if let Some(p) = &profile {
                         this.services.covers.prefetch([p.avatar_url.clone()], 108.0, cx);
                     }
@@ -126,7 +131,7 @@ impl ProfilePage {
                 if let Some(p) = this.profile.as_mut() {
                     if !ok {
                         p.followed = !follow;
-                        this.services.toast_error("操作失败", cx);
+                        this.services.toast_error("关注用户失败，请重试", cx);
                     } else {
                         this.services.toast(if follow { "已关注" } else { "已取消关注" }, cx);
                     }
@@ -157,14 +162,14 @@ impl ProfilePage {
             .w_full()
             .flex()
             .items_center()
-            .gap(px(16.0))
+            .gap(px(spacing::LG))
             .child(avatar)
             .child(
                 div()
                     .v_flex()
                     .flex_1()
                     .min_w(px(0.0))
-                    .gap(px(6.0))
+                    .gap(px(spacing::XXS))
                     .child(
                         div()
                             .text_2xl()
@@ -188,8 +193,8 @@ impl ProfilePage {
                     )
                     .when(!self.own, |el| {
                         el.child(
+                            // 「已关注」用中性按钮（与歌手页一致），不再用主色强调。
                             Button::new("profile-follow")
-                                .primary()
                                 .label(if followed { "已关注" } else { "关注" })
                                 .on_click(move |_ev, _window, cx| {
                                     weak_follow.update(cx, |this, cx| this.toggle_follow(cx)).ok();
@@ -200,7 +205,7 @@ impl ProfilePage {
             .child(
                 div()
                     .id("profile-back")
-                    .size(px(30.0))
+                    .size(px(dim::ROUND_BTN))
                     .flex()
                     .items_center()
                     .justify_center()
@@ -221,19 +226,19 @@ impl ProfilePage {
         let weak = cx.weak_entity();
         let mut col = div().v_flex().w_full();
         for pl in playlists.iter() {
-            let cover = covers.image(&pl.cover_url, 48.0);
+            let cover = covers.image(&pl.cover_url, dim::COVER_LIST);
             let weak = weak.clone();
             let (id, name) = (pl.id, pl.name.clone());
             col = col.child(
                 div()
                     .id(format!("profile-pl-{id}"))
                     .w_full()
-                    .h(px(56.0))
-                    .px(px(6.0))
+                    .h(px(dim::ROW_H_LIST))
+                    .px(px(spacing::XXS))
                     .flex()
                     .items_center()
-                    .gap(px(12.0))
-                    .rounded(px(6.0))
+                    .gap(px(spacing::MD))
+                    .rounded(px(theme::RADIUS_SM))
                     .hover(|s| s.bg(theme::card_surface()))
                     .cursor_pointer()
                     .on_click(move |_ev, _window, cx| {
@@ -273,19 +278,19 @@ impl ProfilePage {
         let weak = cx.weak_entity();
         let mut col = div().v_flex().w_full();
         for u in users {
-            let avatar = covers.image_round(&u.avatar_url, 40.0);
+            let avatar = covers.image_round(&u.avatar_url, dim::COVER_SONG);
             let weak = weak.clone();
             let id = u.user_id;
             col = col.child(
                 div()
                     .id(format!("{prefix}-{id}"))
                     .w_full()
-                    .h(px(52.0))
-                    .px(px(6.0))
+                    .h(px(dim::ROW_H))
+                    .px(px(spacing::XXS))
                     .flex()
                     .items_center()
-                    .gap(px(12.0))
-                    .rounded(px(6.0))
+                    .gap(px(spacing::MD))
+                    .rounded(px(theme::RADIUS_SM))
                     .hover(|s| s.bg(theme::card_surface()))
                     .cursor_pointer()
                     .on_click(move |_ev, _window, cx| {
@@ -325,7 +330,7 @@ impl ProfilePage {
 impl Render for ProfilePage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let header = self.header(cx);
-        let mut body = div().v_flex().w_full().p(px(16.0)).gap(px(18.0));
+        let mut body = div().v_flex().w_full().p(px(spacing::LG)).gap(px(18.0));
         if self.failed {
             body = body.child(load_error(
                 "profile-retry",
@@ -335,9 +340,12 @@ impl Render for ProfilePage {
             ));
         }
 
+        // 未返回时显示「加载中」，返回后真空才显示「暂无 XX」。
         body = body.child(section(
             "歌单",
-            if self.playlists.is_empty() {
+            if !self.loaded {
+                empty_hint("加载中…")
+            } else if self.playlists.is_empty() {
                 empty_hint("暂无歌单")
             } else {
                 self.playlist_rows(cx)
@@ -345,7 +353,9 @@ impl Render for ProfilePage {
         ));
         body = body.child(section(
             "关注",
-            if self.follows.is_empty() {
+            if !self.loaded {
+                empty_hint("加载中…")
+            } else if self.follows.is_empty() {
                 empty_hint("暂无关注")
             } else {
                 self.users_rows(&self.follows, "profile-follow", cx)
@@ -353,7 +363,9 @@ impl Render for ProfilePage {
         ));
         body = body.child(section(
             "粉丝",
-            if self.followeds.is_empty() {
+            if !self.loaded {
+                empty_hint("加载中…")
+            } else if self.followeds.is_empty() {
                 empty_hint("暂无粉丝")
             } else {
                 self.users_rows(&self.followeds, "profile-fans", cx)
@@ -371,7 +383,7 @@ fn section(title: &str, body: AnyElement) -> AnyElement {
     div()
         .v_flex()
         .w_full()
-        .gap(px(8.0))
+        .gap(px(spacing::SM))
         .child(
             div()
                 .text_lg()
@@ -386,7 +398,7 @@ fn section(title: &str, body: AnyElement) -> AnyElement {
 fn empty_hint(text: &str) -> AnyElement {
     div()
         .w_full()
-        .py(px(12.0))
+        .py(px(spacing::MD))
         .text_xs()
         .text_color(theme::text_gray())
         .child(text.to_string())

@@ -12,7 +12,7 @@ use siren_core::model::{AccountBinding, UserLevel, VipInfo};
 use super::super::services::Services;
 use super::super::session::Session;
 use super::super::{page_shell, PageEvent};
-use crate::theme;
+use crate::theme::{self, spacing};
 
 pub(crate) struct AccountPage {
     services: Services,
@@ -230,10 +230,10 @@ impl Render for AccountPage {
                     .w_full()
                     .gap(px(10.0))
                     .child(
-                        div().flex().items_center().gap(px(16.0)).child(avatar).child(
+                        div().flex().items_center().gap(px(spacing::LG)).child(avatar).child(
                             div()
                                 .v_flex()
-                                .gap(px(4.0))
+                                .gap(px(spacing::XS))
                                 .child(
                                     div()
                                         .text_lg()
@@ -273,12 +273,12 @@ impl Render for AccountPage {
                 div()
                     .v_flex()
                     .w_full()
-                    .gap(px(8.0))
+                    .gap(px(spacing::SM))
                     .child(
                         div()
                             .flex()
                             .items_center()
-                            .gap(px(8.0))
+                            .gap(px(spacing::SM))
                             .child(
                                 div()
                                     .text_lg()
@@ -322,7 +322,7 @@ impl Render for AccountPage {
                 div()
                     .v_flex()
                     .w_full()
-                    .gap(px(4.0))
+                    .gap(px(spacing::XS))
                     .child(
                         div()
                             .text_sm()
@@ -343,7 +343,7 @@ impl Render for AccountPage {
         };
 
         // ── 账号绑定 ──
-        let mut bindings_col = div().v_flex().w_full().gap(px(6.0));
+        let mut bindings_col = div().v_flex().w_full().gap(px(spacing::XXS));
         match &self.bindings {
             None => {
                 bindings_col =
@@ -380,8 +380,8 @@ impl Render for AccountPage {
         let weak_signin = weak.clone();
         let signin_card = div()
             .id("account-signin")
-            .px(px(16.0))
-            .py(px(8.0))
+            .px(px(spacing::LG))
+            .py(px(spacing::SM))
             .rounded_full()
             .cursor_pointer()
             .bg(theme::accent())
@@ -400,7 +400,7 @@ impl Render for AccountPage {
             .child(
                 div()
                     .v_flex()
-                    .gap(px(4.0))
+                    .gap(px(spacing::XS))
                     .child(
                         div()
                             .text_xs()
@@ -414,7 +414,7 @@ impl Render for AccountPage {
                             .flex()
                             .items_center()
                             .px(px(10.0))
-                            .rounded(px(6.0))
+                            .rounded(px(theme::RADIUS_SM))
                             .bg(theme::pane())
                             .child(Input::new(&self.nickname_input)),
                     ),
@@ -422,7 +422,7 @@ impl Render for AccountPage {
             .child(
                 div()
                     .v_flex()
-                    .gap(px(4.0))
+                    .gap(px(spacing::XS))
                     .child(div().text_xs().text_color(theme::text_gray()).child("个性签名"))
                     .child(
                         div()
@@ -431,7 +431,7 @@ impl Render for AccountPage {
                             .flex()
                             .items_center()
                             .px(px(10.0))
-                            .rounded(px(6.0))
+                            .rounded(px(theme::RADIUS_SM))
                             .bg(theme::pane())
                             .child(Input::new(&self.signature_input)),
                     ),
@@ -439,8 +439,8 @@ impl Render for AccountPage {
             .child(
                 div()
                     .id("account-save")
-                    .px(px(16.0))
-                    .py(px(8.0))
+                    .px(px(spacing::LG))
+                    .py(px(spacing::SM))
                     .rounded_full()
                     .cursor_pointer()
                     .bg(theme::surface())
@@ -456,31 +456,14 @@ impl Render for AccountPage {
             .flex_1()
             .min_w(px(0.0))
             .w_full()
-            .gap(px(16.0))
-            .p(px(16.0))
+            .gap(px(spacing::LG))
+            .p(px(spacing::LG))
             .child(card("账号", account_card))
             .child(card("等级", level_card))
             .child(card("会员", vip_card))
             .child(card("账号绑定", bindings_col.into_any_element()))
             .child(card("签到", signin_card.into_any_element()))
-            .child(card("修改资料", edit_card.into_any_element()))
-            .child(
-                div()
-                    .id("account-avatar-btn")
-                    .px(px(16.0))
-                    .py(px(8.0))
-                    .rounded_full()
-                    .cursor_pointer()
-                    .bg(theme::surface())
-                    .hover(|s| s.bg(theme::surface_light()))
-                    .on_click({
-                        let weak_avatar = weak.clone();
-                        move |_ev, _window, cx| {
-                            weak_avatar.update(cx, |page, cx| page.change_avatar(cx)).ok();
-                        }
-                    })
-                    .child(div().text_sm().text_color(theme::text_primary()).child("更换头像")),
-            )
+            .child(card("资料", edit_card.into_any_element()))
             .into_any_element();
 
         page_shell("账号设置".to_string(), body)
@@ -494,7 +477,7 @@ fn card(title: &str, content: AnyElement) -> AnyElement {
         .w_full()
         .gap(px(10.0))
         .p(px(14.0))
-        .rounded(px(8.0))
+        .rounded(px(theme::RADIUS_MD))
         .bg(theme::card_surface())
         .child(
             div()

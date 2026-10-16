@@ -100,7 +100,7 @@ impl Root {
         if items.is_empty() {
             return div().into_any_element();
         }
-        let mut col = div().flex().flex_col().items_center().gap(px(8.0));
+        let mut col = div().flex().flex_col().items_center().gap(px(theme::spacing::SM));
         for toast in items {
             col = col.child(toast_box(toast));
         }
@@ -128,7 +128,7 @@ fn toast_box(toast: &Toast) -> AnyElement {
         .gap(px(10.0))
         .px(px(14.0))
         .py(px(10.0))
-        .rounded(px(8.0))
+        .rounded(px(theme::RADIUS_MD))
         .bg(theme::card_surface())
         .child(div().w(px(3.0)).h(px(16.0)).rounded_full().bg(bar))
         .child(

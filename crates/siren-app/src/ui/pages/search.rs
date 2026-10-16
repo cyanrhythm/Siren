@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use gpui_kit::base::StyledExt;
+use gpui_kit::component::button::Button;
 use gpui_kit::component::menu::{ContextMenuExt, PopupMenuItem};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -14,7 +15,8 @@ use super::super::playback::Playback;
 use super::super::services::Services;
 use super::super::smooth_scroll::smooth_virtual_list;
 use super::super::{page_shell, PageEvent};
-use crate::theme;
+use super::dim;
+use crate::theme::{self, spacing};
 
 /// 搜索类型（`api_value` 对齐 Melodia `SearchType`）。
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -63,6 +65,8 @@ pub(crate) struct SearchPage {
     playlists: Arc<Vec<Playlist>>,
     selected: Option<usize>,
     status: SharedString,
+    /// 最近一次搜索是否失败（与「0 条」区分：失败显示错误 + 重试，K4）。
+    failed: bool,
     run_gen: u64,
 }
 
@@ -81,6 +85,7 @@ impl SearchPage {
             playlists: Arc::new(Vec::new()),
             selected: None,
             status: "在顶部搜索框输入关键词并回车".into(),
+            failed: false,
             run_gen: 0,
         }
     }
@@ -118,6 +123,7 @@ impl SearchPage {
         self.artists = Arc::new(Vec::new());
         self.playlists = Arc::new(Vec::new());
         self.selected = None;
+        self.failed = false;
         self.status = format!("搜索中：{keyword}").into();
         cx.notify();
 
@@ -139,7 +145,8 @@ impl SearchPage {
                     Some(Ok(value)) => value,
                     Some(Err(err)) => {
                         log::warn!("搜索失败：{}", err.user_message());
-                        this.status = format!("{} · 搜索失败，请重试", kind.label()).into();
+                        this.failed = true;
+                        this.status = format!("{} · 搜索失败", kind.label()).into();
                         cx.notify();
                         return;
                     }
@@ -183,24 +190,44 @@ impl SearchPage {
         })
         .detach();
     }
+
+    /// 当前类型的结果条数。
+    fn count(&self) -> usize {
+        match self.kind {
+            SearchKind::Song => self.songs.len(),
+            SearchKind::Album => self.albums.len(),
+            SearchKind::Artist => self.artists.len(),
+            SearchKind::Playlist => self.playlists.len(),
+        }
+    }
 }
 
 impl Render for SearchPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let weak = cx.weak_entity();
         let tabs = {
-            let mut row = div().flex().items_center().gap(px(8.0)).px(px(16.0)).pt(px(4.0));
+            let mut row = div()
+                .flex()
+                .items_center()
+                .gap(px(spacing::SM))
+                .px(px(spacing::LG))
+                .pt(px(spacing::XS));
             for kind in SearchKind::ALL {
                 let active = kind == self.kind;
                 let weak = weak.clone();
                 row = row.child(
                     div()
                         .id(("search-kind", kind as usize))
-                        .px(px(12.0))
+                        .px(px(spacing::MD))
                         .py(px(5.0))
                         .rounded_full()
                         .cursor_pointer()
-                        .bg(if active { theme::accent() } else { theme::surface() })
+                        // 选中态统一：surface_light 背景（白字），hover 只在非选中时生效。
+                        .bg(if active {
+                            theme::surface_light()
+                        } else {
+                            theme::surface()
+                        })
                         .when(!active, |s| s.hover(|s| s.bg(theme::card_surface())))
                         .on_click(move |_ev, _window, cx| {
                             weak.update(cx, |this, cx| this.set_kind(kind, cx)).ok();
@@ -211,11 +238,60 @@ impl Render for SearchPage {
             row
         };
 
-        let body: AnyElement = match self.kind {
-            SearchKind::Song => self.song_list(window, cx),
-            SearchKind::Album => self.album_list(window, cx),
-            SearchKind::Artist => self.artist_list(window, cx),
-            SearchKind::Playlist => self.playlist_list(window, cx),
+        let body: AnyElement = if self.keyword.is_empty() {
+            // 初始态（未搜索）：给引导文案而非空壳列表。
+            div()
+                .flex_1()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme::text_gray())
+                        .child("输入关键词并回车开始搜索"),
+                )
+                .into_any_element()
+        } else if self.failed {
+            // 失败态：错误 + 重试（不显示「0 条」，K4）。
+            let weak_retry = cx.weak_entity();
+            div()
+                .flex_1()
+                .flex()
+                .flex_col()
+                .items_center()
+                .justify_center()
+                .gap(px(spacing::MD))
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme::text_gray())
+                        .child("搜索失败，请检查网络后重试"),
+                )
+                .child(Button::new("search-retry").label("重试").on_click(move |_ev, _w, cx| {
+                    weak_retry.update(cx, |this, cx| this.run(cx)).ok();
+                }))
+                .into_any_element()
+        } else if self.count() == 0 {
+            div()
+                .flex_1()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme::text_gray())
+                        .child("未找到相关结果，换个关键词试试"),
+                )
+                .into_any_element()
+        } else {
+            match self.kind {
+                SearchKind::Song => self.song_list(window, cx),
+                SearchKind::Album => self.album_list(window, cx),
+                SearchKind::Artist => self.artist_list(window, cx),
+                SearchKind::Playlist => self.playlist_list(window, cx),
+            }
         };
 
         let content = div().v_flex().flex_1().min_w(px(0.0)).w_full().child(tabs).child(body);
@@ -231,32 +307,57 @@ impl SearchPage {
         let selected = self.selected;
         let covers = self.services.covers.clone();
         let playback = self.playback.clone();
+        // 当前播放行高亮。
+        let current = self.playback.read(cx).current_song_id();
         let weak = cx.weak_entity();
         smooth_virtual_list(
             "search-songs",
             count,
-            48.0,
+            dim::ROW_H_SM,
             move |range, _window, cx| {
                 range
                     .map(|i| {
                         let song = &songs[i];
-                        let marker = if selected == Some(i) { "▶ " } else { "" };
-                        let cover = covers.image(&song.cover_url, 40.0);
+                        let cover = covers.image(&song.cover_url, dim::COVER_SONG);
                         let weak = weak.clone();
                         let weak_ctx = weak.clone();
                         let sid = song.id;
                         let song_owned = song.clone();
                         let liked = playback.read(cx).is_liked(sid);
+                        // 序号列固定槽位：播放中/选中用强调色，其余灰色。
+                        let index_cell: AnyElement = if current == Some(sid) {
+                            div()
+                                .w(px(dim::INDEX_W))
+                                .flex()
+                                .justify_end()
+                                .text_sm()
+                                .text_color(theme::accent())
+                                .child("▶")
+                                .into_any_element()
+                        } else {
+                            div()
+                                .w(px(dim::INDEX_W))
+                                .flex()
+                                .justify_end()
+                                .text_sm()
+                                .text_color(if selected == Some(i) {
+                                    theme::accent()
+                                } else {
+                                    theme::text_gray()
+                                })
+                                .child(format!("{}", i + 1))
+                                .into_any_element()
+                        };
                         div()
                             .id(format!("search-song-{}", song.id))
                             .group(format!("search-song-{}", song.id))
                             .w_full()
-                            .h(px(48.0))
-                            .px(px(16.0))
+                            .h(px(dim::ROW_H_SM))
+                            .px(px(spacing::LG))
                             .flex()
                             .items_center()
-                            .gap(px(12.0))
-                            .rounded(px(6.0))
+                            .gap(px(spacing::MD))
+                            .rounded(px(theme::RADIUS_SM))
                             .hover(|s| s.bg(theme::card_surface()))
                             .cursor_pointer()
                             .on_click(move |_ev, _window, cx| {
@@ -267,6 +368,7 @@ impl SearchPage {
                                 })
                                 .ok();
                             })
+                            .child(index_cell)
                             .child(cover)
                             .child(
                                 div()
@@ -279,7 +381,7 @@ impl SearchPage {
                                             .text_sm()
                                             .text_color(theme::text_primary())
                                             .truncate()
-                                            .child(format!("{marker}{}", song.name)),
+                                            .child(song.name.clone()),
                                     )
                                     .child(
                                         div()
@@ -347,7 +449,7 @@ impl SearchPage {
                 range
                     .map(|i| {
                         let album = &items[i];
-                        let cover = covers.image(&album.cover_url, 48.0);
+                        let cover = covers.image(&album.cover_url, dim::COVER_LIST);
                         let weak = weak.clone();
                         let id = album.id;
                         let name = album.name.clone();
@@ -355,11 +457,11 @@ impl SearchPage {
                             .id(format!("search-album-{}", album.id))
                             .w_full()
                             .h(px(60.0))
-                            .px(px(16.0))
+                            .px(px(spacing::LG))
                             .flex()
                             .items_center()
-                            .gap(px(12.0))
-                            .rounded(px(6.0))
+                            .gap(px(spacing::MD))
+                            .rounded(px(theme::RADIUS_SM))
                             .hover(|s| s.bg(theme::card_surface()))
                             .cursor_pointer()
                             .on_click(move |_ev, _window, cx| {
@@ -420,12 +522,12 @@ impl SearchPage {
                         div()
                             .id(format!("search-artist-{}", artist.id))
                             .w_full()
-                            .h(px(56.0))
-                            .px(px(16.0))
+                            .h(px(dim::ROW_H_LIST))
+                            .px(px(spacing::LG))
                             .flex()
                             .items_center()
-                            .gap(px(12.0))
-                            .rounded(px(6.0))
+                            .gap(px(spacing::MD))
+                            .rounded(px(theme::RADIUS_SM))
                             .hover(|s| s.bg(theme::card_surface()))
                             .cursor_pointer()
                             .on_click(move |_ev, _window, cx| {
@@ -465,7 +567,7 @@ impl SearchPage {
                 range
                     .map(|i| {
                         let pl = &items[i];
-                        let cover = covers.image(&pl.cover_url, 48.0);
+                        let cover = covers.image(&pl.cover_url, dim::COVER_LIST);
                         let weak = weak.clone();
                         let id = pl.id;
                         let name = pl.name.clone();
@@ -473,11 +575,11 @@ impl SearchPage {
                             .id(format!("search-playlist-{id}"))
                             .w_full()
                             .h(px(60.0))
-                            .px(px(16.0))
+                            .px(px(spacing::LG))
                             .flex()
                             .items_center()
-                            .gap(px(12.0))
-                            .rounded(px(6.0))
+                            .gap(px(spacing::MD))
+                            .rounded(px(theme::RADIUS_SM))
                             .hover(|s| s.bg(theme::card_surface()))
                             .cursor_pointer()
                             .on_click(move |_ev, _window, cx| {

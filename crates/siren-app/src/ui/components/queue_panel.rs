@@ -11,14 +11,15 @@ use std::sync::Arc;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::base::StyledExt;
+use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use siren_core::model::Song;
 
 use super::super::settings_store::SettingsStore;
-use super::super::smooth_scroll::{smooth_scroll, smooth_scroll_offset};
+use super::super::smooth_scroll::{smooth_scroll, smooth_scroll_offset, smooth_scroll_to};
 use super::super::{cover_placeholder, icon, motion, Root};
-use super::queue_layout::{reorder_target, GAP, PAD, ROW_H, SECTION_H, STRIDE};
+use super::queue_layout::{reorder_target, row_content_top, GAP, PAD, ROW_H, SECTION_H, STRIDE};
 use crate::theme;
 
 impl Root {
@@ -67,8 +68,8 @@ impl Root {
             .h(px(48.0))
             .flex()
             .items_center()
-            .gap(px(8.0))
-            .px(px(12.0))
+            .gap(px(theme::spacing::SM))
+            .px(px(theme::spacing::MD))
             .child(
                 div()
                     .text_sm()
@@ -91,13 +92,11 @@ impl Root {
                         .flex()
                         .items_center()
                         .justify_center()
-                        .rounded(px(6.0))
+                        .rounded(px(theme::RADIUS_SM))
                         .cursor_pointer()
                         .hover(|s| s.bg(theme::surface()))
                         .on_click(move |_ev, _window, cx| {
-                            weak_clear
-                                .update(cx, |root, cx| root.playback.update(cx, |pb, cx| pb.clear_queue(cx)))
-                                .ok();
+                            weak_clear.update(cx, |root, cx| root.open_queue_clear(cx)).ok();
                         })
                         .child(icon(IconName::Trash, 16.0, theme::text_gray())),
                 )
@@ -109,7 +108,7 @@ impl Root {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .rounded(px(6.0))
+                    .rounded(px(theme::RADIUS_SM))
                     .cursor_pointer()
                     .hover(|s| s.bg(theme::surface()))
                     .on_click(move |_ev, _window, cx| {
@@ -143,6 +142,8 @@ impl Root {
                             return;
                         }
                         // 「接下来播放」首行的内容顶偏移：内边距 + 前序分段（标题 + 行）高度 + 间距。
+                        // taffy 的 column gap 只加在相邻 kid 之间：目标行是第 kids 个 kid（从 0 计），
+                        // 其上方恰好有 kids 个间隔。
                         let mut top = PAD;
                         let mut kids = 0usize;
                         if let Some(c) = current.filter(|c| *c > 0) {
@@ -169,21 +170,123 @@ impl Root {
                     })
                     .ok();
             })
-            .child(smooth_scroll("queue-scroll", content, window, cx));
+            .child(if n == 0 {
+                // 空态：队列为空时给出去向提示（K8 同一约定）。
+                div()
+                    .flex_1()
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        div()
+                            .v_flex()
+                            .items_center()
+                            .gap(px(theme::spacing::SM))
+                            .child(div().text_sm().text_color(theme::text_gray()).child("队列为空"))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme::text_gray())
+                                    .child("从歌单或搜索中添加歌曲开始播放"),
+                            ),
+                    )
+                    .into_any_element()
+            } else {
+                smooth_scroll("queue-scroll", content, window, cx).into_any_element()
+            });
 
+        // 「清空队列」确认浮层：压暗面板局部，取消 / 清空（danger）。
+        let confirm =
+            self.queue_clear_open.then(|| {
+                let weak_cancel = weak.clone();
+                let weak_ok = weak.clone();
+                div()
+                    .id("queue-clear-confirm")
+                    .occlude()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .w_full()
+                    .h_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .bg(theme::scrim())
+                    .child(
+                        div()
+                            .v_flex()
+                            .w(px(300.0))
+                            .gap(px(theme::spacing::MD))
+                            .rounded(px(theme::RADIUS_LG))
+                            .bg(theme::surface())
+                            .p(px(theme::spacing::LG))
+                            .child(
+                                div()
+                                    .text_lg()
+                                    .font_weight(FontWeight::BOLD)
+                                    .text_color(theme::text_primary())
+                                    .child("清空播放队列？"),
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(theme::text_gray())
+                                    .child("队列中的所有歌曲都会被移除。"),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .justify_end()
+                                    .gap(px(theme::spacing::SM))
+                                    .child(Button::new("queue-clear-cancel").label("取消").on_click(
+                                        move |_ev, _w, cx| {
+                                            weak_cancel.update(cx, |root, cx| root.close_queue_clear(cx)).ok();
+                                        },
+                                    ))
+                                    .child(Button::new("queue-clear-ok").danger().label("清空").on_click(
+                                        move |_ev, _w, cx| {
+                                            weak_ok.update(cx, |root, cx| root.confirm_queue_clear(cx)).ok();
+                                        },
+                                    )),
+                            ),
+                    )
+                    .into_any_element()
+            });
+
+        // 面板宽与右栏有效宽一致（窗口收窄时随动，见 Root::np_effective_w）。
+        let pads = gpui_kit::component::window_paddings(window);
+        let vw = f32::from(window.viewport_size().width) - f32::from(pads.left) - f32::from(pads.right);
+        let np_w = self.np_effective_w(vw, cx);
         div()
             .absolute()
             .top(px(64.0))
             .bottom(px(theme::PLAYER_BAR_H))
-            .right(px(8.0))
-            .w(px(SettingsStore::of(cx).np_width()))
+            .right(px(theme::spacing::SM))
+            .w(px(np_w))
             .v_flex()
-            .rounded(px(8.0))
+            .rounded(px(theme::RADIUS_MD))
             .bg(theme::pane())
             .overflow_hidden()
             .child(header)
             .child(body)
+            .when_some(confirm, |el, confirm| el.child(confirm))
             .into_any_element()
+    }
+
+    /// 打开队列浮层时把滚动定位到当前曲（内容首帧量出后生效，见 smooth_scroll_to）。
+    pub(crate) fn scroll_queue_to_current(&self, cx: &mut App) {
+        let (items, current) = self.playback.read(cx).queue_snapshot();
+        let n = items.len();
+        if n == 0 {
+            return;
+        }
+        let index = current.filter(|c| *c < n).unwrap_or(0);
+        let Some(top) = row_content_top(index, current, n) else {
+            return;
+        };
+        smooth_scroll_to("queue-scroll", (top - PAD).max(0.0), cx);
     }
 
     /// 单条队列行。`upcoming` 决定是否可拖动；`is_played` 压暗；`is_current` 高亮标题；
@@ -214,7 +317,7 @@ impl Root {
             .flex()
             .items_center()
             .gap(px(10.0))
-            .rounded(px(6.0))
+            .rounded(px(theme::RADIUS_SM))
             .hover(|s| s.bg(theme::surface()))
             .cursor_pointer()
             .on_click(move |_ev, _window, cx| {
@@ -327,7 +430,7 @@ fn section_label(text: &str) -> impl IntoElement {
         .w_full()
         .flex()
         .items_center()
-        .px(px(8.0))
+        .px(px(theme::spacing::SM))
         .text_xs()
         .text_color(theme::text_gray())
         .child(text.to_string())
@@ -361,7 +464,7 @@ impl Render for QueueDragPreview {
             Some(image) => img(image.clone())
                 .w(px(40.0))
                 .h(px(40.0))
-                .rounded(px(6.0))
+                .rounded(px(theme::RADIUS_SM))
                 .into_any_element(),
             None => cover_placeholder(40.0).into_any_element(),
         };
@@ -372,7 +475,7 @@ impl Render for QueueDragPreview {
             .flex()
             .items_center()
             .gap(px(10.0))
-            .rounded(px(6.0))
+            .rounded(px(theme::RADIUS_SM))
             .bg(theme::pane())
             .shadow_lg()
             .child(cover)

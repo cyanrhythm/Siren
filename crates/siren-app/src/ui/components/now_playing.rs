@@ -7,6 +7,7 @@ use gpui_kit::assets::IconName;
 use gpui_kit::base::StyledExt;
 use gpui_kit::component::button::{Button, ButtonCustomVariant, ButtonVariants};
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
+use gpui_kit::component::Disableable as _;
 use gpui_kit::component::Icon;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -16,7 +17,7 @@ use siren_core::model::{Song, SongWiki};
 use super::super::settings_store::SettingsStore;
 use super::super::smooth_scroll::{smooth_scroll, smooth_scroll_plain};
 use super::super::{cover_placeholder, fmt_date, icon, NpCard, Root};
-use crate::theme;
+use crate::theme::{self, spacing};
 use siren_core::player::{PlaySource, PlaySourceKind};
 
 impl Root {
@@ -35,7 +36,7 @@ impl Root {
                 .h_full()
                 .flex_none()
                 .flex_shrink_0()
-                .rounded(px(8.0))
+                .rounded(px(theme::RADIUS_MD))
                 .bg(theme::pane())
                 .items_center()
                 .justify_center()
@@ -51,8 +52,11 @@ impl Root {
             Some(s) => (s.name.clone(), s.artists.clone()),
             None => ("未在播放".to_string(), String::new()),
         };
-        // 封面随面板宽度放大（封顶 420，对齐 Melodia NowPlayingMaxWidth）；无歌曲时用小占位。
-        let np_width = SettingsStore::of(cx).np_width();
+        // 封面随面板「有效宽」放大（封顶 420，对齐 Melodia NowPlayingMaxWidth）：
+        // 窗口缩窄时右栏显示宽由 np_effective_w 联动，封面不再按原始拖放宽被裁。
+        let pads = gpui_kit::component::window_paddings(window);
+        let vw = f32::from(window.viewport_size().width) - f32::from(pads.left) - f32::from(pads.right);
+        let np_width = self.np_effective_w(vw, cx);
         let cover_size = (np_width - 28.0).clamp(220.0, 420.0);
         let cover: AnyElement = match &song {
             Some(s) => self.services.covers.image(&s.cover_url, cover_size),
@@ -75,7 +79,7 @@ impl Root {
                 div()
                     .v_flex()
                     .w_full()
-                    .gap(px(2.0))
+                    .gap(px(spacing::XXS))
                     .child(
                         div()
                             .text_color(theme::text_primary())
@@ -149,16 +153,16 @@ impl Root {
             .h_full()
             .flex_none()
             .flex_shrink_0()
-            .rounded(px(8.0))
+            .rounded(px(theme::RADIUS_MD))
             .bg(panel_bg)
-            .p(px(12.0))
-            .gap(px(8.0))
+            .p(px(spacing::MD))
+            .gap(px(spacing::SM))
             .child(
                 div()
                     .w_full()
                     .flex()
                     .items_center()
-                    .gap(px(8.0))
+                    .gap(px(spacing::SM))
                     .child(now_playing_menu(weak.clone(), context, cx))
                     .child(div().flex_1().min_w(px(0.0)).child(source_title(source, weak.clone())))
                     .child(toggle_button("np-collapse", IconName::ChevronRight, weak)),
@@ -274,7 +278,7 @@ fn info_card(title: &str, content: AnyElement) -> AnyElement {
         .w_full()
         .gap(px(10.0))
         .p(px(14.0))
-        .rounded(px(8.0))
+        .rounded(px(theme::RADIUS_MD))
         .bg(theme::card_surface())
         .child(
             div()
@@ -303,7 +307,7 @@ fn lyrics_card(lines: &[siren_core::lyrics::LyricLine], position_ms: i64) -> Any
         let mut item = div()
             .v_flex()
             .w_full()
-            .gap(px(2.0))
+            .gap(px(spacing::XXS))
             .child(div().w_full().truncate().text_color(color).child(line.text.clone()));
         if let Some(t) = &line.translation {
             item = item.child(
@@ -328,7 +332,7 @@ fn comments_preview_card(page: &siren_core::model::CommentPage, weak: WeakEntity
             div()
                 .w_full()
                 .v_flex()
-                .gap(px(4.0))
+                .gap(px(spacing::XS))
                 .child(
                     div()
                         .flex()
@@ -357,15 +361,14 @@ fn comments_preview_card(page: &siren_core::model::CommentPage, weak: WeakEntity
     }
     let weak_open = weak;
     col = col.child(
-        div()
-            .id("comments-open")
-            .cursor_pointer()
-            .text_sm()
-            .text_color(theme::accent())
-            .child(format!("查看全部 {} 条评论", page.total))
-            .on_click(move |_ev, _window, cx| {
-                weak_open.update(cx, |root, cx| root.open_comments(cx)).ok();
-            }),
+        div().w_full().flex().justify_start().child(
+            Button::new("comments-open")
+                .ghost()
+                .label(format!("查看全部 {} 条评论", page.total))
+                .on_click(move |_ev, _window, cx| {
+                    weak_open.update(cx, |root, cx| root.open_comments(cx)).ok();
+                }),
+        ),
     );
     info_card("评论", col.into_any_element())
 }
@@ -427,7 +430,7 @@ fn about_artist_card(
                 .v_flex()
                 .flex_1()
                 .min_w(px(0.0))
-                .gap(px(4.0))
+                .gap(px(spacing::XS))
                 .child(
                     div()
                         .text_sm()
@@ -450,7 +453,7 @@ fn about_artist_card(
             .id("artist-follow")
             .flex_none()
             .px(px(10.0))
-            .py(px(4.0))
+            .py(px(spacing::XS))
             .rounded_full()
             .cursor_pointer()
             .bg(if followed { theme::surface() } else { theme::accent() })
@@ -599,7 +602,7 @@ fn paged_card(
         .w_full()
         .gap(px(10.0))
         .p(px(14.0))
-        .rounded(px(8.0))
+        .rounded(px(theme::RADIUS_MD))
         .bg(theme::card_surface())
         .child(header)
         .child(content)
@@ -612,16 +615,14 @@ fn page_arrow(
     action: impl Fn(&mut Root, &mut Context<Root>) + 'static,
     weak: WeakEntity<Root>,
 ) -> AnyElement {
-    div()
-        .id(("np-arrow", name as usize))
-        .size(px(22.0))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded_full()
-        .bg(theme::surface())
-        .when(enabled, |s| s.cursor_pointer())
-        .child(icon(
+    let tooltip = if matches!(name, IconName::ChevronLeft) {
+        "上一页"
+    } else {
+        "下一页"
+    };
+    Button::new(("np-arrow", name as usize))
+        .ghost()
+        .icon(icon(
             name,
             14.0,
             if enabled {
@@ -630,6 +631,8 @@ fn page_arrow(
                 theme::text_gray()
             },
         ))
+        .tooltip(tooltip)
+        .disabled(!enabled)
         .when(enabled, |s| {
             s.on_click(move |_ev, _window, cx| {
                 weak.update(cx, |root, cx| action(root, cx)).ok();
@@ -727,7 +730,7 @@ fn song_detail_card(wiki: Option<&SongWiki>, song: Option<&Song>, detail: Option
                 .w_full()
                 .flex()
                 .items_start()
-                .gap(px(8.0))
+                .gap(px(spacing::SM))
                 .child(
                     div()
                         .w(px(64.0))
@@ -750,17 +753,16 @@ fn song_detail_card(wiki: Option<&SongWiki>, song: Option<&Song>, detail: Option
 }
 
 fn toggle_button(id: &'static str, name: IconName, weak: WeakEntity<Root>) -> impl IntoElement {
-    div()
-        .id(id)
-        .size(px(28.0))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded_full()
-        .cursor_pointer()
-        .hover(|s| s.bg(theme::surface()))
+    let tooltip = if id == "np-expand" {
+        "展开正在播放"
+    } else {
+        "收起正在播放"
+    };
+    Button::new(id)
+        .ghost()
+        .icon(icon(name, 16.0, theme::text_gray()))
+        .tooltip(tooltip)
         .on_click(move |_ev, _window, cx| {
             weak.update(cx, |root, cx| root.toggle_now_playing(cx)).ok();
         })
-        .child(icon(name, 16.0, theme::text_gray()))
 }

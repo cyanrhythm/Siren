@@ -25,7 +25,8 @@ use ui::Root;
 /// 内嵌的应用字体（MiSans）。
 const MI_SANS: &[u8] = include_bytes!("../../../assets/fonts/MiSans-Regular.ttf");
 
-const DEFAULT_W: f32 = 1100.0;
+// 默认宽不得小于最小窗口宽（min_window_size 按侧栏 + 双卡片 + 右栏计算，见 ui/mod.rs）。
+const DEFAULT_W: f32 = 1200.0;
 const DEFAULT_H: f32 = 760.0;
 
 /// CSD（客户端装饰）每边的阴影内边距，窗口最小尺寸作用于外沿时需计入

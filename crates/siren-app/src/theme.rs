@@ -5,7 +5,7 @@
 //! 与自定义界面保持一致。
 
 use gpui_kit::component::Theme;
-use gpui_kit::{linear_color_stop, linear_gradient, rgb, App, Background, Rgba};
+use gpui_kit::{linear_color_stop, linear_gradient, rgb, rgba, App, Background, Rgba};
 
 pub fn window_bg() -> Rgba {
     rgb(0x000000)
@@ -36,6 +36,38 @@ pub fn cover_placeholder() -> Rgba {
 }
 
 pub const PLAYER_BAR_H: f32 = 80.0;
+
+// ---- 尺寸 token（设计规范：间距/圆角/字号收敛到命名档位，不散落魔法数字） ----
+
+/// 间距语义档（px）：2/4/8/12/16/24/32，用法 `.gap(px(spacing::SM))`。
+pub mod spacing {
+    pub const XXS: f32 = 2.0;
+    pub const XS: f32 = 4.0;
+    pub const SM: f32 = 8.0;
+    pub const MD: f32 = 12.0;
+    pub const LG: f32 = 16.0;
+    pub const XL: f32 = 24.0;
+    pub const XXL: f32 = 32.0;
+}
+
+/// 圆角语义档：控件 sm/md、浮层 lg；pill 形一律 `rounded_full()`，勿手造值。
+pub const RADIUS_SM: f32 = 6.0;
+pub const RADIUS_MD: f32 = 8.0;
+pub const RADIUS_LG: f32 = 12.0;
+
+/// 字号档：hero 大标题（歌单名等）。
+pub mod text {
+    pub const HERO: f32 = 40.0;
+}
+
+/// 浮层遮罩（modal 底层压暗）。
+pub fn scrim() -> Rgba {
+    rgba(0x00000088)
+}
+/// 封面裁剪等需要更强压暗的遮罩。
+pub fn scrim_strong() -> Rgba {
+    rgba(0x000000cc)
+}
 
 /// 降低亮度（用于封面取色背景）。
 pub fn darken(color: Rgba, factor: f32) -> Rgba {

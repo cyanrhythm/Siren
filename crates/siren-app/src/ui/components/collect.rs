@@ -1,6 +1,9 @@
 //! 歌单写操作浮层：新建歌单、收藏歌曲到歌单。
 
-use gpui_kit::base::StyledExt;
+use std::cell::RefCell;
+use std::collections::HashMap;
+
+use gpui_kit::base::{ElementExt as _, StyledExt};
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::Input;
 use gpui_kit::*;
@@ -8,17 +11,82 @@ use gpui_kit::*;
 use super::super::session::Session;
 use super::super::smooth_scroll::smooth_scroll;
 use super::super::{Root, Route, PLAYLIST_PAGE};
-use crate::theme;
+use crate::theme::{self, spacing};
+
+thread_local! {
+    /// 各浮层的焦点句柄：懒建后稳定复用，track_focus 依赖它把按键送达浮层根。
+    static OVERLAY_FOCUS: RefCell<HashMap<&'static str, FocusHandle>> = RefCell::new(HashMap::new());
+    /// 删除确认浮层点名的歌单名（PlaylistOpsState 在 ui/mod.rs，跨 agent 不便加字段，
+    /// 浮层同时只开一个，模块内暂存即可）。
+    static DELETE_PNAME: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+/// 取（或建）某浮层的焦点句柄；open_* 时预热，构建浮层时经 `overlay_focus_cached` 取。
+pub(crate) fn overlay_focus(id: &'static str, cx: &mut App) -> FocusHandle {
+    OVERLAY_FOCUS.with(|map| map.borrow_mut().entry(id).or_insert_with(|| cx.focus_handle()).clone())
+}
+
+fn overlay_focus_cached(id: &'static str) -> Option<FocusHandle> {
+    OVERLAY_FOCUS.with(|map| map.borrow().get(&id).cloned())
+}
+
+/// 浮层遮罩根：全屏压暗，点遮罩 / Esc 关闭；焦点为空时兜底聚焦浮层根（Esc 才能送达）。
+pub(crate) fn overlay_scrim(
+    id: &'static str,
+    weak: WeakEntity<Root>,
+    close: fn(&mut Root, &mut Window, &mut Context<Root>),
+) -> Stateful<Div> {
+    let weak_click = weak.clone();
+    let weak_esc = weak;
+    let mut root = div()
+        .id(id)
+        .occlude()
+        .absolute()
+        .top_0()
+        .left_0()
+        .w_full()
+        .h_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .bg(theme::scrim())
+        .on_click(move |ev: &ClickEvent, window, cx| {
+            // 只响应鼠标左键；浮层根聚焦时 Enter/Space 产生的键盘 click 不关浮层。
+            let on_scrim = matches!(ev, ClickEvent::Mouse(e) if e.up.button == MouseButton::Left);
+            if on_scrim {
+                weak_click.update(cx, |root, cx| close(root, window, cx)).ok();
+            }
+        })
+        .on_key_down(move |ev: &KeyDownEvent, window, cx| {
+            if ev.keystroke.key == "escape" {
+                weak_esc.update(cx, |root, cx| close(root, window, cx)).ok();
+                cx.stop_propagation();
+            }
+        })
+        .on_prepaint(move |_, window, cx| {
+            // 打开后若无焦点（点按钮不聚焦），兜底聚焦浮层根，Esc 才能送达。
+            let focus = overlay_focus(id, cx);
+            if window.focused(cx).is_none() {
+                window.focus(&focus, cx);
+            }
+        });
+    if let Some(focus) = overlay_focus_cached(id) {
+        root = root.track_focus(&focus);
+    }
+    root
+}
 
 impl Root {
     /// 打开「新建歌单」浮层。
     pub(crate) fn open_create(&mut self, cx: &mut Context<Self>) {
+        overlay_focus("create-overlay", cx);
         self.ops.create_open = true;
         cx.notify();
     }
 
-    pub(crate) fn close_create(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn close_create(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.ops.create_open = false;
+        window.blur(cx);
         cx.notify();
     }
 
@@ -55,6 +123,7 @@ impl Root {
 
     /// 打开「添加到歌单」浮层（拉取我的歌单）。
     pub(crate) fn open_picker(&mut self, song_id: i64, cx: &mut Context<Self>) {
+        overlay_focus("picker-overlay", cx);
         self.ops.picker_song = Some(song_id);
         self.ops.picker_playlists.clear();
         self.ops.picker_offset = 0;
@@ -80,7 +149,7 @@ impl Root {
                         this.services.covers.prefetch(urls, 48.0, cx);
                     }
                     Some(Err(err)) => this.services.toast_error(err.user_message(), cx),
-                    None => {}
+                    None => this.services.toast_error("加载歌单失败，请重试", cx),
                 }
                 cx.notify();
             })
@@ -115,7 +184,7 @@ impl Root {
                         this.services.covers.prefetch(urls, 48.0, cx);
                     }
                     Some(Err(err)) => this.services.toast_error(err.user_message(), cx),
-                    None => {}
+                    None => this.services.toast_error("加载歌单失败，请重试", cx),
                 }
                 cx.notify();
             })
@@ -124,8 +193,9 @@ impl Root {
         .detach();
     }
 
-    pub(crate) fn close_picker(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn close_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.ops.picker_song = None;
+        window.blur(cx);
         cx.notify();
     }
 
@@ -164,27 +234,19 @@ impl Root {
     /// 新建歌单浮层。
     pub(crate) fn create_overlay(&self, weak: WeakEntity<Self>) -> AnyElement {
         let weak_cancel = weak.clone();
-        let weak_ok = weak;
-        div()
-            .id("create-overlay")
-            .occlude()
-            .absolute()
-            .top_0()
-            .left_0()
-            .w_full()
-            .h_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(rgba(0x00000088))
+        let weak_ok = weak.clone();
+        overlay_scrim("create-overlay", weak, Root::close_create)
             .child(
                 div()
                     .v_flex()
                     .w(px(360.0))
                     .gap(px(14.0))
-                    .rounded(px(12.0))
+                    .rounded(px(theme::RADIUS_LG))
                     .bg(theme::surface())
                     .p(px(20.0))
+                    // 屏蔽面板内点击冒泡到遮罩（点遮罩才关闭）。
+                    .id("create-panel")
+                    .on_click(move |_ev, _window, cx| cx.stop_propagation())
                     .child(
                         div()
                             .text_lg()
@@ -198,10 +260,16 @@ impl Root {
                             .flex()
                             .items_center()
                             .justify_end()
-                            .gap(px(8.0))
-                            .child(Button::new("create-cancel").label("取消").on_click(move |_ev, _w, cx| {
-                                weak_cancel.update(cx, |root, cx| root.close_create(cx)).ok();
-                            }))
+                            .gap(px(spacing::SM))
+                            .child(
+                                Button::new("create-cancel").label("取消").on_click(
+                                    move |_ev, window, cx| {
+                                        weak_cancel
+                                            .update(cx, |root, cx| root.close_create(window, cx))
+                                            .ok();
+                                    },
+                                ),
+                            )
                             .child(
                                 Button::new("create-ok")
                                     .primary()
@@ -224,7 +292,7 @@ impl Root {
     ) -> AnyElement {
         let weak_close = weak.clone();
         let weak_create = weak.clone();
-        let mut list = div().v_flex().w_full().gap(px(4.0));
+        let mut list = div().v_flex().w_full().gap(px(spacing::XS));
         for pl in &self.ops.picker_playlists {
             let weak = weak.clone();
             let pid = pl.id;
@@ -236,7 +304,7 @@ impl Root {
                     .flex()
                     .items_center()
                     .gap(px(10.0))
-                    .rounded(px(6.0))
+                    .rounded(px(theme::RADIUS_SM))
                     .cursor_pointer()
                     .hover(|s| s.bg(theme::card_surface()))
                     .on_click(move |_ev, _window, cx| {
@@ -254,45 +322,41 @@ impl Root {
                     ),
             );
         }
+        if self.ops.picker_playlists.is_empty() && !self.ops.picker_more {
+            list = list.child(
+                div()
+                    .w_full()
+                    .py(px(spacing::XL))
+                    .flex()
+                    .justify_center()
+                    .child(div().text_sm().text_color(theme::text_gray()).child("暂无歌单")),
+            );
+        }
         if self.ops.picker_more {
             let weak_more = weak.clone();
             list = list.child(
-                div()
-                    .id("picker-more")
-                    .w_full()
-                    .h(px(40.0))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .cursor_pointer()
-                    .hover(|s| s.bg(theme::card_surface()))
-                    .on_click(move |_ev, _window, cx| {
-                        weak_more.update(cx, |root, cx| root.load_more_picker(cx)).ok();
-                    })
-                    .child(div().text_sm().text_color(theme::accent()).child("加载更多")),
+                div().w_full().flex().items_center().justify_center().child(
+                    Button::new("picker-more")
+                        .ghost()
+                        .label("加载更多")
+                        .on_click(move |_ev, _w, cx| {
+                            weak_more.update(cx, |root, cx| root.load_more_picker(cx)).ok();
+                        }),
+                ),
             );
         }
-        div()
-            .id("picker-overlay")
-            .occlude()
-            .absolute()
-            .top_0()
-            .left_0()
-            .w_full()
-            .h_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(rgba(0x00000088))
+        overlay_scrim("picker-overlay", weak, Root::close_picker)
             .child(
                 div()
                     .v_flex()
                     .w(px(360.0))
                     .h(px(500.0))
                     .gap(px(10.0))
-                    .rounded(px(12.0))
+                    .rounded(px(theme::RADIUS_LG))
                     .bg(theme::surface())
-                    .p(px(16.0))
+                    .p(px(spacing::MD))
+                    .id("picker-panel")
+                    .on_click(move |_ev, _window, cx| cx.stop_propagation())
                     .child(
                         div()
                             .w_full()
@@ -306,39 +370,39 @@ impl Root {
                                     .text_color(theme::text_primary())
                                     .child("添加到歌单"),
                             )
-                            .child(
-                                div()
-                                    .id("picker-create")
-                                    .cursor_pointer()
-                                    .text_sm()
-                                    .text_color(theme::accent())
-                                    .child("新建歌单")
-                                    .on_click(move |_ev, _w, cx| {
-                                        weak_create
-                                            .update(cx, |root, cx| {
-                                                root.close_picker(cx);
-                                                root.open_create(cx);
-                                            })
-                                            .ok();
-                                    }),
-                            ),
+                            .child(Button::new("picker-create").ghost().label("新建歌单").on_click(
+                                move |_ev, window, cx| {
+                                    weak_create
+                                        .update(cx, |root, cx| {
+                                            root.close_picker(window, cx);
+                                            root.open_create(cx);
+                                        })
+                                        .ok();
+                                },
+                            )),
                     )
                     .child(smooth_scroll("picker-scroll", list, window, cx))
-                    .child(Button::new("picker-cancel").label("取消").on_click(move |_ev, _w, cx| {
-                        weak_close.update(cx, |root, cx| root.close_picker(cx)).ok();
-                    })),
+                    .child(
+                        Button::new("picker-cancel")
+                            .label("取消")
+                            .on_click(move |_ev, window, cx| {
+                                weak_close.update(cx, |root, cx| root.close_picker(window, cx)).ok();
+                            }),
+                    ),
             )
             .into_any_element()
     }
 
     /// 打开重命名歌单浮层。
     pub(crate) fn open_rename(&mut self, id: i64, cx: &mut Context<Self>) {
+        overlay_focus("rename-overlay", cx);
         self.ops.rename_pid = Some(id);
         cx.notify();
     }
 
-    pub(crate) fn close_rename(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn close_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.ops.rename_pid = None;
+        window.blur(cx);
         cx.notify();
     }
 
@@ -379,14 +443,18 @@ impl Root {
         .detach();
     }
 
-    /// 打开删除确认浮层。
-    pub(crate) fn open_delete(&mut self, id: i64, cx: &mut Context<Self>) {
+    /// 打开删除确认浮层（标题点名歌单）。
+    pub(crate) fn open_delete(&mut self, id: i64, name: String, cx: &mut Context<Self>) {
+        overlay_focus("delete-overlay", cx);
         self.ops.delete_pid = Some(id);
+        DELETE_PNAME.with(|slot| *slot.borrow_mut() = Some(name));
         cx.notify();
     }
 
-    pub(crate) fn close_delete(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn close_delete(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.ops.delete_pid = None;
+        DELETE_PNAME.with(|slot| *slot.borrow_mut() = None);
+        window.blur(cx);
         cx.notify();
     }
 
@@ -399,6 +467,7 @@ impl Root {
             let _ = tx.send(ok);
         });
         self.ops.delete_pid = None;
+        DELETE_PNAME.with(|slot| *slot.borrow_mut() = None);
         cx.notify();
         // 待接口返回后再刷新列表；若删除的是当前打开的歌单则返回首页
         cx.spawn(async move |this, cx| {
@@ -435,27 +504,18 @@ impl Root {
     /// 重命名浮层。
     pub(crate) fn rename_overlay(&self, weak: WeakEntity<Self>) -> AnyElement {
         let weak_cancel = weak.clone();
-        let weak_ok = weak;
-        div()
-            .id("rename-overlay")
-            .occlude()
-            .absolute()
-            .top_0()
-            .left_0()
-            .w_full()
-            .h_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(rgba(0x00000088))
+        let weak_ok = weak.clone();
+        overlay_scrim("rename-overlay", weak, Root::close_rename)
             .child(
                 div()
                     .v_flex()
                     .w(px(360.0))
                     .gap(px(14.0))
-                    .rounded(px(12.0))
+                    .rounded(px(theme::RADIUS_LG))
                     .bg(theme::surface())
                     .p(px(20.0))
+                    .id("rename-panel")
+                    .on_click(move |_ev, _window, cx| cx.stop_propagation())
                     .child(
                         div()
                             .text_lg()
@@ -469,10 +529,14 @@ impl Root {
                             .flex()
                             .items_center()
                             .justify_end()
-                            .gap(px(8.0))
-                            .child(Button::new("rename-cancel").label("取消").on_click(move |_ev, _w, cx| {
-                                weak_cancel.update(cx, |root, cx| root.close_rename(cx)).ok();
-                            }))
+                            .gap(px(spacing::SM))
+                            .child(
+                                Button::new("rename-cancel")
+                                    .label("取消")
+                                    .on_click(move |_ev, window, cx| {
+                                        weak_cancel.update(cx, |root, cx| root.close_rename(window, cx)).ok();
+                                    }),
+                            )
                             .child(
                                 Button::new("rename-ok")
                                     .primary()
@@ -489,49 +553,43 @@ impl Root {
     /// 删除确认浮层。
     pub(crate) fn delete_overlay(&self, weak: WeakEntity<Self>) -> AnyElement {
         let weak_cancel = weak.clone();
-        let weak_ok = weak;
-        div()
-            .id("delete-overlay")
-            .occlude()
-            .absolute()
-            .top_0()
-            .left_0()
-            .w_full()
-            .h_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(rgba(0x00000088))
+        let weak_ok = weak.clone();
+        let title = format!(
+            "删除“{}”？",
+            DELETE_PNAME.with(|slot| slot.borrow().clone()).unwrap_or_default()
+        );
+        overlay_scrim("delete-overlay", weak, Root::close_delete)
             .child(
                 div()
                     .v_flex()
                     .w(px(340.0))
                     .gap(px(14.0))
-                    .rounded(px(12.0))
+                    .rounded(px(theme::RADIUS_LG))
                     .bg(theme::surface())
                     .p(px(20.0))
+                    .id("delete-panel")
+                    .on_click(move |_ev, _window, cx| cx.stop_propagation())
                     .child(
                         div()
                             .text_lg()
                             .font_weight(FontWeight::BOLD)
                             .text_color(theme::text_primary())
-                            .child("删除歌单"),
+                            .child(title),
                     )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(theme::text_gray())
-                            .child("确定删除该歌单？此操作不可撤销。"),
-                    )
+                    .child(div().text_sm().text_color(theme::text_gray()).child("此操作不可撤销。"))
                     .child(
                         div()
                             .flex()
                             .items_center()
                             .justify_end()
-                            .gap(px(8.0))
-                            .child(Button::new("delete-cancel").label("取消").on_click(move |_ev, _w, cx| {
-                                weak_cancel.update(cx, |root, cx| root.close_delete(cx)).ok();
-                            }))
+                            .gap(px(spacing::SM))
+                            .child(
+                                Button::new("delete-cancel")
+                                    .label("取消")
+                                    .on_click(move |_ev, window, cx| {
+                                        weak_cancel.update(cx, |root, cx| root.close_delete(window, cx)).ok();
+                                    }),
+                            )
                             .child(
                                 Button::new("delete-ok")
                                     .danger()
@@ -547,12 +605,14 @@ impl Root {
 
     /// 打开编辑简介浮层。
     pub(crate) fn open_desc(&mut self, id: i64, cx: &mut Context<Self>) {
+        overlay_focus("desc-overlay", cx);
         self.ops.desc_pid = Some(id);
         cx.notify();
     }
 
-    pub(crate) fn close_desc(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn close_desc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.ops.desc_pid = None;
+        window.blur(cx);
         cx.notify();
     }
 
@@ -589,27 +649,18 @@ impl Root {
     /// 编辑简介浮层。
     pub(crate) fn desc_overlay(&self, weak: WeakEntity<Self>) -> AnyElement {
         let weak_cancel = weak.clone();
-        let weak_ok = weak;
-        div()
-            .id("desc-overlay")
-            .occlude()
-            .absolute()
-            .top_0()
-            .left_0()
-            .w_full()
-            .h_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(rgba(0x00000088))
+        let weak_ok = weak.clone();
+        overlay_scrim("desc-overlay", weak, Root::close_desc)
             .child(
                 div()
                     .v_flex()
                     .w(px(420.0))
                     .gap(px(14.0))
-                    .rounded(px(12.0))
+                    .rounded(px(theme::RADIUS_LG))
                     .bg(theme::surface())
                     .p(px(20.0))
+                    .id("desc-panel")
+                    .on_click(move |_ev, _window, cx| cx.stop_propagation())
                     .child(
                         div()
                             .text_lg()
@@ -623,10 +674,14 @@ impl Root {
                             .flex()
                             .items_center()
                             .justify_end()
-                            .gap(px(8.0))
-                            .child(Button::new("desc-cancel").label("取消").on_click(move |_ev, _w, cx| {
-                                weak_cancel.update(cx, |root, cx| root.close_desc(cx)).ok();
-                            }))
+                            .gap(px(spacing::SM))
+                            .child(
+                                Button::new("desc-cancel")
+                                    .label("取消")
+                                    .on_click(move |_ev, window, cx| {
+                                        weak_cancel.update(cx, |root, cx| root.close_desc(window, cx)).ok();
+                                    }),
+                            )
                             .child(
                                 Button::new("desc-ok")
                                     .primary()

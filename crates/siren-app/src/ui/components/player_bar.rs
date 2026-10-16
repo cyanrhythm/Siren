@@ -2,13 +2,22 @@
 
 use gpui_kit::assets::IconName;
 use gpui_kit::base::StyledExt;
+use gpui_kit::component::button::{Button, ButtonCustomVariant, ButtonVariants};
 use gpui_kit::component::slider::Slider;
+use gpui_kit::component::{Sizable as _, Size};
 use gpui_kit::*;
 
 use siren_core::player::PlayMode;
 
 use super::super::{cover_placeholder, fmt_time, icon, Root};
-use crate::theme;
+use crate::theme::{self, spacing};
+
+/// 透明底图标键：自定义前景色（激活态高亮）+ 统一 hover 底。
+fn transport_variant(cx: &App, fg: Rgba) -> ButtonCustomVariant {
+    ButtonCustomVariant::new(cx)
+        .foreground(fg.into())
+        .hover(theme::surface_light().into())
+}
 
 impl Root {
     pub(crate) fn player_bar(&self, weak: WeakEntity<Self>, vw: f32, cx: &App) -> impl IntoElement {
@@ -47,15 +56,15 @@ impl Root {
             .h(px(theme::PLAYER_BAR_H))
             .flex()
             .items_center()
-            .gap(px(16.0))
-            .px(px(16.0))
+            .gap(px(spacing::MD))
+            .px(px(spacing::MD))
             .child(
                 div()
                     .w(px(300.0))
                     .flex_none()
                     .flex()
                     .items_center()
-                    .gap(px(12.0))
+                    .gap(px(spacing::MD))
                     .child(cover)
                     .child(
                         div()
@@ -79,102 +88,101 @@ impl Root {
                     .flex_none()
                     .v_flex()
                     .items_center()
-                    .gap(px(8.0))
+                    .gap(px(spacing::SM))
                     .child(
                         div()
                             .flex()
                             .items_center()
-                            .gap(px(16.0))
+                            .gap(px(spacing::MD))
                             .child(
-                                div()
-                                    .id("shuffle")
-                                    .cursor_pointer()
+                                Button::new("shuffle")
+                                    .custom(transport_variant(
+                                        cx,
+                                        if shuffle_active {
+                                            theme::accent()
+                                        } else {
+                                            theme::text_gray()
+                                        },
+                                    ))
+                                    .with_size(Size::Size(px(24.0)))
+                                    .icon(IconName::Shuffle)
+                                    .tooltip("随机播放")
                                     .on_click(move |_ev, _window, cx| {
                                         weak_shuffle
                                             .update(cx, |this, cx| {
                                                 this.playback.update(cx, |pb, cx| pb.toggle_shuffle(cx));
                                             })
                                             .ok();
-                                    })
-                                    .child(icon(
-                                        IconName::Shuffle,
-                                        18.0,
-                                        if shuffle_active {
-                                            theme::accent()
-                                        } else {
-                                            theme::text_gray()
-                                        },
-                                    )),
+                                    }),
                             )
                             .child(
-                                div()
-                                    .id("prev")
-                                    .cursor_pointer()
+                                Button::new("prev")
+                                    .custom(transport_variant(cx, theme::text_primary()))
+                                    .with_size(Size::Size(px(28.0)))
+                                    .icon(IconName::SkipBack)
+                                    .tooltip("上一首")
                                     .on_click(move |_ev, _window, cx| {
                                         weak_prev
                                             .update(cx, |this, cx| {
                                                 this.playback.update(cx, |pb, cx| pb.previous_track(cx));
                                             })
                                             .ok();
-                                    })
-                                    .child(icon(IconName::SkipBack, 22.0, theme::text_primary())),
+                                    }),
                             )
                             .child(
-                                div()
-                                    .id("play")
-                                    .size(px(36.0))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .rounded_full()
-                                    .bg(theme::text_primary())
-                                    .cursor_pointer()
+                                Button::new("play")
+                                    .custom(
+                                        ButtonCustomVariant::new(cx)
+                                            .color(theme::text_primary().into())
+                                            .foreground(theme::pane().into())
+                                            .hover(theme::surface_light().into()),
+                                    )
+                                    .with_size(Size::Size(px(36.0)))
+                                    .rounded(px(18.0))
+                                    .icon(if playing { IconName::Pause } else { IconName::Play })
+                                    .tooltip(if playing { "暂停" } else { "播放" })
                                     .on_click(move |_ev, _window, cx| {
                                         weak_play
                                             .update(cx, |this, cx| {
                                                 this.playback.update(cx, |pb, cx| pb.toggle(cx));
                                             })
                                             .ok();
-                                    })
-                                    .child(icon(
-                                        if playing { IconName::Pause } else { IconName::Play },
-                                        18.0,
-                                        theme::pane(),
-                                    )),
+                                    }),
                             )
                             .child(
-                                div()
-                                    .id("next")
-                                    .cursor_pointer()
+                                Button::new("next")
+                                    .custom(transport_variant(cx, theme::text_primary()))
+                                    .with_size(Size::Size(px(28.0)))
+                                    .icon(IconName::SkipForward)
+                                    .tooltip("下一首")
                                     .on_click(move |_ev, _window, cx| {
                                         weak_next
                                             .update(cx, |this, cx| {
                                                 this.playback.update(cx, |pb, cx| pb.next_track(cx));
                                             })
                                             .ok();
-                                    })
-                                    .child(icon(IconName::SkipForward, 22.0, theme::text_primary())),
+                                    }),
                             )
                             .child(
-                                div()
-                                    .id("repeat")
-                                    .cursor_pointer()
+                                Button::new("repeat")
+                                    .custom(transport_variant(
+                                        cx,
+                                        if repeat_active {
+                                            theme::accent()
+                                        } else {
+                                            theme::text_gray()
+                                        },
+                                    ))
+                                    .with_size(Size::Size(px(24.0)))
+                                    .icon(IconName::Repeat)
+                                    .tooltip("循环模式")
                                     .on_click(move |_ev, _window, cx| {
                                         weak_repeat
                                             .update(cx, |this, cx| {
                                                 this.playback.update(cx, |pb, cx| pb.toggle_repeat(cx));
                                             })
                                             .ok();
-                                    })
-                                    .child(icon(
-                                        IconName::Repeat,
-                                        18.0,
-                                        if repeat_active {
-                                            theme::accent()
-                                        } else {
-                                            theme::text_gray()
-                                        },
-                                    )),
+                                    }),
                             ),
                     )
                     .child(
@@ -182,7 +190,7 @@ impl Root {
                             .w_full()
                             .flex()
                             .items_center()
-                            .gap(px(8.0))
+                            .gap(px(spacing::SM))
                             .child(
                                 div()
                                     .w(px(40.0))
@@ -207,11 +215,20 @@ impl Root {
                     .flex()
                     .items_center()
                     .justify_end()
-                    .gap(px(8.0))
+                    .gap(px(spacing::SM))
                     .child(
-                        div()
-                            .id("queue-btn")
-                            .cursor_pointer()
+                        Button::new("queue-btn")
+                            .custom(transport_variant(
+                                cx,
+                                if queue_open {
+                                    theme::accent()
+                                } else {
+                                    theme::text_gray()
+                                },
+                            ))
+                            .with_size(Size::Size(px(24.0)))
+                            .icon(IconName::ListMusic)
+                            .tooltip("播放队列")
                             .on_click(move |_ev, _window, cx| {
                                 weak_queue
                                     .update(cx, |root, cx| {
@@ -219,16 +236,7 @@ impl Root {
                                         root.set_queue_open(open, cx);
                                     })
                                     .ok();
-                            })
-                            .child(icon(
-                                IconName::ListMusic,
-                                18.0,
-                                if queue_open {
-                                    theme::accent()
-                                } else {
-                                    theme::text_gray()
-                                },
-                            )),
+                            }),
                     )
                     .child(icon(IconName::Volume2, 18.0, theme::text_gray()))
                     .child(div().w(px(120.0)).child(Slider::new(pb.volume_slider()))),

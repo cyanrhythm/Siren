@@ -61,6 +61,10 @@ pub(crate) const PAGE_PAD: f32 = 48.0;
 /// 首页卡片定宽与间距。
 pub(crate) const CARD_W: f32 = 168.0;
 pub(crate) const CARD_GAP: f32 = 16.0;
+/// 右栏折叠后的宽度（展开按钮竖条）。
+pub(crate) const NP_COLLAPSED_W: f32 = 44.0;
+/// 中间列最小内容宽（首页两卡片 + 列内边距，与 `min_window_size` 同一口径）。
+pub(crate) const PAGE_CONTENT_MIN: f32 = PAGE_PAD + CARD_W * 2.0 + CARD_GAP;
 
 /// 最小窗口尺寸：宽度需容纳「左栏 + 中间两个卡片 + 右栏」，
 /// 高度取宽度的 0.618（黄金比）。
@@ -152,9 +156,10 @@ pub(crate) enum PageEvent {
     RenamePlaylist {
         id: i64,
     },
-    /// 请求删除歌单。
+    /// 请求删除歌单（name 供删除确认浮层展示）。
     DeletePlaylist {
         id: i64,
+        name: String,
     },
     /// 请求编辑歌单简介。
     EditPlaylistDesc {
@@ -296,6 +301,11 @@ impl NavState {
         !self.forward.is_empty()
     }
 
+    /// 栈底（仅剩一项）不可回退。
+    fn can_back(&self) -> bool {
+        self.stack.len() > 1
+    }
+
     fn last_mut(&mut self) -> Option<&mut Route> {
         self.stack.last_mut()
     }
@@ -383,6 +393,8 @@ pub struct Root {
     queue_cover_sig: Option<(usize, Option<usize>, Option<i64>)>,
     /// 播放队列拖动排序的源下标。
     queue_drag_from: Option<usize>,
+    /// 「清空队列」确认浮层是否打开。
+    queue_clear_open: bool,
     /// 标题栏自绘拖动（CSD）：按下置位，首次移动交给合成器后清除。
     tb_drag_armed: bool,
     /// 拖动重排的行位移补间：键 → （起始像素偏移, 代次）。
@@ -442,11 +454,7 @@ impl Root {
         let recent = cx.new(|_cx| RecentPage::new(services.clone(), playback.clone()));
 
         // 标题栏搜索输入（回车驱动搜索页）
-        let search_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("想播放什么？")
-                .default_value("周杰伦")
-        });
+        let search_input = cx.new(|cx| InputState::new(window, cx).placeholder("想播放什么？"));
 
         // 登录弹窗 Cookie 输入（回车提交）
         let login_input = cx.new(|cx| InputState::new(window, cx).placeholder("粘贴 MUSIC_U 或完整 Cookie"));
@@ -554,6 +562,7 @@ impl Root {
                 queue_open: false,
                 queue_cover_sig: None,
                 queue_drag_from: None,
+                queue_clear_open: false,
                 tb_drag_armed: false,
                 drag_flip: std::collections::HashMap::new(),
                 np: NowPlayingUi {
@@ -637,7 +646,7 @@ impl Root {
             PageEvent::OpenCreate => self.open_create(cx),
             PageEvent::AddToPlaylist { song_id } => self.open_picker(*song_id, cx),
             PageEvent::RenamePlaylist { id } => self.open_rename(*id, cx),
-            PageEvent::DeletePlaylist { id } => self.open_delete(*id, cx),
+            PageEvent::DeletePlaylist { id, name } => self.open_delete(*id, name.clone(), cx),
             PageEvent::EditPlaylistDesc { id } => self.open_desc(*id, cx),
             PageEvent::PlaylistChanged => self.library.update(cx, |page, cx| page.reload_playlists(cx)),
         }
@@ -671,21 +680,63 @@ impl Root {
                     .prefetch(items.iter().map(|s| s.cover_url.clone()), 40.0, cx);
             }
         }
+        // 切歌：当前页面实体补一次 notify，驱动页面内的「当前播放」高亮刷新。
+        match self.route() {
+            Route::Home => {
+                self.home.update(cx, |_, cx| cx.notify());
+            }
+            Route::Search => {
+                self.search.update(cx, |_, cx| cx.notify());
+            }
+            Route::RecentPlay => {
+                self.recent.update(cx, |_, cx| cx.notify());
+            }
+            Route::Playlist { .. } => {
+                if let Some(page) = &self.playlist_page {
+                    page.update(cx, |_, cx| cx.notify());
+                }
+            }
+            Route::Album { .. } => {
+                if let Some(page) = &self.album_page {
+                    page.update(cx, |_, cx| cx.notify());
+                }
+            }
+            Route::Artist { .. } => {
+                if let Some(page) = &self.artist_page {
+                    page.update(cx, |_, cx| cx.notify());
+                }
+            }
+            Route::Profile { .. } => {
+                if let Some(page) = &self.profile_page {
+                    page.update(cx, |_, cx| cx.notify());
+                }
+            }
+            Route::Account => {
+                if let Some(page) = &self.account_page {
+                    page.update(cx, |_, cx| cx.notify());
+                }
+            }
+            Route::Settings => {}
+        }
         cx.notify();
     }
 
-    /// 开关播放队列浮层；打开时预取一次队列封面。
+    /// 开关播放队列浮层；打开时预取一次队列封面并滚动定位到当前曲。
     pub(crate) fn set_queue_open(&mut self, open: bool, cx: &mut Context<Self>) {
         self.queue_open = open;
-        if open {
-            let (items, current) = self.playback.read(cx).queue_snapshot();
-            let song_id = current.and_then(|c| items.get(c)).map(|s| s.id);
-            self.queue_cover_sig = Some((items.len(), current, song_id));
-            self.services
-                .covers
-                .prefetch(items.iter().map(|s| s.cover_url.clone()), 40.0, cx);
-        } else {
+        if !open {
+            self.queue_clear_open = false;
             self.queue_cover_sig = None;
+            return;
+        }
+        let (items, current) = self.playback.read(cx).queue_snapshot();
+        let song_id = current.and_then(|c| items.get(c)).map(|s| s.id);
+        self.queue_cover_sig = Some((items.len(), current, song_id));
+        self.services
+            .covers
+            .prefetch(items.iter().map(|s| s.cover_url.clone()), 40.0, cx);
+        if !items.is_empty() {
+            self.scroll_queue_to_current(cx);
         }
         cx.notify();
     }
@@ -718,6 +769,16 @@ impl Root {
     /// 当前右侧栏宽度（唯一真源：设置 store）。
     pub(crate) fn np_width(&self, cx: &App) -> f32 {
         SettingsStore::of(cx).np_width()
+    }
+
+    /// 右侧栏当前有效宽（N6.2 联动）：展开时受「窗口宽 − 侧栏 − 中间列最小内容宽」约束，
+    /// 拖到 800 也只压缩右栏自身显示宽，不挤没中间列、不把右栏裁剪出窗口；折叠为定宽条。
+    pub(crate) fn np_effective_w(&self, vw: f32, cx: &App) -> f32 {
+        if !self.np.open {
+            return NP_COLLAPSED_W;
+        }
+        let max_np = (vw - LIBRARY_W - SHELL_CHROME - PAGE_CONTENT_MIN).max(NP_COLLAPSED_W);
+        self.np_width(cx).min(max_np)
     }
 
     /// 当前正在播放卡片顺序（唯一真源：设置 store）。
@@ -759,6 +820,29 @@ impl Root {
     /// 记录 / 清除队列拖动源下标。
     pub(crate) fn set_queue_drag_from(&mut self, idx: Option<usize>) {
         self.queue_drag_from = idx;
+    }
+
+    /// 打开「清空队列」确认浮层。
+    pub(crate) fn open_queue_clear(&mut self, cx: &mut Context<Self>) {
+        self.queue_clear_open = true;
+        cx.notify();
+    }
+
+    /// 关闭「清空队列」确认浮层。
+    pub(crate) fn close_queue_clear(&mut self, cx: &mut Context<Self>) {
+        self.queue_clear_open = false;
+        cx.notify();
+    }
+
+    /// 确认清空队列（保留当前曲）。
+    pub(crate) fn confirm_queue_clear(&mut self, cx: &mut Context<Self>) {
+        self.queue_clear_open = false;
+        self.playback.update(cx, |pb, cx| pb.clear_queue(cx));
+    }
+
+    /// 历史栈是否可回退（供标题栏回退按钮置灰）。
+    fn can_back(&self) -> bool {
+        self.nav.can_back()
     }
 
     /// 拖动开始前清空上一次的位移补间。
@@ -1025,6 +1109,13 @@ impl Root {
         self.search.update(cx, |page, cx| page.search(keyword, cx));
     }
 
+    /// 登录弹窗的默认提交动作（Enter）：仅 Cookie 标签有提交动作，其余标签忽略。
+    pub(crate) fn submit_login_default(&mut self, cx: &mut Context<Self>) {
+        if self.login.tab == login_dialog::LoginTab::Cookie {
+            self.submit_cookie_login(cx);
+        }
+    }
+
     fn page(&self, weak: WeakEntity<Self>, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         match self.route() {
             Route::Home => self.home.clone().into_any_element(),
@@ -1070,8 +1161,36 @@ impl Render for Root {
         let weak = cx.weak_entity();
         let weak_page = cx.weak_entity();
         let weak_login = cx.weak_entity();
+        let weak_login_key = cx.weak_entity();
         let weak_comments = cx.weak_entity();
-        let login_overlay = self.login.open.then(|| self.login_overlay(weak_login));
+        let login_overlay = self.login.open.then(|| {
+            let weak_key = weak_login_key.clone();
+            div()
+                .id("login-scope")
+                .absolute()
+                .top_0()
+                .left_0()
+                .w_full()
+                .h_full()
+                // Enter 默认提交：焦点在 Cookie 输入框时由其自身订阅处理（避免重复提交）；
+                // 焦点在弹窗内其它控件（如「登录」按钮）时由这里兜底提交。
+                .on_key_down(move |event: &KeyDownEvent, window, cx| {
+                    if event.keystroke.key != "enter" {
+                        return;
+                    }
+                    let input_focused = weak_key
+                        .update(cx, |root, cx| {
+                            root.login.input.read(cx).focus_handle(cx).is_focused(window)
+                        })
+                        .unwrap_or(false);
+                    if input_focused {
+                        return;
+                    }
+                    weak_key.update(cx, |root, cx| root.submit_login_default(cx)).ok();
+                })
+                .child(self.login_overlay(weak_login))
+                .into_any_element()
+        });
         let comments_overlay = self
             .comments
             .open
@@ -1092,12 +1211,9 @@ impl Render for Root {
         let weak_queue = cx.weak_entity();
         let queue_overlay = self.queue_open.then(|| self.queue_overlay(weak_queue, window, cx));
         // 中间列显式分配宽度，规避 gpui `flex_1` 的横向过度伸展。
-        // 右侧栏严格取设置的宽度；空间不足时中间列收缩（不产生横向溢出）。
-        let np_w = if self.np.open {
-            SettingsStore::of(cx).np_width()
-        } else {
-            44.0
-        };
+        // 右侧栏取「有效宽」（随窗口收缩联动，见 np_effective_w）：空间不足时先压缩
+        // 右栏自身显示宽，中间列保底最小内容宽，右栏不会被裁剪出窗口（N6.2）。
+        let np_w = self.np_effective_w(vw, cx);
         let page_w = (vw - LIBRARY_W - np_w - SHELL_CHROME).max(0.0);
         cx.global_mut::<PageLayout>().page_w = page_w;
         let shell = div()
@@ -1112,8 +1228,8 @@ impl Render for Root {
                     .flex_1()
                     .w_full()
                     .flex()
-                    .gap(px(8.0))
-                    .px(px(8.0))
+                    .gap(px(theme::spacing::SM))
+                    .px(px(theme::spacing::SM))
                     .overflow_hidden()
                     .child(
                         div()
@@ -1133,7 +1249,15 @@ impl Render for Root {
                             .overflow_hidden()
                             .child(self.page(weak_page, window, cx)),
                     )
-                    .child(self.now_playing(weak.clone(), window, cx)),
+                    .child(
+                        div()
+                            .w(px(np_w))
+                            .min_w(px(np_w))
+                            .flex_none()
+                            .h_full()
+                            .overflow_hidden()
+                            .child(self.now_playing(weak.clone(), window, cx)),
+                    ),
             )
             .child(self.player_bar(weak, vw, cx))
             .when_some(login_overlay, |this, overlay| this.child(overlay))
@@ -1172,7 +1296,7 @@ pub(crate) fn page_shell_with_header(header: AnyElement, body: AnyElement) -> im
         .min_w(px(0.0))
         .h_full()
         .bg(theme::pane())
-        .child(div().w_full().p(px(12.0)).child(header))
+        .child(div().w_full().p(px(theme::spacing::MD)).child(header))
         .child(body)
 }
 
@@ -1251,7 +1375,7 @@ pub(crate) fn load_error<E: 'static>(
         .items_center()
         .justify_center()
         .gap(px(10.0))
-        .py(px(24.0))
+        .py(px(theme::spacing::XL))
         .child(
             div()
                 .text_sm()
@@ -1270,7 +1394,7 @@ pub(crate) fn cover_placeholder(size: f32) -> impl IntoElement {
         .flex()
         .items_center()
         .justify_center()
-        .rounded(px(6.0))
+        .rounded(px(theme::RADIUS_SM))
         .bg(theme::cover_placeholder())
         .child(icon(IconName::Music, size * 0.5, theme::text_gray()))
 }
