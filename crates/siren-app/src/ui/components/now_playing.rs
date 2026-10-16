@@ -509,11 +509,14 @@ fn artist_albums_card(
         format!("{artist_name}的更多专辑")
     };
     paged_card(
+        "np-albums",
         title,
         p,
         pages,
-        |root, cx| root.set_np_page(true, root.np.album_page.wrapping_sub(1), cx),
-        |root, cx| root.set_np_page(true, root.np.album_page + 1, cx),
+        |root, delta, cx| {
+            let next = root.np.album_page.saturating_add_signed(delta);
+            root.set_np_page(true, next, cx);
+        },
         row.into_any_element(),
         weak,
     )
@@ -550,28 +553,38 @@ fn similar_artists_card(
         );
     }
     paged_card(
+        "np-simi",
         "探索类似艺人".to_string(),
         p,
         pages,
-        |root, cx| root.set_np_page(false, root.np.simi_page.wrapping_sub(1), cx),
-        |root, cx| root.set_np_page(false, root.np.simi_page + 1, cx),
+        |root, delta, cx| {
+            let next = root.np.simi_page.saturating_add_signed(delta);
+            root.set_np_page(false, next, cx);
+        },
         row.into_any_element(),
         weak,
     )
 }
 
 /// 分页信息卡：标题 + 右侧左右翻页箭头 + 内容。
+///
+/// `card` 为该卡片的唯一标识：翻页按钮的 `ElementId` 由它派生。
+/// **不能只用图标作 id**——多张分页卡同帧渲染时元素 id 路径会完全相同，
+/// 触发 gpui 的 a11y 重复节点断言（debug 构建直接 panic）。
+///
+/// `on_page` 收到的增量为 `-1`（上一页）/ `+1`（下一页）。
 fn paged_card(
+    card: &'static str,
     title: String,
     page: usize,
     page_count: usize,
-    left_action: impl Fn(&mut Root, &mut Context<Root>) + 'static,
-    right_action: impl Fn(&mut Root, &mut Context<Root>) + 'static,
+    on_page: impl Fn(&mut Root, isize, &mut Context<Root>) + Clone + 'static,
     content: AnyElement,
     weak: WeakEntity<Root>,
 ) -> AnyElement {
     let weak_left = weak.clone();
     let weak_right = weak;
+    let left_page = on_page.clone();
     let header = div()
         .w_full()
         .flex()
@@ -589,11 +602,20 @@ fn paged_card(
                 .flex()
                 .items_center()
                 .gap(px(6.0))
-                .child(page_arrow(IconName::ChevronLeft, page > 0, left_action, weak_left))
                 .child(page_arrow(
+                    card,
+                    0,
+                    IconName::ChevronLeft,
+                    page > 0,
+                    left_page,
+                    weak_left,
+                ))
+                .child(page_arrow(
+                    card,
+                    1,
                     IconName::ChevronRight,
                     page + 1 < page_count,
-                    right_action,
+                    on_page,
                     weak_right,
                 )),
         );
@@ -610,9 +632,11 @@ fn paged_card(
 }
 
 fn page_arrow(
+    card: &'static str,
+    dir: usize,
     name: IconName,
     enabled: bool,
-    action: impl Fn(&mut Root, &mut Context<Root>) + 'static,
+    on_page: impl Fn(&mut Root, isize, &mut Context<Root>) + 'static,
     weak: WeakEntity<Root>,
 ) -> AnyElement {
     let tooltip = if matches!(name, IconName::ChevronLeft) {
@@ -620,7 +644,7 @@ fn page_arrow(
     } else {
         "下一页"
     };
-    Button::new(("np-arrow", name as usize))
+    Button::new((card, dir))
         .ghost()
         .icon(icon(
             name,
@@ -635,7 +659,8 @@ fn page_arrow(
         .disabled(!enabled)
         .when(enabled, |s| {
             s.on_click(move |_ev, _window, cx| {
-                weak.update(cx, |root, cx| action(root, cx)).ok();
+                let delta = if dir == 0 { -1 } else { 1 };
+                weak.update(cx, |root, cx| on_page(root, delta, cx)).ok();
             })
         })
         .into_any_element()
