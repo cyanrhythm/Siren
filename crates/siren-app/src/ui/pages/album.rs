@@ -149,7 +149,13 @@ impl Render for AlbumPage {
         let weak_play = cx.weak_entity();
         let subscribed = self.subscribed;
         // 顶部收起因子（0 展开 / 1 收起）：导航行、hero、操作栏、横栏共用。
-        let fold = header_fold("album-header-collapse", "album-tracks", window, cx);
+        let fold = header_fold(
+            "album-header-collapse",
+            "album-tracks",
+            dim::HEADER_COLLAPSE_AT_PX,
+            window,
+            cx,
+        );
         let nav_row = div()
             .flex()
             .items_center()

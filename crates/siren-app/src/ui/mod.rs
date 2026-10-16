@@ -1250,6 +1250,9 @@ impl Render for Root {
                             .w(px(page_w))
                             .flex_none()
                             .h_full()
+                            // 中间列与两侧栏同为圆角面板（侧栏与右栏早已是 RADIUS_MD），
+                            // 否则页面自己的 `bg(pane)` 会画成直角方块。
+                            .rounded(px(theme::RADIUS_MD))
                             .overflow_hidden()
                             .child(self.page(weak_page, window, cx)),
                     )
@@ -1305,11 +1308,19 @@ pub(crate) fn page_shell_with_header(header: AnyElement, body: AnyElement) -> im
 
 /// 顶部收起因子：0 = 展开，1 = 收起。
 ///
-/// 依据是内容区的平滑滚动偏移（[`smooth_scroll::smooth_scroll_offset`]），用 kit 的
-/// `transition` 插值——可逆（滚回顶部自动展开），且自动尊重系统「减少动态效果」。
+/// 依据是内容区的平滑滚动偏移（[`smooth_scroll::smooth_scroll_offset`]）是否越过 `threshold`，
+/// 用 kit 的 `transition` 插值——可逆（滚回顶部自动展开），且自动尊重系统「减少动态效果」。
 /// `id` 需**逐页唯一**：同一 view 内重复的元素 id 会触发 gpui 的 a11y 断言。
-pub(crate) fn header_fold(id: &'static str, scroll_id: &'static str, window: &mut Window, cx: &mut App) -> f32 {
-    let collapsed = smooth_scroll::smooth_scroll_offset(scroll_id, cx) > pages::dim::HEADER_COLLAPSE_AT_PX;
+///
+/// 歌单页用两个阈值做三阶段收起（见 `pages::dim::ACTION_COLLAPSE_AT_PX`）。
+pub(crate) fn header_fold(
+    id: &'static str,
+    scroll_id: &'static str,
+    threshold: f32,
+    window: &mut Window,
+    cx: &mut App,
+) -> f32 {
+    let collapsed = smooth_scroll::smooth_scroll_offset(scroll_id, cx) > threshold;
     transition(
         id,
         if collapsed { 1.0f32 } else { 0.0 },

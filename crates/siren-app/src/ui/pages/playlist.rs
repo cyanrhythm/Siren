@@ -5,7 +5,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui_kit::assets::IconName;
-use gpui_kit::base::{transition, StyledExt, Transition};
+use gpui_kit::base::StyledExt;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::menu::{ContextMenuExt, DropdownMenu, PopupMenuItem};
@@ -15,11 +15,10 @@ use gpui_kit::*;
 use siren_core::model::{PlaylistDetail, Song};
 
 use super::super::components::{like_button, overlay_close, overlay_scrim, overlay_scrim_strong};
-use super::super::motion;
 use super::super::playback::Playback;
 use super::super::services::Services;
-use super::super::smooth_scroll::{smooth_scroll, smooth_scroll_offset, smooth_virtual_list};
-use super::super::{fmt_time, icon, PageEvent};
+use super::super::smooth_scroll::{smooth_scroll, smooth_virtual_list};
+use super::super::{collapse_box, fmt_time, header_fold, icon, PageEvent};
 use super::dim;
 use crate::theme::{self, spacing};
 use siren_core::player::{PlaySource, PlaySourceKind};
@@ -965,8 +964,26 @@ impl Render for PlaylistPage {
         let edit_desc = self.detail.as_ref().map(|d| d.description.clone()).unwrap_or_default();
         let edit_cover = self.detail.as_ref().map(|d| d.cover_url.clone()).unwrap_or_default();
 
-        // 顶部收起因子：0 = 展开（hero + 操作栏 + 胶囊行），1 = 收起（只剩一条横栏）。
-        let fold = self.header_fold("playlist-tracks", window, cx);
+        // 三阶段收起（对齐 Melodia 的 `showTitleBar` / `showPlayButton` 两个派生状态）：
+        //   一阶段 展开：hero + 操作栏 + 胶囊；
+        //   二阶段 越过 `HEADER_COLLAPSE_AT_PX`：hero 与胶囊收起，顶部只剩「歌单名横栏」，
+        //          操作栏（播放/随机/搜索/排序）仍然可见；
+        //   三阶段 越过 `ACTION_COLLAPSE_AT_PX`：操作栏也收起，横栏补上播放键。
+        // 滚回顶部两级都会平滑复原。
+        let fold_hero = header_fold(
+            "playlist-hero-collapse",
+            "playlist-tracks",
+            dim::HEADER_COLLAPSE_AT_PX,
+            window,
+            cx,
+        );
+        let fold_action = header_fold(
+            "playlist-action-collapse",
+            "playlist-tracks",
+            dim::ACTION_COLLAPSE_AT_PX,
+            window,
+            cx,
+        );
 
         let body: AnyElement = match &self.detail {
             Some(detail) => {
@@ -998,19 +1015,15 @@ impl Render for PlaylistPage {
                 // 滚过阈值后大封面让位给「封面取色底 + 歌单名」的紧凑横栏，把纵向空间还给曲目表；
                 // 滚回顶部平滑展开。`transition` 可逆，且尊重系统「减少动态效果」。
                 // 横栏里的播放键（对齐 Melodia `StickyPlayButtonSize = 48.dp`）：
-                // 操作栏收起后这里是唯一的播放入口。返回键不在这里——应用标题栏已有全局前进/后退，
-                // 页面顶部原本那条导航行（返回 + 歌单名 + ⋯）已按需求删除，⋯ 下沉到操作栏。
+                // 三阶段里它**只在第三阶段**出现——Melodia 用 `showPlayButton`
+                // （操作栏的播放键滚过横栏底边）控制，界面上即「二阶段还能点操作栏的大播放键，
+                // 三阶段才轮到横栏的小播放键」。宽度与透明度一起插值，读起来是横向展开。
                 let weak_bar_play = cx.weak_entity();
-                let sticky_bar = div()
-                    .w_full()
-                    .h(px(dim::STICKY_BAR_H * fold))
+                let bar_play = div()
+                    .w(px(48.0 * fold_action))
+                    .flex_none()
                     .overflow_hidden()
-                    .flex()
-                    .items_center()
-                    .gap(px(spacing::SM))
-                    .px(px(spacing::MD))
-                    // 底色同 Melodia：用同一封面主色的实色（不是 hero 的渐变，64px 内渐变会近乎全黑）。
-                    .when_some(base_color.map(|c| theme::darken(c, 0.42)), |el, bg| el.bg(bg))
+                    .opacity(fold_action)
                     .child(
                         div()
                             .id("pl-bar-play")
@@ -1033,7 +1046,18 @@ impl Render for PlaylistPage {
                                     .ok();
                             })
                             .child(icon(IconName::Play, 22.0, theme::text_primary())),
-                    )
+                    );
+                let sticky_bar = div()
+                    .w_full()
+                    .h(px(dim::STICKY_BAR_H * fold_hero))
+                    .overflow_hidden()
+                    .flex()
+                    .items_center()
+                    .gap(px(spacing::SM))
+                    .px(px(spacing::MD))
+                    // 底色同 Melodia：用同一封面主色的实色（不是 hero 的渐变，64px 内渐变会近乎全黑）。
+                    .when_some(base_color.map(|c| theme::darken(c, 0.42)), |el, bg| el.bg(bg))
+                    .child(bar_play)
                     .child(
                         div()
                             .flex_1()
@@ -1084,9 +1108,9 @@ impl Render for PlaylistPage {
                 // 收起后就会在横栏上方留下一条空白（`p(XL)` = 48px）。padding 一律放到内层。
                 let hero = div()
                     .w_full()
-                    .h(px(HERO_H * (1.0 - fold)))
+                    .h(px(HERO_H * (1.0 - fold_hero)))
                     .overflow_hidden()
-                    .opacity(1.0 - fold)
+                    .opacity(1.0 - fold_hero)
                     .when_some(hero_bg, |el, bg| el.bg(bg))
                     .child(
                         div()
@@ -1451,17 +1475,15 @@ impl Render for PlaylistPage {
                     .w_full()
                     .child(hero)
                     .child(sticky_bar)
-                    // 操作栏与胶囊随 hero 一起收起（Melodia 里这两块本来就在列表内、会滚走）：
-                    // 收起后只剩「横栏 + 列头」，纵向空间全给曲目表。滚回顶部自动复原。
-                    .child(
-                        div()
-                            .w_full()
-                            .h(px((ACTION_ROW_H + if owned { PILLS_H } else { 0.0 }) * (1.0 - fold)))
-                            .overflow_hidden()
-                            .opacity(1.0 - fold)
-                            .child(action_row)
-                            .child(pills),
-                    )
+                    // 二阶段：胶囊随 hero 一起收起（Melodia 里胶囊在 header 末段，先滚走）。
+                    .child(collapse_box(fold_hero, PILLS_H, pills))
+                    // 三阶段：操作栏收起——Melodia 的 `showPlayButton` 正是「操作栏播放键滚过横栏」
+                    // 的时刻，此处用同一阈值，收起的动画与横栏播放键的展开同步。
+                    .child(collapse_box(
+                        fold_action,
+                        ACTION_ROW_H,
+                        action_row.into_any_element(),
+                    ))
                     .child(column_header)
                     .child(rows)
                     .into_any_element()
@@ -1534,21 +1556,6 @@ fn fmt_duration(ms: i64) -> String {
         format!("{} 小时 {} 分钟", total_min / 60, total_min % 60)
     } else {
         format!("{total_min} 分钟")
-    }
-}
-
-impl PlaylistPage {
-    /// 顶部收起因子：0 = 展开，1 = 收起。导航行、hero、操作栏与横栏共用同一个值，
-    /// 保证它们在同一段时间里同步收放（`transition` 可逆且尊重「减少动态效果」）。
-    fn header_fold(&self, scroll_id: &'static str, window: &mut Window, cx: &mut Context<Self>) -> f32 {
-        let collapsed = smooth_scroll_offset(scroll_id, cx) > dim::HEADER_COLLAPSE_AT_PX;
-        transition(
-            "playlist-header-collapse",
-            if collapsed { 1.0f32 } else { 0.0 },
-            Transition::new(motion::HEADER_COLLAPSE).ease(motion::ease_in_out()),
-            window,
-            cx,
-        )
     }
 }
 
