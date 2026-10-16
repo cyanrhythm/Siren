@@ -15,7 +15,7 @@ use siren_core::model::{Album, Artist, Playlist};
 use super::super::services::Services;
 use super::super::session::{Account, Session};
 use super::super::smooth_scroll::smooth_virtual_list;
-use super::super::{icon, load_error, PageEvent, PLAYLIST_PAGE};
+use super::super::{hint_center, icon, load_error, PageEvent, PLAYLIST_PAGE};
 use super::dim;
 use crate::theme::{self, spacing};
 
@@ -506,10 +506,10 @@ impl LibraryPage {
             );
         }
         if !self.albums_loaded {
-            return list_hint("加载中…");
+            return hint_center("加载中…");
         }
         if self.albums.is_empty() {
-            return list_hint("暂无收藏专辑");
+            return hint_center("暂无收藏专辑");
         }
         let albums = self.albums.clone();
         let count = albums.len();
@@ -586,10 +586,10 @@ impl LibraryPage {
             );
         }
         if !self.artists_loaded {
-            return list_hint("加载中…");
+            return hint_center("加载中…");
         }
         if self.artists.is_empty() {
-            return list_hint("暂无关注歌手");
+            return hint_center("暂无关注歌手");
         }
         let artists = self.artists.clone();
         let count = artists.len();
@@ -720,10 +720,10 @@ impl LibraryPage {
             );
         }
         if !self.playlists_loaded {
-            return list_hint("加载中…");
+            return hint_center("加载中…");
         }
         if self.my_playlists.is_empty() {
-            return list_hint("还没有歌单，点击右上角 + 新建");
+            return hint_center("还没有歌单，点击右上角 + 新建");
         }
         let playlists = self.my_playlists.clone();
         let count = playlists.len();
@@ -883,17 +883,6 @@ impl Render for LibraryPage {
             .child(self.tabs(cx.weak_entity()))
             .child(content)
     }
-}
-
-/// 列表区占位文案（加载中 / 空态）。
-fn list_hint(text: &str) -> AnyElement {
-    div()
-        .w_full()
-        .py(px(spacing::XL))
-        .flex()
-        .justify_center()
-        .child(div().text_sm().text_color(theme::text_gray()).child(text.to_string()))
-        .into_any_element()
 }
 
 fn lib_tab(label: &str, active: bool, weak: WeakEntity<LibraryPage>, tab: LibraryTab) -> AnyElement {

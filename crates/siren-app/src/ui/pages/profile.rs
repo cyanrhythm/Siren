@@ -12,7 +12,7 @@ use siren_core::model::{Playlist, UserBrief, UserProfile};
 
 use super::super::services::Services;
 use super::super::smooth_scroll::smooth_scroll;
-use super::super::{icon, load_error, page_shell_with_header, PageEvent};
+use super::super::{hint, icon, load_error, page_shell_with_header, PageEvent};
 use super::dim;
 use crate::theme::{self, spacing};
 
@@ -344,9 +344,9 @@ impl Render for ProfilePage {
         body = body.child(section(
             "歌单",
             if !self.loaded {
-                empty_hint("加载中…")
+                hint("加载中…")
             } else if self.playlists.is_empty() {
-                empty_hint("暂无歌单")
+                hint("暂无歌单")
             } else {
                 self.playlist_rows(cx)
             },
@@ -354,9 +354,9 @@ impl Render for ProfilePage {
         body = body.child(section(
             "关注",
             if !self.loaded {
-                empty_hint("加载中…")
+                hint("加载中…")
             } else if self.follows.is_empty() {
-                empty_hint("暂无关注")
+                hint("暂无关注")
             } else {
                 self.users_rows(&self.follows, "profile-follow", cx)
             },
@@ -364,9 +364,9 @@ impl Render for ProfilePage {
         body = body.child(section(
             "粉丝",
             if !self.loaded {
-                empty_hint("加载中…")
+                hint("加载中…")
             } else if self.followeds.is_empty() {
-                empty_hint("暂无粉丝")
+                hint("暂无粉丝")
             } else {
                 self.users_rows(&self.followeds, "profile-fans", cx)
             },
@@ -392,15 +392,5 @@ fn section(title: &str, body: AnyElement) -> AnyElement {
                 .child(title.to_string()),
         )
         .child(body)
-        .into_any_element()
-}
-
-fn empty_hint(text: &str) -> AnyElement {
-    div()
-        .w_full()
-        .py(px(spacing::MD))
-        .text_xs()
-        .text_color(theme::text_gray())
-        .child(text.to_string())
         .into_any_element()
 }

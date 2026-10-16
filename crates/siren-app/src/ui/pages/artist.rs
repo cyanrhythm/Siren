@@ -16,7 +16,7 @@ use super::super::motion;
 use super::super::playback::Playback;
 use super::super::services::Services;
 use super::super::smooth_scroll::{smooth_scroll, smooth_scroll_offset};
-use super::super::{fmt_date, icon, load_error, PageEvent};
+use super::super::{fmt_date, hint, icon, load_error, PageEvent};
 use super::dim;
 use crate::theme::{self, spacing};
 
@@ -445,9 +445,9 @@ impl Render for ArtistPage {
         body = body.child(section(
             "热门歌曲",
             if !self.loaded {
-                empty_hint("加载中…")
+                hint("加载中…")
             } else if self.top_songs.is_empty() {
-                empty_hint("暂无歌曲")
+                hint("暂无歌曲")
             } else {
                 self.song_rows(cx)
             },
@@ -455,9 +455,9 @@ impl Render for ArtistPage {
         body = body.child(section(
             "专辑",
             if !self.loaded {
-                empty_hint("加载中…")
+                hint("加载中…")
             } else if self.albums.is_empty() {
-                empty_hint("暂无专辑")
+                hint("暂无专辑")
             } else {
                 self.album_rows(cx)
             },
@@ -577,16 +577,6 @@ fn section(title: &str, body: AnyElement) -> AnyElement {
                 .child(title.to_string()),
         )
         .child(body)
-        .into_any_element()
-}
-
-fn empty_hint(text: &str) -> AnyElement {
-    div()
-        .w_full()
-        .py(px(spacing::MD))
-        .text_xs()
-        .text_color(theme::text_gray())
-        .child(text.to_string())
         .into_any_element()
 }
 

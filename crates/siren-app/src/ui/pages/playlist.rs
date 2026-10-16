@@ -18,7 +18,9 @@ use super::super::components::{like_button, overlay_close, overlay_scrim, overla
 use super::super::playback::Playback;
 use super::super::services::Services;
 use super::super::smooth_scroll::{smooth_scroll, smooth_virtual_list};
-use super::super::{collapse_box, fmt_time, header_fold, icon, wheel_to_list, PageEvent};
+use super::super::{
+    collapse_box, column_header, fmt_duration, fmt_time, header_fold, icon, wheel_to_list, Column, PageEvent,
+};
 use super::dim;
 use crate::theme::{self, spacing};
 use siren_core::player::{PlaySource, PlaySourceKind};
@@ -1073,37 +1075,17 @@ impl Render for PlaylistPage {
                 // 吸顶列头：与曲目行共用列宽（`dim::*`），滚不滚都钉在列表之上
                 //（Melodia 用 stickyHeader + translationY 让表头停在横栏下，Siren 的 hero/操作栏
                 // 是固定区，表头放固定区即可得到同样的吸顶效果）。
-                let column_header = div()
-                    .w_full()
-                    .v_flex()
-                    .bg(theme::pane())
-                    .child(
-                        div()
-                            .w_full()
-                            .flex()
-                            .items_center()
-                            .gap(px(spacing::MD))
-                            .px(px(spacing::XL))
-                            .py(px(spacing::SM))
-                            .text_xs()
-                            .text_color(theme::text_gray())
-                            .child(div().w(px(dim::INDEX_W)).flex().justify_end().child("#"))
-                            .child(div().w(px(dim::COVER_SONG)))
-                            .child(div().flex_1().min_w(px(0.0)).child("标题"))
-                            .child(div().w(px(dim::ALBUM_W)).child("专辑"))
-                            .child(div().w(px(dim::LIKE_W)))
-                            .child(div().w(px(dim::DURATION_W)).flex().justify_end().child(icon(
-                                IconName::Clock,
-                                14.0,
-                                theme::text_gray(),
-                            ))),
-                    )
-                    .child(
-                        div()
-                            .w_full()
-                            .px(px(spacing::XL))
-                            .child(div().w_full().h(px(1.0)).bg(theme::surface_light().opacity(0.6))),
-                    );
+                let column_header = column_header(
+                    spacing::XL,
+                    &[
+                        Column::Index,
+                        Column::Cover,
+                        Column::Title,
+                        Column::Album,
+                        Column::Like,
+                        Column::Duration,
+                    ],
+                );
 
                 // ⚠️ 折叠容器自身**不能带 padding**：高度插值到 0 时 padding 仍会占位，
                 // 收起后就会在横栏上方留下一条空白（`p(XL)` = 48px）。padding 一律放到内层。
@@ -1558,17 +1540,6 @@ impl Render for PlaylistPage {
     }
 }
 
-/// 毫秒 → 「X 小时 Y 分钟 / Y 分钟」。
-fn fmt_duration(ms: i64) -> String {
-    let total_min = (ms.max(0) / 60_000) as u64;
-    if total_min >= 60 {
-        format!("{} 小时 {} 分钟", total_min / 60, total_min % 60)
-    } else {
-        format!("{total_min} 分钟")
-    }
-}
-
-/// 「⋯」更多菜单键（动作栏内，对齐 Melodia 动作栏的 ⋯）。
 ///
 /// 编辑类动作（简介 / 封面 / 重命名）已并入「名称和详情」对话框，这里只留管理动作：
 /// 本人创建 → 删除歌单；他人歌单 → 移除（取消收藏）。

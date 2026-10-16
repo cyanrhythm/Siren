@@ -1295,6 +1295,93 @@ pub(crate) fn page_shell(title: String, body: AnyElement) -> impl IntoElement {
     )
 }
 
+/// 灰字提示（加载中 / 空态 / 说明）：左对齐小号，宽占满。
+pub(crate) fn hint(text: impl Into<SharedString>) -> AnyElement {
+    div()
+        .w_full()
+        .py(px(theme::spacing::MD))
+        .text_xs()
+        .text_color(theme::text_gray())
+        .child(text.into())
+        .into_any_element()
+}
+
+/// 居中的灰字提示：列表整体加载中 / 空态。
+pub(crate) fn hint_center(text: impl Into<SharedString>) -> AnyElement {
+    div()
+        .w_full()
+        .py(px(theme::spacing::XL))
+        .flex()
+        .justify_center()
+        .child(div().text_sm().text_color(theme::text_gray()).child(text.into()))
+        .into_any_element()
+}
+
+/// 曲目表列（列头与行共用 `pages::dim` 的列宽，故只描述「有哪些列」）。
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Column {
+    /// 序号，右对齐。
+    Index,
+    /// 封面槽（列头留空）。
+    Cover,
+    Title,
+    Album,
+    /// 红心槽（列头留空）。
+    Like,
+    Duration,
+}
+
+/// 曲目表列头：`pad` 传该页行的水平内边距，列头与行才对得齐；
+/// `cols` 传行里实际的列（顺序一致），列宽取自 `pages::dim`。
+pub(crate) fn column_header(pad: f32, cols: &[Column]) -> AnyElement {
+    let mut row = div()
+        .w_full()
+        .flex()
+        .items_center()
+        .gap(px(theme::spacing::MD))
+        .px(px(pad))
+        .py(px(theme::spacing::SM))
+        .text_xs()
+        .text_color(theme::text_gray());
+    for col in cols {
+        let cell = match col {
+            Column::Index => div().w(px(pages::dim::INDEX_W)).flex().justify_end().child("#"),
+            Column::Cover => div().w(px(pages::dim::COVER_SONG)),
+            Column::Title => div().flex_1().min_w(px(0.0)).child("标题"),
+            Column::Album => div().w(px(pages::dim::ALBUM_W)).child("专辑"),
+            Column::Like => div().w(px(pages::dim::LIKE_W)),
+            Column::Duration => div().w(px(pages::dim::DURATION_W)).flex().justify_end().child(icon(
+                IconName::Clock,
+                14.0,
+                theme::text_gray(),
+            )),
+        };
+        row = row.child(cell);
+    }
+    div()
+        .w_full()
+        .v_flex()
+        .bg(theme::pane())
+        .child(row)
+        .child(
+            div()
+                .w_full()
+                .px(px(pad))
+                .child(div().w_full().h(px(1.0)).bg(theme::surface_light().opacity(0.6))),
+        )
+        .into_any_element()
+}
+
+/// 毫秒时长 → 「X 小时 Y 分钟 / Y 分钟」（集合总时长）。
+pub(crate) fn fmt_duration(ms: i64) -> String {
+    let total_min = (ms.max(0) / 60_000) as u64;
+    if total_min >= 60 {
+        format!("{} 小时 {} 分钟", total_min / 60, total_min % 60)
+    } else {
+        format!("{total_min} 分钟")
+    }
+}
+
 /// 页面外壳：圆角面板 + 标题行 + 内容。
 ///
 /// ⚠️ 圆角必须落在**画背景的这一层**：gpui 只用**矩形**内容遮罩裁剪子元素

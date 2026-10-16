@@ -15,7 +15,7 @@ use super::super::components::like_button;
 use super::super::playback::Playback;
 use super::super::services::Services;
 use super::super::smooth_scroll::smooth_virtual_list;
-use super::super::{collapse_box, fmt_time, header_fold, icon, wheel_to_list, PageEvent};
+use super::super::{collapse_box, column_header, fmt_time, header_fold, icon, wheel_to_list, Column, PageEvent};
 use super::dim;
 use crate::theme::{self, spacing};
 
@@ -384,36 +384,16 @@ impl Render for AlbumPage {
                     );
 
                 // 吸顶列头：专辑行没有「专辑」列，故列头为 # / 标题 / 时长（列宽与行共用 `dim::*`）。
-                let column_header = div()
-                    .w_full()
-                    .v_flex()
-                    .bg(theme::pane())
-                    .child(
-                        div()
-                            .w_full()
-                            .flex()
-                            .items_center()
-                            .gap(px(spacing::MD))
-                            .px(px(spacing::LG))
-                            .py(px(spacing::SM))
-                            .text_xs()
-                            .text_color(theme::text_gray())
-                            .child(div().w(px(dim::INDEX_W)).flex().justify_end().child("#"))
-                            .child(div().w(px(dim::COVER_SONG)))
-                            .child(div().flex_1().min_w(px(0.0)).child("标题"))
-                            .child(div().w(px(dim::LIKE_W)))
-                            .child(div().w(px(dim::DURATION_W)).flex().justify_end().child(icon(
-                                IconName::Clock,
-                                14.0,
-                                theme::text_gray(),
-                            ))),
-                    )
-                    .child(
-                        div()
-                            .w_full()
-                            .px(px(spacing::LG))
-                            .child(div().w_full().h(px(1.0)).bg(theme::surface_light().opacity(0.6))),
-                    );
+                let column_header = column_header(
+                    spacing::LG,
+                    &[
+                        Column::Index,
+                        Column::Cover,
+                        Column::Title,
+                        Column::Like,
+                        Column::Duration,
+                    ],
+                );
 
                 wheel_to_list(
                     div()
