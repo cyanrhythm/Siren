@@ -1123,55 +1123,61 @@ impl Render for PlaylistPage {
                             .child(div().w_full().h(px(1.0)).bg(theme::surface_light().opacity(0.6))),
                     );
 
+                // ⚠️ 折叠容器自身**不能带 padding**：高度插值到 0 时 padding 仍会占位，
+                // 收起后就会在横栏上方留下一条空白（`p(XL)` = 48px）。padding 一律放到内层。
                 let hero = div()
                     .w_full()
                     .h(px(HERO_H * (1.0 - fold)))
                     .overflow_hidden()
                     .opacity(1.0 - fold)
-                    .flex()
-                    .items_end()
-                    .gap(px(20.0))
-                    .p(px(spacing::XL))
                     .when_some(hero_bg, |el, bg| el.bg(bg))
-                    .child(cover)
                     .child(
                         div()
-                            .v_flex()
-                            .flex_1()
-                            .min_w(px(0.0))
-                            .gap(px(spacing::XXS))
+                            .w_full()
+                            .flex()
+                            .items_end()
+                            .gap(px(20.0))
+                            .p(px(spacing::XL))
+                            .child(cover)
                             .child(
                                 div()
-                                    .text_sm()
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_color(theme::text_primary())
-                                    .child(type_label),
-                            )
-                            .child(
-                                div()
-                                    .text_color(theme::text_primary())
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_size(px(theme::text::HERO))
-                                    .truncate()
-                                    .child(detail.name.clone()),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .child(creator_avatar)
+                                    .v_flex()
+                                    .flex_1()
+                                    .min_w(px(0.0))
+                                    .gap(px(spacing::XXS))
                                     .child(
                                         div()
                                             .text_sm()
                                             .font_weight(FontWeight::BOLD)
                                             .text_color(theme::text_primary())
-                                            .child(detail.creator_nickname.clone()),
+                                            .child(type_label),
                                     )
                                     .child(
                                         div()
-                                            .text_sm()
-                                            .text_color(theme::text_gray())
-                                            .child(format!(" · {summary}")),
+                                            .text_color(theme::text_primary())
+                                            .font_weight(FontWeight::BOLD)
+                                            .text_size(px(theme::text::HERO))
+                                            .truncate()
+                                            .child(detail.name.clone()),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .child(creator_avatar)
+                                            .child(
+                                                div()
+                                                    .text_sm()
+                                                    .font_weight(FontWeight::BOLD)
+                                                    .text_color(theme::text_primary())
+                                                    .child(detail.creator_nickname.clone()),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_sm()
+                                                    .text_color(theme::text_gray())
+                                                    .child(format!(" · {summary}")),
+                                            ),
                                     ),
                             ),
                     );
@@ -1534,13 +1540,13 @@ impl Render for PlaylistPage {
             .h_full()
             .bg(theme::pane())
             .child(
+                // padding 放内层：折叠容器自身带 padding 时，高度到 0 仍会留下空白（见 hero 处注释）。
                 div()
                     .w_full()
                     .h(px(NAV_BLOCK_H * (1.0 - fold)))
                     .overflow_hidden()
                     .opacity(1.0 - fold)
-                    .p(px(theme::spacing::MD))
-                    .child(header),
+                    .child(div().w_full().p(px(theme::spacing::MD)).child(header)),
             )
             .child(body)
             .into_any_element();

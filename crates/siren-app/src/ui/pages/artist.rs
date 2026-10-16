@@ -578,13 +578,14 @@ impl Render for ArtistPage {
             .h_full()
             .bg(theme::pane())
             .child(
+                // padding 必须放内层：折叠容器自身带 padding 时，高度插值到 0 也仍占 padding，
+                // 收起后会在横栏上方留一条空白（hero 的 `p(MD)` 同理）。
                 div()
                     .w_full()
                     .h(px(HERO_BLOCK_H * (1.0 - fold)))
                     .overflow_hidden()
                     .opacity(1.0 - fold)
-                    .p(px(spacing::MD))
-                    .child(header),
+                    .child(div().w_full().p(px(spacing::MD)).child(header)),
             )
             .child(sticky_bar)
             .child(scroll)
