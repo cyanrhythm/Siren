@@ -5,7 +5,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui_kit::assets::IconName;
-use gpui_kit::base::StyledExt;
+use gpui_kit::base::{transition, StyledExt, Transition};
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::menu::{ContextMenuExt, DropdownMenu, PopupMenuItem};
@@ -15,13 +15,21 @@ use gpui_kit::*;
 use siren_core::model::{PlaylistDetail, Song};
 
 use super::super::components::like_button;
+use super::super::motion;
 use super::super::playback::Playback;
 use super::super::services::Services;
-use super::super::smooth_scroll::{smooth_scroll, smooth_virtual_list};
+use super::super::smooth_scroll::{smooth_scroll, smooth_scroll_offset, smooth_virtual_list};
 use super::super::{fmt_time, icon, page_shell_with_header, PageEvent};
 use super::dim;
 use crate::theme::{self, spacing};
 use siren_core::player::{PlaySource, PlaySourceKind};
+
+/// 顶部 hero 的固定高度：`p(XL) * 2 + 封面 200`（收起动画按它插值）。
+const HERO_H: f32 = 248.0;
+/// 收起后的紧凑横栏高度，对齐 Melodia `StickyBarHeight = 64.dp`。
+const STICKY_BAR_H: f32 = 64.0;
+/// 曲目区滚动超过该偏移即收起 hero（滚回顶部再展开）。
+const COLLAPSE_AT_PX: f32 = 8.0;
 
 /// 封面裁剪状态。
 struct CropState {
@@ -1075,9 +1083,53 @@ impl Render for PlaylistPage {
                 };
 
                 // 顶部 hero 背景取封面主色（上深下淡渐变）；主色未就绪时无背景。
-                let hero_bg = self.services.covers.color(&detail.cover_url).map(theme::cover_backdrop);
+                let base_color = self.services.covers.color(&detail.cover_url);
+                let hero_bg = base_color.map(theme::cover_backdrop);
+
+                // 随曲目区滚动收起 hero（对齐 Melodia 的 `PlaylistStickyBar`）：
+                // 滚过阈值后大封面让位给「封面取色底 + 歌单名」的紧凑横栏，把纵向空间还给曲目表；
+                // 滚回顶部平滑展开。`transition` 可逆，且尊重系统「减少动态效果」。
+                let collapsed = smooth_scroll_offset("playlist-tracks", cx) > COLLAPSE_AT_PX;
+                let fold = transition(
+                    "playlist-header-collapse",
+                    if collapsed { 1.0f32 } else { 0.0 },
+                    Transition::new(motion::HEADER_COLLAPSE).ease(motion::ease_in_out()),
+                    window,
+                    cx,
+                );
+                let sticky_bar = div()
+                    .w_full()
+                    .h(px(STICKY_BAR_H * fold))
+                    .overflow_hidden()
+                    .flex()
+                    .items_center()
+                    .gap(px(spacing::MD))
+                    .px(px(spacing::XL))
+                    // 底色同 Melodia：用同一封面主色的实色（不是 hero 的渐变，64px 内渐变会近乎全黑）。
+                    .when_some(base_color.map(|c| theme::darken(c, 0.42)), |el, bg| el.bg(bg))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .text_lg()
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(theme::text_primary())
+                            .truncate()
+                            .child(detail.name.clone()),
+                    )
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_sm()
+                            .text_color(theme::text_gray())
+                            .child(format!("{count} 首")),
+                    );
+
                 let hero = div()
                     .w_full()
+                    .h(px(HERO_H * (1.0 - fold)))
+                    .overflow_hidden()
+                    .opacity(1.0 - fold)
                     .flex()
                     .items_end()
                     .gap(px(20.0))
@@ -1427,6 +1479,7 @@ impl Render for PlaylistPage {
                     .min_w(px(0.0))
                     .w_full()
                     .child(hero)
+                    .child(sticky_bar)
                     .child(action_row)
                     .child(pills)
                     .child(rows)

@@ -13,6 +13,10 @@ pub(crate) const DRAG_ENTER: Duration = Duration::from_millis(160);
 /// 重排归位：行在屏幕内滑动到新槽位的时长。移动用强加减速。
 pub(crate) const REORDER: Duration = Duration::from_millis(170);
 
+/// 顶部 hero 收起 / 展开（歌单、歌手页随滚动联动）。对齐 Melodia
+/// `STICKY_BAR_ANIMATION_MS = 200`。
+pub(crate) const HEADER_COLLAPSE: Duration = Duration::from_millis(200);
+
 /// 强 ease-out：`cubic-bezier(0.23, 1, 0.32, 1)` —— UI 入场 / 退出。
 pub(crate) fn ease_out() -> impl Fn(f32) -> f32 + 'static {
     cubic_bezier(0.23, 1.0, 0.32, 1.0)
