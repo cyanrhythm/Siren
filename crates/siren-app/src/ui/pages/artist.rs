@@ -5,13 +5,12 @@ use std::sync::Arc;
 use gpui_kit::assets::IconName;
 use gpui_kit::base::{transition, StyledExt, Transition};
 use gpui_kit::component::button::{Button, ButtonVariants};
-use gpui_kit::component::menu::{ContextMenuExt, PopupMenuItem};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use siren_core::model::{Artist, ArtistAlbum, ArtistDetail, Song};
 
-use super::super::components::like_button;
+use super::super::components::{song_row, IndexCell, SongRow};
 use super::super::motion;
 use super::super::playback::Playback;
 use super::super::services::Services;
@@ -234,90 +233,30 @@ impl ArtistPage {
         let weak = cx.weak_entity();
         let mut col = div().v_flex().w_full();
         for (i, song) in songs.iter().enumerate() {
-            let cover = covers.image(&song.cover_url, dim::COVER_SONG);
             let weak = weak.clone();
-            let weak_ctx = weak.clone();
-            let sid = song.id;
-            let song_owned = song.clone();
-            let liked = self.playback.read(cx).is_liked(sid);
-            col = col.child(
-                div()
-                    .id(format!("artist-song-{sid}"))
-                    .group(format!("artist-song-{sid}"))
-                    .w_full()
-                    .h(px(dim::ROW_H_SM))
-                    .px(px(spacing::XXS))
-                    .flex()
-                    .items_center()
-                    .gap(px(spacing::MD))
-                    .rounded(px(theme::RADIUS_SM))
-                    .hover(|s| s.bg(theme::card_surface()))
-                    .cursor_pointer()
-                    .on_click(move |_ev, _window, cx| {
+            col = col.child(song_row(
+                SongRow::new(
+                    "artist-song",
+                    song,
+                    &self.playback,
+                    &covers,
+                    weak.clone(),
+                    cx,
+                    move |_ev, _window, cx| {
                         weak.update(cx, |this, cx| {
                             let items = this.top_songs.as_ref().clone();
                             this.playback.update(cx, |pb, cx| pb.play_from(items, i, cx));
                         })
                         .ok();
-                    })
-                    .context_menu(move |menu, _w, _cx| {
-                        let w_next = weak_ctx.clone();
-                        let w_like = weak_ctx.clone();
-                        let s_next = song_owned.clone();
-                        let s_like = song_owned.clone();
-                        menu.item(PopupMenuItem::new("下一首播放").on_click(move |_e, _w, cx| {
-                            w_next
-                                .update(cx, |page, cx| {
-                                    page.playback.update(cx, |pb, cx| pb.play_next(s_next.clone(), cx))
-                                })
-                                .ok();
-                        }))
-                        .item(
-                            PopupMenuItem::new(if liked { "取消喜欢" } else { "喜欢" }).on_click(move |_e, _w, cx| {
-                                w_like
-                                    .update(cx, |page, cx| {
-                                        page.playback
-                                            .update(cx, |pb, cx| pb.toggle_like_song(s_like.clone(), cx))
-                                    })
-                                    .ok();
-                            }),
-                        )
-                    })
-                    .child(
-                        div()
-                            .w(px(24.0))
-                            .flex()
-                            .justify_end()
-                            .text_xs()
-                            .text_color(theme::text_gray())
-                            .child(format!("{}", i + 1)),
-                    )
-                    .child(cover)
-                    .child(
-                        div().flex_1().min_w(px(0.0)).overflow_hidden().child(
-                            div()
-                                .text_sm()
-                                .text_color(theme::text_primary())
-                                .truncate()
-                                .child(song.name.clone()),
-                        ),
-                    )
-                    .child(like_button(
-                        &self.playback,
-                        song.clone(),
-                        format!("artist-song-{sid}"),
-                        cx,
-                    ))
-                    .child(
-                        div()
-                            .w(px(dim::DURATION_W))
-                            .flex()
-                            .justify_end()
-                            .text_xs()
-                            .text_color(theme::text_gray())
-                            .child(super::super::fmt_time(song.duration_ms)),
-                    ),
-            );
+                    },
+                )
+                .row_h(dim::ROW_H_SM)
+                .pad(spacing::XXS)
+                // 序号列宽 24、字号 text_xs：与其余页的 `dim::INDEX_W` + text_sm 不同，原样保留。
+                .index(IndexCell::number(i, 24.0, true))
+                // 热门歌曲都出自该歌手，只显示歌名（不重复艺人行）。
+                .show_artists(false),
+            ));
         }
         col.into_any_element()
     }

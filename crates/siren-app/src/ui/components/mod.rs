@@ -9,7 +9,9 @@ mod now_playing;
 mod player_bar;
 mod queue_layout;
 mod queue_panel;
+mod song_row;
 mod title_bar;
 
 pub(crate) use collect::{overlay_close, overlay_focus, overlay_scrim, overlay_scrim_strong};
 pub(crate) use like::like_button;
+pub(crate) use song_row::{song_row, IndexCell, SongRow};

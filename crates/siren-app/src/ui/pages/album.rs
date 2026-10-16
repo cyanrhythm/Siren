@@ -5,17 +5,16 @@ use std::sync::Arc;
 use gpui_kit::assets::IconName;
 use gpui_kit::base::StyledExt;
 use gpui_kit::component::button::Button;
-use gpui_kit::component::menu::{ContextMenuExt, PopupMenuItem};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use siren_core::model::AlbumDetail;
 
-use super::super::components::like_button;
+use super::super::components::{song_row, IndexCell, SongRow};
 use super::super::playback::Playback;
 use super::super::services::Services;
 use super::super::smooth_scroll::smooth_virtual_list;
-use super::super::{collapse_box, column_header, fmt_time, header_fold, icon, wheel_to_list, Column, PageEvent};
+use super::super::{collapse_box, column_header, header_fold, icon, wheel_to_list, Column, PageEvent};
 use super::dim;
 use crate::theme::{self, spacing};
 
@@ -208,114 +207,35 @@ impl Render for AlbumPage {
                             range
                                 .map(|i| {
                                     let song = &songs[i];
-                                    let cover = covers.image(&song.cover_url, dim::COVER_SONG);
                                     let weak = weak.clone();
-                                    let weak_ctx = weak.clone();
-                                    let song_owned = song.clone();
-                                    let liked = playback.read(cx).is_liked(song.id);
-                                    let playing = current == Some(song.id);
-                                    let name_color = if playing {
-                                        theme::accent()
-                                    } else {
-                                        theme::text_primary()
-                                    };
-                                    div()
-                                        .id(format!("album-track-{}", song.id))
-                                        .group(format!("album-track-{}", song.id))
-                                        .w_full()
-                                        .h(px(dim::ROW_H))
-                                        .px(px(spacing::LG))
-                                        .flex()
-                                        .items_center()
-                                        .gap(px(spacing::MD))
-                                        .rounded(px(theme::RADIUS_SM))
-                                        .hover(|s| s.bg(theme::card_surface()))
-                                        .cursor_pointer()
-                                        .on_click(move |_ev, _window, cx| {
-                                            weak.update(cx, |this, cx| {
-                                                let items =
-                                                    this.detail.as_ref().map(|d| d.songs.clone()).unwrap_or_default();
-                                                let source = this.source();
-                                                this.playback.update(cx, |pb, cx| {
-                                                    pb.play_from_source(items, i, Some(source), cx)
-                                                });
-                                            })
-                                            .ok();
-                                        })
-                                        .context_menu(move |menu, _w, _cx| {
-                                            let w_next = weak_ctx.clone();
-                                            let w_like = weak_ctx.clone();
-                                            let s_next = song_owned.clone();
-                                            let s_like = song_owned.clone();
-                                            menu.item(PopupMenuItem::new("下一首播放").on_click(move |_e, _w, cx| {
-                                                w_next
-                                                    .update(cx, |page, cx| {
-                                                        page.playback
-                                                            .update(cx, |pb, cx| pb.play_next(s_next.clone(), cx))
-                                                    })
-                                                    .ok();
-                                            }))
-                                            .item(
-                                                PopupMenuItem::new(if liked { "取消喜欢" } else { "喜欢" }).on_click(
-                                                    move |_e, _w, cx| {
-                                                        w_like
-                                                            .update(cx, |page, cx| {
-                                                                page.playback.update(cx, |pb, cx| {
-                                                                    pb.toggle_like_song(s_like.clone(), cx)
-                                                                })
-                                                            })
-                                                            .ok();
-                                                    },
-                                                ),
-                                            )
-                                        })
-                                        .child(
-                                            div()
-                                                .w(px(dim::INDEX_W))
-                                                .flex()
-                                                .justify_end()
-                                                .text_sm()
-                                                .text_color(theme::text_gray())
-                                                .child(format!("{}", i + 1)),
-                                        )
-                                        .child(cover)
-                                        .child(
-                                            div()
-                                                .v_flex()
-                                                .flex_1()
-                                                .min_w(px(0.0))
-                                                .overflow_hidden()
-                                                .child(
-                                                    div()
-                                                        .text_sm()
-                                                        .text_color(name_color)
-                                                        .truncate()
-                                                        .child(song.name.clone()),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .text_xs()
-                                                        .text_color(theme::text_gray())
-                                                        .truncate()
-                                                        .child(song.artists.clone()),
-                                                ),
-                                        )
-                                        .child(like_button(
+                                    song_row(
+                                        SongRow::new(
+                                            "album-track",
+                                            song,
                                             &playback,
-                                            song.clone(),
-                                            format!("album-track-{}", song.id),
+                                            &covers,
+                                            weak.clone(),
                                             cx,
-                                        ))
-                                        .child(
-                                            div()
-                                                .w(px(dim::DURATION_W))
-                                                .flex()
-                                                .justify_end()
-                                                .text_xs()
-                                                .text_color(theme::text_gray())
-                                                .child(fmt_time(song.duration_ms)),
+                                            move |_ev, _window, cx| {
+                                                weak.update(cx, |this, cx| {
+                                                    let items = this
+                                                        .detail
+                                                        .as_ref()
+                                                        .map(|d| d.songs.clone())
+                                                        .unwrap_or_default();
+                                                    let source = this.source();
+                                                    this.playback.update(cx, |pb, cx| {
+                                                        pb.play_from_source(items, i, Some(source), cx)
+                                                    });
+                                                })
+                                                .ok();
+                                            },
                                         )
-                                        .into_any_element()
+                                        .row_h(dim::ROW_H)
+                                        .pad(spacing::LG)
+                                        .index(IndexCell::number(i, dim::INDEX_W, false))
+                                        .current(current == Some(song.id)),
+                                    )
                                 })
                                 .collect::<Vec<_>>()
                         },

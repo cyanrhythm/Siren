@@ -8,19 +8,17 @@ use gpui_kit::assets::IconName;
 use gpui_kit::base::StyledExt;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
-use gpui_kit::component::menu::{ContextMenuExt, DropdownMenu, PopupMenuItem};
+use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use siren_core::model::{PlaylistDetail, Song};
 
-use super::super::components::{like_button, overlay_close, overlay_scrim, overlay_scrim_strong};
+use super::super::components::{overlay_close, overlay_scrim, overlay_scrim_strong, song_row, IndexCell, SongRow};
 use super::super::playback::Playback;
 use super::super::services::Services;
 use super::super::smooth_scroll::{smooth_scroll, smooth_virtual_list};
-use super::super::{
-    collapse_box, column_header, fmt_duration, fmt_time, header_fold, icon, wheel_to_list, Column, PageEvent,
-};
+use super::super::{collapse_box, column_header, fmt_duration, header_fold, icon, wheel_to_list, Column, PageEvent};
 use super::dim;
 use crate::theme::{self, spacing};
 use siren_core::player::{PlaySource, PlaySourceKind};
@@ -1309,140 +1307,56 @@ impl Render for PlaylistPage {
                             range
                                 .map(|i| {
                                     let song = &shown[i];
-                                    let song_owned = song.clone();
-                                    let liked = playback.read(cx).is_liked(song.id);
-                                    let playing = current == Some(song.id);
-                                    let name_color = if playing {
-                                        theme::accent()
-                                    } else {
-                                        theme::text_primary()
-                                    };
-                                    let cover = covers.image(&song.cover_url, dim::COVER_SONG);
-                                    let weak = weak.clone();
-                                    let weak_ctx = weak.clone();
                                     let sid = song.id;
-                                    div()
-                                        .id(format!("playlist-track-{}", song.id))
-                                        .group(format!("playlist-track-{}", song.id))
-                                        .w_full()
-                                        .h(px(dim::ROW_H))
-                                        .px(px(spacing::XL))
-                                        .flex()
-                                        .items_center()
-                                        .gap(px(spacing::MD))
-                                        .rounded(px(theme::RADIUS_SM))
-                                        .hover(|s| s.bg(theme::card_surface()))
-                                        .cursor_pointer()
-                                        .on_click(move |_ev, _window, cx| {
-                                            weak.update(cx, |this, cx| {
-                                                let items =
-                                                    this.detail.as_ref().map(|d| d.tracks.clone()).unwrap_or_default();
-                                                let idx = items.iter().position(|s| s.id == sid).unwrap_or(0);
-                                                let source = this.source();
-                                                this.playback.update(cx, |pb, cx| {
-                                                    pb.play_from_source(items, idx, Some(source), cx)
-                                                });
-                                            })
-                                            .ok();
-                                        })
-                                        .child(
-                                            div()
-                                                .w(px(dim::INDEX_W))
-                                                .flex()
-                                                .justify_end()
-                                                .text_sm()
-                                                .text_color(theme::text_gray())
-                                                .child(format!("{}", i + 1)),
-                                        )
-                                        .child(cover)
-                                        .child(
-                                            div()
-                                                .v_flex()
-                                                .flex_1()
-                                                .min_w(px(0.0))
-                                                .overflow_hidden()
-                                                .child(
-                                                    div()
-                                                        .text_sm()
-                                                        .text_color(name_color)
-                                                        .truncate()
-                                                        .child(song.name.clone()),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .text_xs()
-                                                        .text_color(theme::text_gray())
-                                                        .truncate()
-                                                        .child(song.artists.clone()),
-                                                ),
-                                        )
-                                        .child(
-                                            div()
-                                                .w(px(dim::ALBUM_W))
-                                                .text_xs()
-                                                .text_color(theme::text_gray())
-                                                .truncate()
-                                                .child(song.album.clone()),
-                                        )
-                                        .child(like_button(
+                                    let song_menu = song.clone();
+                                    let weak_click = weak.clone();
+                                    let weak_menu = weak.clone();
+                                    song_row(
+                                        SongRow::new(
+                                            "playlist-track",
+                                            song,
                                             &playback,
-                                            song.clone(),
-                                            format!("playlist-track-{}", song.id),
+                                            &covers,
+                                            weak.clone(),
                                             cx,
-                                        ))
-                                        .child(
-                                            div()
-                                                .w(px(dim::DURATION_W))
-                                                .flex()
-                                                .justify_end()
-                                                .text_xs()
-                                                .text_color(theme::text_gray())
-                                                .child(fmt_time(song.duration_ms)),
-                                        )
-                                        .context_menu(move |menu, _w, _cx| {
-                                            let weak_next = weak_ctx.clone();
-                                            let weak_like = weak_ctx.clone();
-                                            let weak_add = weak_ctx.clone();
-                                            let weak_del = weak_ctx.clone();
-                                            let song_next = song_owned.clone();
-                                            let song_like = song_owned.clone();
-                                            let song_del = song_owned.clone();
-                                            menu.item(PopupMenuItem::new("下一首播放").on_click(move |_ev, _w, cx| {
-                                                weak_next
-                                                    .update(cx, |page, cx| {
-                                                        page.playback
-                                                            .update(cx, |pb, cx| pb.play_next(song_next.clone(), cx))
+                                            move |_ev, _window, cx| {
+                                                weak_click
+                                                    .update(cx, |this, cx| {
+                                                        let items = this
+                                                            .detail
+                                                            .as_ref()
+                                                            .map(|d| d.tracks.clone())
+                                                            .unwrap_or_default();
+                                                        let idx = items.iter().position(|s| s.id == sid).unwrap_or(0);
+                                                        let source = this.source();
+                                                        this.playback.update(cx, |pb, cx| {
+                                                            pb.play_from_source(items, idx, Some(source), cx)
+                                                        });
                                                     })
                                                     .ok();
-                                            }))
-                                            .item(PopupMenuItem::new(if liked { "取消喜欢" } else { "喜欢" }).on_click(
-                                                move |_ev, _w, cx| {
-                                                    weak_like
-                                                        .update(cx, |page, cx| {
-                                                            page.playback.update(cx, |pb, cx| {
-                                                                pb.toggle_like_song(song_like.clone(), cx)
-                                                            })
+                                            },
+                                        )
+                                        .row_h(dim::ROW_H)
+                                        .pad(spacing::XL)
+                                        .index(IndexCell::number(i, dim::INDEX_W, false))
+                                        .show_album(true)
+                                        .add_to_playlist(true)
+                                        .current(current == Some(sid))
+                                        .extra_menu(
+                                            move |menu, _window, _cx| {
+                                                let weak = weak_menu.clone();
+                                                let song = song_menu.clone();
+                                                menu.item(PopupMenuItem::new("从歌单移除").on_click(
+                                                    move |_ev, _w, cx| {
+                                                        weak.update(cx, |page, cx| {
+                                                            page.ask_remove_track(song.id, song.name.clone(), cx)
                                                         })
                                                         .ok();
-                                                },
-                                            ))
-                                            .item(PopupMenuItem::new("添加到歌单").on_click(move |_ev, _w, cx| {
-                                                weak_add
-                                                    .update(cx, |_page, cx| {
-                                                        cx.emit(PageEvent::AddToPlaylist { song_id: sid })
-                                                    })
-                                                    .ok();
-                                            }))
-                                            .item(
-                                                PopupMenuItem::new("从歌单移除").on_click(move |_ev, _w, cx| {
-                                                    let name = song_del.name.clone();
-                                                    weak_del
-                                                        .update(cx, |page, cx| page.ask_remove_track(sid, name, cx))
-                                                        .ok();
-                                                }),
-                                            )
-                                        })
-                                        .into_any_element()
+                                                    },
+                                                ))
+                                            },
+                                        ),
+                                    )
                                 })
                                 .collect::<Vec<_>>()
                         },

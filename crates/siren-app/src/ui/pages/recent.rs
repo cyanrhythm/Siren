@@ -4,12 +4,11 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use gpui_kit::base::StyledExt;
-use gpui_kit::component::menu::{ContextMenuExt, PopupMenuItem};
 use gpui_kit::*;
 
 use siren_core::model::{RecentAlbum, RecentPlaylist, RecentSong};
 
-use super::super::components::like_button;
+use super::super::components::{song_row, SongRow};
 use super::super::playback::Playback;
 use super::super::services::Services;
 use super::super::session::Session;
@@ -184,101 +183,30 @@ impl RecentPage {
                     );
                 }
             }
-            let cover = covers.image(&item.song.cover_url, dim::COVER_SONG);
             let weak = weak.clone();
-            let weak_ctx = weak.clone();
-            let idx = i;
-            let sid = item.song.id;
-            let song_owned = item.song.clone();
-            let liked = self.playback.read(cx).is_liked(sid);
-            col = col.child(
-                div()
-                    .id(format!("recent-song-{sid}"))
-                    .group(format!("recent-song-{sid}"))
-                    .w_full()
-                    .h(px(dim::ROW_H_SM))
-                    .px(px(spacing::LG))
-                    .flex()
-                    .items_center()
-                    .gap(px(spacing::MD))
-                    .rounded(px(theme::RADIUS_SM))
-                    .hover(|s| s.bg(theme::card_surface()))
-                    .cursor_pointer()
-                    .on_click(move |_ev, _window, cx| {
+            col = col.child(song_row(
+                SongRow::new(
+                    "recent-song",
+                    &item.song,
+                    &self.playback,
+                    &covers,
+                    weak.clone(),
+                    cx,
+                    move |_ev, _window, cx| {
                         weak.update(cx, |this, cx| {
                             let items: Vec<siren_core::model::Song> =
                                 this.songs.iter().map(|s| s.song.clone()).collect();
-                            this.playback.update(cx, |pb, cx| pb.play_from(items, idx, cx));
+                            this.playback.update(cx, |pb, cx| pb.play_from(items, i, cx));
                         })
                         .ok();
-                    })
-                    .child(cover)
-                    .child(
-                        div()
-                            .v_flex()
-                            .flex_1()
-                            .min_w(px(0.0))
-                            .overflow_hidden()
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(theme::text_primary())
-                                    .truncate()
-                                    .child(item.song.name.clone()),
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(theme::text_gray())
-                                    .truncate()
-                                    .child(item.song.artists.clone()),
-                            ),
-                    )
-                    .child(like_button(
-                        &self.playback,
-                        item.song.clone(),
-                        format!("recent-song-{sid}"),
-                        cx,
-                    ))
-                    .child(
-                        div()
-                            .w(px(dim::DURATION_W))
-                            .flex()
-                            .justify_end()
-                            .text_xs()
-                            .text_color(theme::text_gray())
-                            .child(siren_core::recent_playlists::fmt_clock_time(item.play_time)),
-                    )
-                    .context_menu(move |menu, _w, _cx| {
-                        let weak_next = weak_ctx.clone();
-                        let weak_like = weak_ctx.clone();
-                        let weak_add = weak_ctx.clone();
-                        let song_next = song_owned.clone();
-                        let song_like = song_owned.clone();
-                        menu.item(PopupMenuItem::new("下一首播放").on_click(move |_ev, _w, cx| {
-                            weak_next
-                                .update(cx, |page, cx| {
-                                    page.playback.update(cx, |pb, cx| pb.play_next(song_next.clone(), cx))
-                                })
-                                .ok();
-                        }))
-                        .item(PopupMenuItem::new(if liked { "取消喜欢" } else { "喜欢" }).on_click(
-                            move |_ev, _w, cx| {
-                                weak_like
-                                    .update(cx, |page, cx| {
-                                        page.playback
-                                            .update(cx, |pb, cx| pb.toggle_like_song(song_like.clone(), cx))
-                                    })
-                                    .ok();
-                            },
-                        ))
-                        .item(PopupMenuItem::new("添加到歌单").on_click(move |_ev, _w, cx| {
-                            weak_add
-                                .update(cx, |_page, cx| cx.emit(PageEvent::AddToPlaylist { song_id: sid }))
-                                .ok();
-                        }))
-                    }),
-            );
+                    },
+                )
+                .row_h(dim::ROW_H_SM)
+                .pad(spacing::LG)
+                // 这一列放的是**播放时刻**（在这个列表里曲长没有意义），故覆盖时长列文本。
+                .duration_text(siren_core::recent_playlists::fmt_clock_time(item.play_time))
+                .add_to_playlist(true),
+            ));
         }
         col.into_any_element()
     }
