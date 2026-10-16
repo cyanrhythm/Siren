@@ -480,7 +480,7 @@ impl Render for AlbumPage {
                             .gap(px(spacing::LG))
                             .px(px(spacing::LG))
                             .pb(px(spacing::SM))
-                            .child(star_button)
+                            // 播放键在前、收藏在后（与歌单页动作栏同序：主动作靠左）。
                             .when(count > 0, |el| {
                                 el.child(
                                     div()
@@ -510,6 +510,7 @@ impl Render for AlbumPage {
                                         .child(icon(IconName::Play, 26.0, theme::text_primary())),
                                 )
                             })
+                            .child(star_button)
                             .into_any_element(),
                     ))
                     .child(sticky_bar)
