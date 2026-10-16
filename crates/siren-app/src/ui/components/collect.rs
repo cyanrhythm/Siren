@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 
 use gpui_kit::base::{ElementExt as _, StyledExt};
 use gpui_kit::component::button::{Button, ButtonVariants};
-use gpui_kit::component::input::Input;
+use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::*;
 
 use super::super::session::Session;
@@ -18,6 +18,9 @@ thread_local! {
     static OVERLAY_FOCUS: RefCell<HashMap<&'static str, FocusHandle>> = RefCell::new(HashMap::new());
     /// 本次打开已把焦点收到浮层根上的浮层：保证只收一次，不抢浮层内输入框的焦点。
     static OVERLAY_FOCUS_TAKEN: RefCell<HashSet<&'static str>> = RefCell::new(HashSet::new());
+    /// 各浮层打开**之前**的焦点：关闭时归还（无障碍要求「焦点在浮层关闭后回到原处」）。
+    static OVERLAY_PREV_FOCUS: RefCell<HashMap<&'static str, Option<FocusHandle>>> =
+        RefCell::new(HashMap::new());
     /// 删除确认浮层点名的歌单名（PlaylistOpsState 在 ui/mod.rs，跨 agent 不便加字段，
     /// 浮层同时只开一个，模块内暂存即可）。
     static DELETE_PNAME: RefCell<Option<String>> = const { RefCell::new(None) };
@@ -58,13 +61,17 @@ pub(crate) fn overlay_scrim_strong<E: 'static>(
 
 /// 同 [`overlay_scrim`]，但打开后把焦点直接落到浮层内的输入框（`inner`），
 /// 用户打开即可输入，无需先点一下输入框（整改清单 O0.2）。
+///
+/// `reset_input` 非空时，打开的首帧会把该输入框清空——避免上次没提交就关掉时
+/// 残留的文字带到下一次打开。
 pub(crate) fn overlay_scrim_focusing<E: 'static>(
     id: &'static str,
     weak: WeakEntity<E>,
     close: impl Fn(&mut E, &mut Window, &mut Context<E>) + Clone + 'static,
     inner: FocusHandle,
+    reset_input: Option<Entity<InputState>>,
 ) -> Stateful<Div> {
-    overlay_scrim_inner(id, weak, close, theme::scrim(), Some(inner))
+    overlay_scrim_inner(id, weak, close, theme::scrim(), Some(inner), reset_input)
 }
 
 fn overlay_scrim_with<E: 'static>(
@@ -73,7 +80,17 @@ fn overlay_scrim_with<E: 'static>(
     close: impl Fn(&mut E, &mut Window, &mut Context<E>) + Clone + 'static,
     scrim: Rgba,
 ) -> Stateful<Div> {
-    overlay_scrim_inner(id, weak, close, scrim, None)
+    overlay_scrim_inner(id, weak, close, scrim, None, None)
+}
+
+/// 关闭浮层时调用：把焦点归还到打开前的位置（没有记录时退回「清空焦点」）。
+///
+/// 浮层的 `close_*` 方法里用它替换原来的 `window.blur(cx)`。
+pub(crate) fn overlay_close(id: &'static str, window: &mut Window, cx: &mut App) {
+    match OVERLAY_PREV_FOCUS.with(|map| map.borrow_mut().remove(id)).flatten() {
+        Some(prev) => window.focus(&prev, cx),
+        None => window.blur(cx),
+    }
 }
 
 fn overlay_scrim_inner<E: 'static>(
@@ -82,6 +99,7 @@ fn overlay_scrim_inner<E: 'static>(
     close: impl Fn(&mut E, &mut Window, &mut Context<E>) + Clone + 'static,
     scrim: Rgba,
     inner: Option<FocusHandle>,
+    reset_input: Option<Entity<InputState>>,
 ) -> Stateful<Div> {
     let weak_click = weak.clone();
     let weak_esc = weak;
@@ -95,6 +113,9 @@ fn overlay_scrim_inner<E: 'static>(
         .left_0()
         .w_full()
         .h_full()
+        // 浮层根会 `track_focus` 收键盘，故必须给 role——只有 id 没有 role 时
+        // gpui 会警告「focused element has no accessibility node」（N0.4 / O1.12）。
+        .role(Role::Dialog)
         .flex()
         .items_center()
         .justify_center()
@@ -119,8 +140,14 @@ fn overlay_scrim_inner<E: 'static>(
             // 若打开浮层前焦点在标题栏搜索框，焦点就一直留在那里，浮层根的 `on_key_down`
             // 收不到 Esc（整改清单 O0.2）。这里用「本浮层是否已收过焦点」判据，
             // 保证只收一次——之后用户点到别处不会被抢回去。
-            let focus = inner.clone().unwrap_or_else(|| overlay_focus(id, cx));
             if OVERLAY_FOCUS_TAKEN.with(|set| set.borrow_mut().insert(id)) {
+                // 记录打开前的焦点，关闭时归还（无障碍：浮层关闭后焦点不应凭空消失）。
+                OVERLAY_PREV_FOCUS.with(|map| map.borrow_mut().insert(id, window.focused(cx)));
+                // 带输入框的浮层顺手清空上次残留（上次没提交就关掉时留在框里的文字）。
+                if let Some(input) = reset_input.clone() {
+                    input.update(cx, |state, cx| state.set_value("", window, cx));
+                }
+                let focus = inner.clone().unwrap_or_else(|| overlay_focus(id, cx));
                 window.focus(&focus, cx);
             }
         });
@@ -140,7 +167,7 @@ impl Root {
 
     pub(crate) fn close_create(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.ops.create_open = false;
-        window.blur(cx);
+        overlay_close("create-overlay", window, cx);
         cx.notify();
     }
 
@@ -249,7 +276,7 @@ impl Root {
 
     pub(crate) fn close_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.ops.picker_song = None;
-        window.blur(cx);
+        overlay_close("picker-overlay", window, cx);
         cx.notify();
     }
 
@@ -294,6 +321,8 @@ impl Root {
             weak,
             Root::close_create,
             self.ops.create_input.read(cx).focus_handle(cx),
+            // 新建歌单：每次打开清空上次残留（重命名/简介要保留原值，故只有这里传 Some）。
+            Some(self.ops.create_input.clone()),
         )
         .child(
             div()
@@ -461,7 +490,7 @@ impl Root {
 
     pub(crate) fn close_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.ops.rename_pid = None;
-        window.blur(cx);
+        overlay_close("rename-overlay", window, cx);
         cx.notify();
     }
 
@@ -513,7 +542,7 @@ impl Root {
     pub(crate) fn close_delete(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.ops.delete_pid = None;
         DELETE_PNAME.with(|slot| *slot.borrow_mut() = None);
-        window.blur(cx);
+        overlay_close("delete-overlay", window, cx);
         cx.notify();
     }
 
@@ -569,6 +598,7 @@ impl Root {
             weak,
             Root::close_rename,
             self.ops.rename_input.read(cx).focus_handle(cx),
+            None,
         )
         .child(
             div()
@@ -676,7 +706,7 @@ impl Root {
 
     pub(crate) fn close_desc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.ops.desc_pid = None;
-        window.blur(cx);
+        overlay_close("desc-overlay", window, cx);
         cx.notify();
     }
 
@@ -719,6 +749,7 @@ impl Root {
             weak,
             Root::close_desc,
             self.ops.desc_input.read(cx).focus_handle(cx),
+            None,
         )
         .child(
             div()

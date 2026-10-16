@@ -11,5 +11,5 @@ mod queue_layout;
 mod queue_panel;
 mod title_bar;
 
-pub(crate) use collect::{overlay_scrim, overlay_scrim_strong};
+pub(crate) use collect::{overlay_close, overlay_focus, overlay_scrim, overlay_scrim_strong};
 pub(crate) use like::like_button;

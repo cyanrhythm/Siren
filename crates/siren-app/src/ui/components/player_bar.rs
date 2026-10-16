@@ -113,6 +113,7 @@ impl Root {
                                     .rounded_full()
                                     .icon(IconName::Shuffle)
                                     .tooltip("随机播放")
+                                    .accessibility_label("随机播放")
                                     .on_click(move |_ev, _window, cx| {
                                         weak_shuffle
                                             .update(cx, |this, cx| {
@@ -128,6 +129,7 @@ impl Root {
                                     .rounded_full()
                                     .icon(IconName::SkipBack)
                                     .tooltip("上一首")
+                                    .accessibility_label("上一首")
                                     .on_click(move |_ev, _window, cx| {
                                         weak_prev
                                             .update(cx, |this, cx| {
@@ -153,6 +155,7 @@ impl Root {
                                     .rounded_full()
                                     .icon(if playing { IconName::Pause } else { IconName::Play })
                                     .tooltip(if playing { "暂停" } else { "播放" })
+                                    .accessibility_label(if playing { "暂停" } else { "播放" })
                                     .on_click(move |_ev, _window, cx| {
                                         weak_play
                                             .update(cx, |this, cx| {
@@ -168,6 +171,7 @@ impl Root {
                                     .rounded_full()
                                     .icon(IconName::SkipForward)
                                     .tooltip("下一首")
+                                    .accessibility_label("下一首")
                                     .on_click(move |_ev, _window, cx| {
                                         weak_next
                                             .update(cx, |this, cx| {
@@ -190,6 +194,7 @@ impl Root {
                                     .rounded_full()
                                     .icon(IconName::Repeat)
                                     .tooltip("循环模式")
+                                    .accessibility_label("循环模式")
                                     .on_click(move |_ev, _window, cx| {
                                         weak_repeat
                                             .update(cx, |this, cx| {
@@ -244,6 +249,7 @@ impl Root {
                             .rounded_full()
                             .icon(IconName::ListMusic)
                             .tooltip("播放队列")
+                            .accessibility_label("播放队列")
                             .on_click(move |_ev, _window, cx| {
                                 weak_queue
                                     .update(cx, |root, cx| {

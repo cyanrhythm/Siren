@@ -19,7 +19,7 @@ use siren_core::model::Song;
 use super::super::settings_store::SettingsStore;
 use super::super::smooth_scroll::{smooth_scroll, smooth_scroll_offset, smooth_scroll_to};
 use super::super::{cover_placeholder, icon, motion, Root};
-use super::collect::overlay_scrim;
+use super::collect::{overlay_close, overlay_scrim};
 use super::queue_layout::{reorder_target, row_content_top, GAP, PAD, ROW_H, SECTION_H, STRIDE};
 use crate::theme;
 
@@ -202,8 +202,9 @@ impl Root {
         let confirm = self.queue_clear_open.then(|| {
             let weak_cancel = weak.clone();
             let weak_ok = weak.clone();
-            overlay_scrim("queue-clear-confirm", weak, |root: &mut Root, _w, cx| {
-                root.close_queue_clear(cx)
+            overlay_scrim("queue-clear-confirm", weak, |root: &mut Root, window, cx| {
+                root.close_queue_clear(cx);
+                overlay_close("queue-clear-confirm", window, cx);
             })
             .child(
                 div()

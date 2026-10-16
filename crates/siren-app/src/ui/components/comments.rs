@@ -262,6 +262,7 @@ impl Root {
                                     .ghost()
                                     .icon(icon(IconName::X, 16.0, theme::text_gray()))
                                     .tooltip("关闭")
+                                    .accessibility_label("关闭评论")
                                     .on_click(move |_ev, window, cx| {
                                         weak_close.update(cx, |root, cx| root.close_comments(window, cx)).ok();
                                     }),

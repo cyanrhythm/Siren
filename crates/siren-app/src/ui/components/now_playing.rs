@@ -665,6 +665,7 @@ fn page_arrow(
             },
         ))
         .tooltip(tooltip)
+        .accessibility_label(tooltip)
         .disabled(!enabled)
         .when(enabled, |s| {
             s.on_click(move |_ev, _window, cx| {
@@ -796,6 +797,7 @@ fn toggle_button(id: &'static str, name: IconName, weak: WeakEntity<Root>) -> im
         .ghost()
         .icon(icon(name, 16.0, theme::text_gray()))
         .tooltip(tooltip)
+        .accessibility_label(tooltip)
         .on_click(move |_ev, _window, cx| {
             weak.update(cx, |root, cx| root.toggle_now_playing(cx)).ok();
         })

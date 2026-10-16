@@ -35,6 +35,7 @@ pub(crate) fn like_button(playback: &Entity<Playback>, song: Song, group: String
         )
         .icon(heart)
         .tooltip(if liked { "取消喜欢" } else { "喜欢" })
+        .accessibility_label(if liked { "取消喜欢" } else { "喜欢" })
         .on_click(move |_ev, _window, cx| {
             // 阻止冒泡到行点击（播放）。
             cx.stop_propagation();

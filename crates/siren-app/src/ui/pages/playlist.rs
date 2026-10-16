@@ -14,7 +14,7 @@ use gpui_kit::*;
 
 use siren_core::model::{PlaylistDetail, Song};
 
-use super::super::components::{like_button, overlay_scrim, overlay_scrim_strong};
+use super::super::components::{like_button, overlay_close, overlay_scrim, overlay_scrim_strong};
 use super::super::motion;
 use super::super::playback::Playback;
 use super::super::services::Services;
@@ -367,8 +367,9 @@ impl PlaylistPage {
         let weak_cancel = weak.clone();
         let weak_ok = weak.clone();
         let playlist_name = self.name.clone();
-        overlay_scrim("remove-track-overlay", weak, |page: &mut PlaylistPage, _w, cx| {
-            page.cancel_remove_track(cx)
+        overlay_scrim("remove-track-overlay", weak, |page: &mut PlaylistPage, window, cx| {
+            page.cancel_remove_track(cx);
+            overlay_close("remove-track-overlay", window, cx);
         })
         .child(
             div()
@@ -414,9 +415,14 @@ impl PlaylistPage {
         let weak_cancel = weak.clone();
         let weak_ok = weak.clone();
         let playlist_name = self.name.clone();
-        overlay_scrim("remove-playlist-overlay", weak, |page: &mut PlaylistPage, _w, cx| {
-            page.cancel_remove_playlist(cx)
-        })
+        overlay_scrim(
+            "remove-playlist-overlay",
+            weak,
+            |page: &mut PlaylistPage, window, cx| {
+                page.cancel_remove_playlist(cx);
+                overlay_close("remove-playlist-overlay", window, cx);
+            },
+        )
         .child(
             div()
                 .v_flex()
@@ -678,8 +684,9 @@ impl PlaylistPage {
                     }),
             );
 
-        overlay_scrim_strong("crop-overlay", weak, |page: &mut PlaylistPage, _w, cx| {
-            page.crop_cancel(cx)
+        overlay_scrim_strong("crop-overlay", weak, |page: &mut PlaylistPage, window, cx| {
+            page.crop_cancel(cx);
+            overlay_close("crop-overlay", window, cx);
         })
         .child(
             div()
@@ -884,8 +891,9 @@ impl PlaylistPage {
                     ),
             );
         }
-        overlay_scrim("add-overlay", weak, |page: &mut PlaylistPage, _w, cx| {
-            page.close_add(cx)
+        overlay_scrim("add-overlay", weak, |page: &mut PlaylistPage, window, cx| {
+            page.close_add(cx);
+            overlay_close("add-overlay", window, cx);
         })
         .child(
             div()
