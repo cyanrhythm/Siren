@@ -22,6 +22,26 @@ pub fn card_surface() -> Rgba {
 pub fn surface_light() -> Rgba {
     rgb(0x3E3E3E)
 }
+/// 图标键的**按下**态底：比 hover 略亮。
+///
+/// `ButtonCustomVariant` 的 `active` 默认为透明，不显式指定就会"按下即失去底色"
+/// （整改清单 O1.10）。
+pub fn surface_pressed() -> Rgba {
+    rgb(0x4A4A4A)
+}
+/// 白色实心控件（播放键）的 hover / 按下态：逐级**轻微**压暗。
+///
+/// 静止底色由调用方 `.bg(text_primary())` 直给（纯白）：**不能**用
+/// `ButtonCustomVariant::color(...)`——kit 会把 Custom 变体的静止色
+/// `mix_oklab(transparent, 0.2)`，纯白被压成 `#E8E8E8`，看着就是个灰按钮；
+/// 而 hover / active 是**原样取用**，于是「默认灰、hover 白」的错觉就出现了。
+/// 这两个值只需比纯白略深，既给到反馈，又不会让深色图标失去对比。
+pub fn solid_hover() -> Rgba {
+    rgb(0xE6E6E6)
+}
+pub fn solid_active() -> Rgba {
+    rgb(0xCCCCCC)
+}
 pub fn text_primary() -> Rgba {
     rgb(0xFFFFFF)
 }

@@ -27,7 +27,12 @@ pub(crate) fn like_button(playback: &Entity<Playback>, song: Song, group: String
     };
     // kit Button 统一 hover/focus/tooltip；未喜欢时随所在行悬停显隐。
     let mut el = Button::new(format!("like-{}", song.id))
-        .custom(ButtonCustomVariant::new(cx).hover(theme::surface_light().into()))
+        .custom(
+            ButtonCustomVariant::new(cx)
+                .hover(theme::surface_light().into())
+                // active 默认透明：不指定的话点下去底色瞬间消失（闪一下）。
+                .active(theme::surface_pressed().into()),
+        )
         .icon(heart)
         .tooltip(if liked { "取消喜欢" } else { "喜欢" })
         .on_click(move |_ev, _window, cx| {

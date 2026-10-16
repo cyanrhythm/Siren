@@ -12,11 +12,15 @@ use siren_core::player::PlayMode;
 use super::super::{cover_placeholder, fmt_time, icon, Root};
 use crate::theme::{self, spacing};
 
-/// 透明底图标键：自定义前景色（激活态高亮）+ 统一 hover 底。
+/// 透明底图标键：自定义前景色（激活态高亮）+ 统一 **圆形** hover/按下底。
+///
+/// 圆形底由调用方 `.rounded_full()` 给出（键为正方形，即成正圆）；
+/// `active` 必须显式指定，否则按下时底色变透明（见 [`theme::surface_pressed`]）。
 fn transport_variant(cx: &App, fg: Rgba) -> ButtonCustomVariant {
     ButtonCustomVariant::new(cx)
         .foreground(fg.into())
         .hover(theme::surface_light().into())
+        .active(theme::surface_pressed().into())
 }
 
 impl Root {
@@ -106,6 +110,7 @@ impl Root {
                                         },
                                     ))
                                     .with_size(Size::Size(px(24.0)))
+                                    .rounded_full()
                                     .icon(IconName::Shuffle)
                                     .tooltip("随机播放")
                                     .on_click(move |_ev, _window, cx| {
@@ -120,6 +125,7 @@ impl Root {
                                 Button::new("prev")
                                     .custom(transport_variant(cx, theme::text_primary()))
                                     .with_size(Size::Size(px(28.0)))
+                                    .rounded_full()
                                     .icon(IconName::SkipBack)
                                     .tooltip("上一首")
                                     .on_click(move |_ev, _window, cx| {
@@ -134,12 +140,17 @@ impl Root {
                                 Button::new("play")
                                     .custom(
                                         ButtonCustomVariant::new(cx)
-                                            .color(theme::text_primary().into())
                                             .foreground(theme::pane().into())
-                                            .hover(theme::surface_light().into()),
+                                            // 只把交互态交给变体（hover/active 原样生效）。
+                                            // 静止底色不能走 `.color(...)`：kit 会把 Custom 的
+                                            // 静止色 `mix_oklab(transparent, 0.2)`，纯白会被压成
+                                            // #E8E8E8——看起来就是个灰按钮（所以才改用 `.bg()`）。
+                                            .hover(theme::solid_hover().into())
+                                            .active(theme::solid_active().into()),
                                     )
+                                    .bg(theme::text_primary())
                                     .with_size(Size::Size(px(36.0)))
-                                    .rounded(px(18.0))
+                                    .rounded_full()
                                     .icon(if playing { IconName::Pause } else { IconName::Play })
                                     .tooltip(if playing { "暂停" } else { "播放" })
                                     .on_click(move |_ev, _window, cx| {
@@ -154,6 +165,7 @@ impl Root {
                                 Button::new("next")
                                     .custom(transport_variant(cx, theme::text_primary()))
                                     .with_size(Size::Size(px(28.0)))
+                                    .rounded_full()
                                     .icon(IconName::SkipForward)
                                     .tooltip("下一首")
                                     .on_click(move |_ev, _window, cx| {
@@ -175,6 +187,7 @@ impl Root {
                                         },
                                     ))
                                     .with_size(Size::Size(px(24.0)))
+                                    .rounded_full()
                                     .icon(IconName::Repeat)
                                     .tooltip("循环模式")
                                     .on_click(move |_ev, _window, cx| {
@@ -228,6 +241,7 @@ impl Root {
                                 },
                             ))
                             .with_size(Size::Size(px(24.0)))
+                            .rounded_full()
                             .icon(IconName::ListMusic)
                             .tooltip("播放队列")
                             .on_click(move |_ev, _window, cx| {
