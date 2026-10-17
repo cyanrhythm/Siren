@@ -560,9 +560,65 @@ pub(crate) fn smooth_virtual_list(
     window: &mut Window,
     cx: &mut App,
 ) -> impl IntoElement {
+    virtual_list_impl(
+        name,
+        item_count,
+        row_height,
+        ListHeader::none(),
+        render_range,
+        window,
+        cx,
+    )
+}
+
+/// 列表头部：随内容一起滚走（对齐 Melodia 把 header 作为 LazyColumn 首项的做法）。
+pub(crate) struct ListHeader {
+    /// 头部高度（内容坐标）。
+    pub height: f32,
+    pub element: AnyElement,
+}
+
+impl ListHeader {
+    fn none() -> Self {
+        Self {
+            height: 0.0,
+            element: div().into_any_element(),
+        }
+    }
+}
+
+/// 带滚走头部的虚拟列表：头部作为内容第一段，列表量程 = 头部 + 行数×行高 − 视口，
+/// 与滚动位置无关，因此不会出现「头部收缩改变视口 → 量程变」的反馈。
+pub(crate) fn smooth_virtual_list_with_header(
+    name: &'static str,
+    item_count: usize,
+    row_height: f32,
+    header: ListHeader,
+    render_range: impl Fn(Range<usize>, &mut Window, &mut App) -> Vec<AnyElement> + 'static,
+    window: &mut Window,
+    cx: &mut App,
+) -> impl IntoElement {
+    virtual_list_impl(name, item_count, row_height, header, render_range, window, cx)
+}
+
+/// 头部占 `header_h` 时，偏移 `offset` 下第一行可见行的下标。
+fn first_visible_row(offset: f32, header_h: f32, row_height: f32) -> usize {
+    ((offset - header_h).max(0.0) / row_height.max(1.0)).floor() as usize
+}
+
+fn virtual_list_impl(
+    name: &'static str,
+    item_count: usize,
+    row_height: f32,
+    header: ListHeader,
+    render_range: impl Fn(Range<usize>, &mut Window, &mut App) -> Vec<AnyElement> + 'static,
+    window: &mut Window,
+    cx: &mut App,
+) -> impl IntoElement {
     let id = entry_id(name);
     ensure_registry(cx);
-    let content_h = item_count as f32 * row_height;
+    let header_h = header.height.max(0.0);
+    let content_h = header_h + item_count as f32 * row_height;
     let (viewport_h, dragging) = cx
         .global::<Registry>()
         .0
@@ -587,7 +643,8 @@ pub(crate) fn smooth_virtual_list(
     );
 
     // 仅渲染可见范围（首行 + 视口内行数，多预读 2 行）。
-    let first = (offset / row_height).floor().max(0.0) as usize;
+    // 头部先占 `header_h`，列表自身从「滚过头部」之后才开始移动。
+    let first = first_visible_row(offset, header_h, row_height);
     let visible = (viewport_h / row_height).ceil() as usize + 2;
     let last = (first + visible).min(item_count);
     let rows = if item_count == 0 || first >= last {
@@ -595,13 +652,30 @@ pub(crate) fn smooth_virtual_list(
     } else {
         render_range(first..last, window, cx)
     };
-    let body = div()
+    let header_el = div()
         .absolute()
-        .top(px(first as f32 * row_height - offset))
+        .top(px(-offset))
+        .left(px(0.0))
+        .right(px(0.0))
+        .h(px(header_h))
+        .overflow_hidden()
+        .child(header.element)
+        .into_any_element();
+    let rows_el = div()
+        .absolute()
+        .top(px(header_h + first as f32 * row_height - offset))
         .left(px(0.0))
         .right(px(0.0))
         .v_flex()
         .children(rows)
+        .into_any_element();
+    let body = div()
+        .absolute()
+        .top(px(0.0))
+        .left(px(0.0))
+        .right(px(0.0))
+        .child(header_el)
+        .child(rows_el)
         .into_any_element();
 
     let mouse = window.mouse_position();
@@ -667,7 +741,7 @@ pub(crate) fn smooth_virtual_list(
 mod tests {
     // 不用 `use super::*`：会把父模块的 `gpui_kit::*` 带进来，
     // 展开 `#[test]` 时撞上默认递归深度上限。
-    use super::{fold_locked, lock_fold, should_unlock_fold, unlock_folds};
+    use super::{first_visible_row, fold_locked, lock_fold, should_unlock_fold, unlock_folds};
 
     #[test]
     fn fold_lock_latches_per_threshold_and_unlocks() {
@@ -688,5 +762,20 @@ mod tests {
         assert!(!should_unlock_fold(5.0, 3.0));
         assert!(!should_unlock_fold(0.0, -3.0));
         assert!(!should_unlock_fold(0.0, 0.0));
+    }
+
+    #[test]
+    fn first_row_waits_until_header_has_scrolled_past() {
+        let (header, row) = (396.0, 52.0);
+        // 头部还没滚完：第一行仍是 0。
+        assert_eq!(first_visible_row(0.0, header, row), 0);
+        assert_eq!(first_visible_row(395.0, header, row), 0);
+        // 正好滚过头部：进入第一行。
+        assert_eq!(first_visible_row(header, header, row), 0);
+        assert_eq!(first_visible_row(header + 1.0, header, row), 0);
+        assert_eq!(first_visible_row(header + row, header, row), 1);
+        assert_eq!(first_visible_row(header + row * 3.0 + 10.0, header, row), 3);
+        // 防御：行高为 0 不除零。
+        assert_eq!(first_visible_row(header + 10.0, header, 0.0), 10);
     }
 }

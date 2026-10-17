@@ -1498,6 +1498,24 @@ thread_local! {
         std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
+/// 滚动越过阈值后淡入（0 → 1）；用于吸顶横栏、横栏播放键等浮层。
+pub(crate) fn fade_after(
+    id: &'static str,
+    scroll_id: &'static str,
+    threshold: f32,
+    window: &mut Window,
+    cx: &mut App,
+) -> f32 {
+    let visible = smooth_scroll::smooth_scroll_offset(scroll_id, cx) > threshold;
+    transition(
+        id,
+        if visible { 1.0f32 } else { 0.0 },
+        Transition::new(motion::HEADER_COLLAPSE).ease(motion::ease_in_out()),
+        window,
+        cx,
+    )
+}
+
 /// 顶部收起因子：0 = 展开，1 = 收起。
 ///
 /// 依据是内容区的平滑滚动偏移（[`smooth_scroll::smooth_scroll_offset`]）是否越过 `threshold`，

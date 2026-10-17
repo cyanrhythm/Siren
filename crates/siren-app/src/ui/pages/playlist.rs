@@ -18,8 +18,8 @@ use siren_core::model::{PlaylistDetail, Song};
 use super::super::components::{overlay_close, overlay_scrim, overlay_scrim_strong, song_row, IndexCell, SongRow};
 use super::super::playback::Playback;
 use super::super::services::{task_failure, Services};
-use super::super::smooth_scroll::{smooth_scroll, smooth_virtual_list};
-use super::super::{collapse_box, column_header, fmt_duration, header_fold, icon, wheel_to_list, Column, PageEvent};
+use super::super::smooth_scroll::{smooth_scroll, smooth_virtual_list_with_header, ListHeader};
+use super::super::{column_header, fade_after, fmt_duration, icon, wheel_to_list, Column, PageEvent};
 use super::dim;
 use crate::theme::{self, spacing};
 use siren_core::player::{PlaySource, PlaySourceKind};
@@ -30,6 +30,8 @@ const HERO_H: f32 = 248.0;
 const ACTION_ROW_H: f32 = 66.0;
 /// 自建歌单「添加 / 名称和详情」胶囊行高度：pill 32 + `pb(14)`。
 const PILLS_H: f32 = 46.0;
+/// 吸顶列头高度（与 `column_header` 的自然高度一致，用于内容坐标定位行）。
+const COLUMN_HEADER_H: f32 = 36.0;
 
 /// 封面裁剪状态。
 struct CropState {
@@ -983,27 +985,6 @@ impl Render for PlaylistPage {
         let edit_desc = self.detail.as_ref().map(|d| d.description.clone()).unwrap_or_default();
         let edit_cover = self.detail.as_ref().map(|d| d.cover_url.clone()).unwrap_or_default();
 
-        // 三阶段收起（对齐 Melodia 的 `showTitleBar` / `showPlayButton` 两个派生状态）：
-        //   一阶段 展开：hero + 操作栏 + 胶囊；
-        //   二阶段 越过 `HEADER_COLLAPSE_AT_PX`：hero 与胶囊收起，顶部只剩「歌单名横栏」，
-        //          操作栏（播放/随机/搜索/排序）仍然可见；
-        //   三阶段 越过 `ACTION_COLLAPSE_AT_PX`：操作栏也收起，横栏补上播放键。
-        // 滚回顶部两级都会平滑复原。
-        let fold_hero = header_fold(
-            "playlist-hero-collapse",
-            "playlist-tracks",
-            dim::HEADER_COLLAPSE_AT_PX,
-            window,
-            cx,
-        );
-        let fold_action = header_fold(
-            "playlist-action-collapse",
-            "playlist-tracks",
-            dim::ACTION_COLLAPSE_AT_PX,
-            window,
-            cx,
-        );
-
         let body: AnyElement = match &self.detail {
             Some(detail) => {
                 let shown = self.shown();
@@ -1037,12 +1018,28 @@ impl Render for PlaylistPage {
                 // 三阶段里它**只在第三阶段**出现——Melodia 用 `showPlayButton`
                 // （操作栏的播放键滚过横栏底边）控制，界面上即「二阶段还能点操作栏的大播放键，
                 // 三阶段才轮到横栏的小播放键」。宽度与透明度一起插值，读起来是横向展开。
+                // 吸顶横栏（对齐 Melodia 的 `PlaylistStickyBar`）：盖在列表顶部，滚过 hero
+                // 后淡入；播放键在操作栏的播放键滚过横栏底边后再出现。
+                let bar_v = fade_after(
+                    "pl-sticky-bar",
+                    "playlist-tracks",
+                    HERO_H - dim::STICKY_BAR_H,
+                    window,
+                    cx,
+                );
+                let play_v = fade_after(
+                    "pl-sticky-play",
+                    "playlist-tracks",
+                    HERO_H + 56.0 - dim::STICKY_BAR_H,
+                    window,
+                    cx,
+                );
                 let weak_bar_play = cx.weak_entity();
                 let bar_play = div()
-                    .w(px(48.0 * fold_action))
+                    .w(px(48.0 * play_v))
                     .flex_none()
                     .overflow_hidden()
-                    .opacity(fold_action)
+                    .opacity(play_v)
                     .child(
                         div()
                             .id("pl-bar-play")
@@ -1066,17 +1063,18 @@ impl Render for PlaylistPage {
                             })
                             .child(icon(IconName::Play, 22.0, theme::text_primary())),
                     );
+                // 底色同 Melodia：用同一封面主色的实色（64px 内渐变会近乎全黑）。
+                let bar_bg = base_color.map(|c| theme::darken(c, 0.42)).unwrap_or_else(theme::pane);
                 let sticky_bar = div()
                     .w_full()
+                    .h_full()
                     .rounded_t(px(theme::RADIUS_MD))
-                    .h(px(dim::STICKY_BAR_H * fold_hero))
-                    .overflow_hidden()
                     .flex()
                     .items_center()
                     .gap(px(spacing::SM))
                     .px(px(spacing::MD))
-                    // 底色同 Melodia：用同一封面主色的实色（不是 hero 的渐变，64px 内渐变会近乎全黑）。
-                    .when_some(base_color.map(|c| theme::darken(c, 0.42)), |el, bg| el.bg(bg))
+                    .bg(bar_bg)
+                    .opacity(bar_v)
                     .child(bar_play)
                     .child(
                         div()
@@ -1089,9 +1087,8 @@ impl Render for PlaylistPage {
                             .child(detail.name.clone()),
                     );
 
-                // 吸顶列头：与曲目行共用列宽（`dim::*`），滚不滚都钉在列表之上
-                //（Melodia 用 stickyHeader + translationY 让表头停在横栏下，Siren 的 hero/操作栏
-                // 是固定区，表头放固定区即可得到同样的吸顶效果）。
+                // 列头：与曲目行共用列宽（`dim::*`）。现在它是滚动内容的一部分，随头部一起滚走；
+                // Melodia 用 `stickyHeader` 把它吸在横栏下，需要的话后续在浮层里补。
                 let column_header = column_header(
                     spacing::XL,
                     &[
@@ -1104,15 +1101,13 @@ impl Render for PlaylistPage {
                     ],
                 );
 
-                // ⚠️ 折叠容器自身**不能带 padding**：高度插值到 0 时 padding 仍会占位，
-                // 收起后就会在横栏上方留下一条空白（`p(XL)` = 48px）。padding 一律放到内层。
+                // hero 固定高度，随内容一起滚走（不再做高度收缩）。
                 let hero = div()
                     .w_full()
                     // 顶部圆角跟着页面外壳走（外壳圆角裁不到子元素自己画的背景，见 page_shell_with_header 注释）。
                     .rounded_t(px(theme::RADIUS_MD))
-                    .h(px(HERO_H * (1.0 - fold_hero)))
+                    .h(px(HERO_H))
                     .overflow_hidden()
-                    .opacity(1.0 - fold_hero)
                     .when_some(hero_bg, |el, bg| el.bg(bg))
                     .child(
                         div()
@@ -1303,6 +1298,25 @@ impl Render for PlaylistPage {
                     div().into_any_element()
                 };
 
+                // 头部整体进滚动内容（对齐 Melodia：hero / 操作栏 / 胶囊 / 列头都是列表首项），
+                // 不再通过收缩改变列表视口——量程恒为「头部 + 行数×行高 − 视口」。
+                let header_h = HERO_H + ACTION_ROW_H + PILLS_H + COLUMN_HEADER_H;
+                let header = div()
+                    .v_flex()
+                    .w_full()
+                    .h(px(header_h))
+                    .child(hero)
+                    .child(div().w_full().h(px(ACTION_ROW_H)).overflow_hidden().child(action_row))
+                    .child(div().w_full().h(px(PILLS_H)).overflow_hidden().child(pills))
+                    .child(
+                        div()
+                            .w_full()
+                            .h(px(COLUMN_HEADER_H))
+                            .overflow_hidden()
+                            .child(column_header),
+                    )
+                    .into_any_element();
+
                 let weak = cx.weak_entity();
                 let covers = self.services.covers.clone();
                 let playback = self.playback.clone();
@@ -1310,18 +1324,24 @@ impl Render for PlaylistPage {
                 let current = self.playback.read(cx).current_song_id();
                 let filter_empty = !self.query.trim().is_empty() && shown.is_empty();
                 let rows: AnyElement = if filter_empty {
-                    div()
-                        .w_full()
-                        .py(px(spacing::XL))
-                        .flex()
-                        .justify_center()
-                        .child(div().text_sm().text_color(theme::text_gray()).child("没有匹配的歌曲"))
-                        .into_any_element()
+                    let content = div().v_flex().w_full().child(header).child(
+                        div()
+                            .w_full()
+                            .py(px(spacing::XL))
+                            .flex()
+                            .justify_center()
+                            .child(div().text_sm().text_color(theme::text_gray()).child("没有匹配的歌曲")),
+                    );
+                    smooth_scroll("playlist-tracks", content, window, cx).into_any_element()
                 } else {
-                    smooth_virtual_list(
+                    smooth_virtual_list_with_header(
                         "playlist-tracks",
                         shown.len(),
                         dim::ROW_H,
+                        ListHeader {
+                            height: header_h,
+                            element: header,
+                        },
                         move |range, _window, cx| {
                             range
                                 .map(|i| {
@@ -1385,6 +1405,13 @@ impl Render for PlaylistPage {
                     .into_any_element()
                 };
 
+                let top_bar = div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .right_0()
+                    .h(px(dim::STICKY_BAR_H))
+                    .when(bar_v > 0.0, |el| el.child(sticky_bar));
                 wheel_to_list(
                     div()
                         .id("pl-body")
@@ -1393,19 +1420,16 @@ impl Render for PlaylistPage {
                         .flex_1()
                         .min_w(px(0.0))
                         .w_full()
-                        .child(hero)
-                    .child(sticky_bar)
-                    // 二阶段：胶囊随 hero 一起收起（Melodia 里胶囊在 header 末段，先滚走）。
-                    .child(collapse_box(fold_hero, PILLS_H, pills))
-                    // 三阶段：操作栏收起——Melodia 的 `showPlayButton` 正是「操作栏播放键滚过横栏」
-                    // 的时刻，此处用同一阈值，收起的动画与横栏播放键的展开同步。
-                    .child(collapse_box(
-                        fold_action,
-                        ACTION_ROW_H,
-                        action_row.into_any_element(),
-                    ))
-                    .child(column_header)
-                    .child(rows),
+                        .child(
+                            div()
+                                .relative()
+                                .v_flex()
+                                .flex_1()
+                                .min_h(px(0.0))
+                                .w_full()
+                                .child(rows)
+                                .child(top_bar),
+                        ),
                     "playlist-tracks",
                 )
                 .into_any_element()
