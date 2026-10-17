@@ -96,6 +96,9 @@ gpui-kit = "0.7"
 lto = true
 codegen-units = 1
 strip = true
+# abort 取舍：发布体积更小、无 unwind 表；代价是任何 panic（含 FFI 边界、越界索引）
+# 都会直接终止进程，只能靠日志定位。因此 release 下**不允许**把 panic 当控制流
+# （如 `unwrap()` 处理可恢复错误）；测试目标不受影响（cargo 对 test/bench 忽略该设置）。
 panic = "abort"
 
 [profile.dev]

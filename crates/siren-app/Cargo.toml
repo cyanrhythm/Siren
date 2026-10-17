@@ -27,6 +27,12 @@ path = "src/main.rs"
 # 产物在 target/release/ 下（NSIS 安装包 *.exe）。
 # libmpv-2.dll 会被放到安装目录、与 siren.exe 同目录（运行时按 `libmpv-2.dll` 加载）。
 # 字体与图标已 include_bytes! 进二进制，无需额外打包。
+#
+# 为什么 resources 用通配而不是写死文件名：
+#   libmpv 体积大且不入库，写死路径会让「全新 clone 直接打包」在 cargo-packager
+#   内部报一个与真实原因无关的错。通配在缺 DLL 时只表示「没有要带的原生库」，
+#   打包照常完成（应用降级为静音模式并在首次播放时提示，见 playback.rs 的
+#   `mpv_missing`），把「发布物要不要带 mpv」变成显式的发布前检查项。
 [package.metadata.packager]
 product-name = "Siren"
 identifier = "com.cyanrhythm.Siren"
@@ -34,7 +40,7 @@ category = "Music"
 description = "网易云音乐第三方桌面客户端（Rust + GPUI）"
 authors = ["cyanrhythm"]
 icons = ["../../assets/icons/siren.ico"]
-resources = ["../../assets/native/windows/bin/libmpv-2.dll"]
+resources = ["../../assets/native/windows/bin/*.dll"]
 before-packaging-command = "cargo build --release -p siren-app"
 formats = ["nsis"]
 

@@ -169,8 +169,16 @@ cargo run --release -p siren-app    # 发布构建（LTO + strip）
 
 ```bash
 cargo install cargo-packager --locked
-# 先把 libmpv-2.dll 放到 assets/native/windows/bin/（该目录不入库）
+# 打包前把 libmpv-2.dll 放到 assets/native/windows/bin/（不入库，说明见 assets/native/windows/README.md）
 cargo packager -p siren-app --release
+```
+
+`resources` 用 `*.dll` 通配而不是写死文件名，所以**全新 clone 也能直接打包**；
+但缺 DLL 时产物没有音频引擎（应用降级为静音模式，首次播放会提示一次）。
+发布前请显式确认素材齐备：
+
+```powershell
+Get-ChildItem assets/native/windows/bin/*.dll
 ```
 
 产物为 NSIS 安装包，输出在 `target/release/`。字体与图标已 `include_bytes!` 进二进制，无需额外打包。
