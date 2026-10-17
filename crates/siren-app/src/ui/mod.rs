@@ -1506,11 +1506,13 @@ pub(crate) fn header_fold(
     id: &'static str,
     scroll_id: &'static str,
     threshold: f32,
+    enabled: bool,
     window: &mut Window,
     cx: &mut App,
 ) -> f32 {
     let offset = smooth_scroll::smooth_scroll_offset(scroll_id, cx);
-    let collapsed = offset > threshold;
+    // `enabled=false`：量程太短，折叠会把偏移钳回阈值以下（见 header_fold_allowed）。
+    let collapsed = enabled && offset > threshold;
     FOLD_LOG.with(|state| {
         let mut state = state.borrow_mut();
         if state.insert(id, collapsed) != Some(collapsed) {

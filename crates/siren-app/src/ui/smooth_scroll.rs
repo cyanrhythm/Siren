@@ -67,6 +67,12 @@ struct Entry {
     bar_bottom: f32,
     /// 最大可滚偏移（正的像素数）。
     max: f32,
+    /// 展开态下的最大可滚偏移（= 内容高 − 展开态视口），供折叠决策使用。
+    max_expanded: f32,
+    /// 页面在本帧写入的头部收起量（列表视口增量）。
+    header_growth: f32,
+    /// 与 `viewport` 同帧记录的收起量：`viewport - growth_for_layout` 才是展开态视口。
+    growth_for_layout: f32,
     /// 滑块长度 / 可移动距离。
     thumb_h: f32,
     travel: f32,
@@ -132,6 +138,32 @@ fn entry_id(name: &'static str) -> ElementId {
 pub(crate) fn smooth_scroll_offset(id: impl Into<ElementId>, cx: &App) -> f32 {
     cx.try_global::<Registry>()
         .and_then(|registry| registry.0.get(&id.into()).map(|entry| entry.offset))
+        .unwrap_or(0.0)
+}
+
+/// 折叠头是否值得启用。
+///
+/// 折叠会增大列表视口、同步缩小量程；若「展开态量程」不足以在收起后仍高过
+/// 折叠阈值，偏移会被钳回阈值以下 → 折叠展开 → 量程复原 → 再折叠，来回振荡，
+/// 底部永远差一截。判据：`展开态量程 > 收起后视口增量 + 操作栏阈值`。
+pub(crate) fn header_fold_allowed(max_expanded: f32, viewport_growth: f32, action_threshold: f32) -> bool {
+    max_expanded > viewport_growth + action_threshold
+}
+
+/// 页面把本帧的头部收起量（列表视口增量）写进来；列表在 prepaint 时与视口一起落账。
+pub(crate) fn set_header_growth(name: &'static str, growth: f32, cx: &mut App) {
+    ensure_registry(cx);
+    cx.global_mut::<Registry>()
+        .0
+        .entry(entry_id(name))
+        .or_default()
+        .header_growth = growth;
+}
+
+/// 展开态最大可滚偏移（最近一次列表渲染写入）。
+pub(crate) fn smooth_scroll_max_expanded(name: &'static str, cx: &App) -> f32 {
+    cx.try_global::<Registry>()
+        .and_then(|registry| registry.0.get(&entry_id(name)).map(|entry| entry.max_expanded))
         .unwrap_or(0.0)
 }
 
@@ -499,16 +531,27 @@ pub(crate) fn smooth_virtual_list(
     let id = entry_id(name);
     ensure_registry(cx);
     let content_h = item_count as f32 * row_height;
-    let (viewport_h, dragging) = cx
-        .global::<Registry>()
-        .0
-        .get(&id)
-        .map_or((0.0, false), |entry| (entry.viewport, entry.dragging));
+    let (viewport_h, dragging, growth_for_layout, growth_now) =
+        cx.global::<Registry>()
+            .0
+            .get(&id)
+            .map_or((0.0, false, 0.0, 0.0), |entry| {
+                (
+                    entry.viewport,
+                    entry.dragging,
+                    entry.growth_for_layout,
+                    entry.header_growth,
+                )
+            });
     let max = (content_h - viewport_h).max(0.0);
+    // 展开态量程：视口与收起量同帧配对，因此与当前折叠进度无关（折叠决策据此）。
+    let max_expanded = (content_h - (viewport_h - growth_for_layout)).max(0.0);
     let target = {
         let entry = cx.global_mut::<Registry>().0.entry(id.clone()).or_default();
         entry.content = content_h;
         entry.max = max;
+        entry.max_expanded = max_expanded;
+        entry.growth_for_layout = growth_now;
         // 写回，避免列表缩短后 target 停留在越界值、视口瞬间跳回旧位置。
         entry.target = entry.target.clamp(0.0, max);
         entry.target
@@ -549,7 +592,7 @@ pub(crate) fn smooth_virtual_list(
         let snap = (item_count, viewport_h as u32, max as u32, target as u32);
         if entry.diag_last != Some(snap) {
             log::debug!(
-                "[{name}] 虚拟列表：{item_count} 行 × {row_height:.0}px = {content_h:.0}；视口 {viewport_h:.0}；max {max:.0}；target {target:.0}；offset {offset:.0}；渲染 {first}..{last}"
+                "[{name}] 虚拟列表：{item_count} 行 × {row_height:.0}px = {content_h:.0}；视口 {viewport_h:.0}；max {max:.0}（展开态 {max_expanded:.0}，收起 {growth_for_layout:.0}）；target {target:.0}；offset {offset:.0}；渲染 {first}..{last}"
             );
             entry.diag_last = Some(snap);
         }
@@ -597,4 +640,20 @@ pub(crate) fn smooth_virtual_list(
     );
     let bar = (max > 0.5).then(|| scroll_bar(name, thumb_h, thumb_top, opacity).into_any_element());
     scroll_container(name, id, body, bar)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::header_fold_allowed;
+
+    #[test]
+    fn fold_gate_requires_collapsed_range_to_clear_action_threshold() {
+        // 判据：展开态量程 > 视口增量(296) + 操作栏阈值(80) = 376。
+        // 等于 376 时收起后偏移正好是 80，不满足 `> 阈值`，仍会来回振荡 → 禁用。
+        assert!(!header_fold_allowed(376.0, 296.0, 80.0));
+        assert!(!header_fold_allowed(200.0, 296.0, 80.0));
+        assert!(!header_fold_allowed(0.0, 296.0, 80.0));
+        assert!(header_fold_allowed(376.5, 296.0, 80.0));
+        assert!(header_fold_allowed(1000.0, 296.0, 80.0));
+    }
 }

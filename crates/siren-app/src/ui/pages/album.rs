@@ -153,6 +153,7 @@ impl Render for AlbumPage {
             "album-header-collapse",
             "album-tracks",
             dim::HEADER_COLLAPSE_AT_PX,
+            true,
             window,
             cx,
         );
