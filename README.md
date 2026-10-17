@@ -196,6 +196,15 @@ Get-ChildItem assets/native/windows/bin/*.dll
 
 产物为 NSIS 安装包，输出在 `target/release/`。字体与图标已 `include_bytes!` 进二进制，无需额外打包。
 
+### 打包（Arch Linux）
+
+`resources/package/archlinux/` 下有 `siren-git` 的 PKGBUILD、桌面文件与说明：
+
+```bash
+cd resources/package/archlinux
+makepkg -si
+```
+
 ### 环境变量
 
 | 变量 | 作用 |

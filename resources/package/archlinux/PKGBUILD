@@ -1,0 +1,65 @@
+# Maintainer: cyanrhythm <alicecats@qq.com>
+# 从 GitHub 当前 HEAD 构建；项目尚未发版，因此用 -git 包。
+pkgname=siren-git
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Unofficial NetEase Cloud Music desktop client (Rust + GPUI)'
+arch=('x86_64')
+url='https://github.com/cyanrhythm/Siren'
+license=('MIT')
+depends=(
+    'gcc-libs'
+    'libglvnd'
+    'libxcb'
+    'libxkbcommon'
+    'libxkbcommon-x11'
+    'vulkan-icd-loader'
+    'wayland'
+)
+makedepends=(
+    'freetype2'
+    'git'
+    'pkgconf'
+    'rust'
+)
+optdepends=(
+    'mesa: OpenGL rendering fallback'
+    'mpv: audio playback (loads libmpv at runtime)'
+    'noto-fonts-cjk: CJK UI fonts'
+    'xdg-desktop-portal: file dialogs and opening links'
+)
+provides=('siren')
+conflicts=('siren')
+# 默认跟随上游默认分支；要构建开发分支，把 source 改成
+# "$pkgname::git+$url.git#branch=dev"。
+source=("$pkgname::git+$url.git"
+        'siren.desktop')
+sha256sums=('SKIP'
+            'SKIP')
+
+pkgver() {
+    cd "$pkgname" || exit 1
+    local version
+    version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n1)
+    # pkgver 不允许连字符（预发布版本号里的 - 换成 _）。
+    version=${version//-/_}
+    printf '%s.r%s.g%s' "$version" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+build() {
+    cd "$pkgname" || exit 1
+    export CARGO_TARGET_DIR="$srcdir/target"
+    cargo build --release --locked -p siren-app
+}
+
+# 测试由 CI（fmt / clippy / cargo test）负责，这里跳过以免构建时间翻倍。
+package() {
+    cd "$pkgname" || exit 1
+    install -Dm755 "$srcdir/target/release/siren" "$pkgdir/usr/bin/siren"
+    install -Dm644 assets/icons/siren.svg \
+        "$pkgdir/usr/share/icons/hicolor/scalable/apps/siren.svg"
+    # 文件名与 app_id 一致，Wayland 下桌面环境才能匹配到图标/分组。
+    install -Dm644 "$srcdir/siren.desktop" \
+        "$pkgdir/usr/share/applications/com.cyanrhythm.Siren.desktop"
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

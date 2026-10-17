@@ -1,0 +1,16 @@
+[Desktop Entry]
+Type=Application
+Name=Siren
+Name[zh_CN]=Siren
+GenericName=Music Player
+GenericName[zh_CN]=音乐播放器
+Comment=Unofficial NetEase Cloud Music desktop client
+Comment[zh_CN]=网易云音乐第三方桌面客户端
+Exec=siren
+Icon=siren
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+Keywords=music;netease;cloud;player;
+Keywords[zh_CN]=音乐;网易云;播放器;
+StartupNotify=true
+StartupWMClass=com.cyanrhythm.Siren
