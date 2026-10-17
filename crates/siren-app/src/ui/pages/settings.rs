@@ -4,6 +4,7 @@
 
 use gpui_kit::assets::IconName;
 use gpui_kit::base::StyledExt;
+use gpui_kit::component::button::Button;
 use gpui_kit::component::slider::Slider;
 use gpui_kit::component::switch::Switch;
 use gpui_kit::prelude::FluentBuilder as _;
@@ -139,11 +140,59 @@ impl Root {
                 "正在播放卡片",
                 "右侧面板卡片的顺序与显隐",
                 self.cards_control(weak.clone(), cx),
+            ))
+            .child(section(
+                "图片缓存",
+                "封面与头像的内存缓存：上限 64 MB，超出后按最近使用淘汰",
+                self.cache_control(weak.clone()),
             ));
 
         let scroll = smooth_scroll("settings-scroll", content, window, cx);
 
         page_shell("设置".to_string(), scroll.into_any_element()).into_any_element()
+    }
+
+    /// 图片缓存占用与清除入口。
+    fn cache_control(&self, weak: WeakEntity<Self>) -> AnyElement {
+        let stats = self.services.covers.stats();
+        let rss = siren_platform::rss_bytes()
+            .map(|bytes| format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0)))
+            .unwrap_or_else(|| "—".to_string());
+        let usage = format!(
+            "{} 张 · 约 {:.1} MB（压缩 {:.1} MB + 解码 {:.1} MB）· 进程 RSS {}",
+            stats.entries,
+            stats.total_mb(),
+            stats.compressed_bytes as f64 / (1024.0 * 1024.0),
+            stats.decoded_bytes as f64 / (1024.0 * 1024.0),
+            rss
+        );
+        let weak_clear = weak;
+        div()
+            .w_full()
+            .flex()
+            .items_center()
+            .gap(px(spacing::MD))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .text_sm()
+                    .text_color(theme::text_primary())
+                    .child(usage),
+            )
+            .child(
+                Button::new("clear-cover-cache")
+                    .label("清除图片缓存")
+                    .on_click(move |_ev, _window, cx| {
+                        weak_clear
+                            .update(cx, |root, cx| {
+                                root.services.covers.clear(cx);
+                                cx.notify();
+                            })
+                            .ok();
+                    }),
+            )
+            .into_any_element()
     }
 
     /// 关闭到托盘设置当前值。

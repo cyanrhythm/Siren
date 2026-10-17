@@ -28,7 +28,7 @@ use gpui_kit::component::Icon;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use siren_core::model::Playlist;
+use siren_core::model::{Playlist, Song};
 use siren_core::network::client::NeteaseClient;
 
 use crate::theme;
@@ -73,6 +73,35 @@ pub(crate) fn min_window_size(np_width: f32) -> (f32, f32) {
     // 会差之毫厘被挤到下一行，导致最小尺寸下只显示一张卡片。
     let w = LIBRARY_W + SHELL_CHROME + PAGE_PAD + CARD_W * 2.0 + CARD_GAP + np_width + 8.0;
     (w, w * 0.618)
+}
+
+/// 队列封面预取顺序：当前曲优先，再向两侧扩散。
+///
+/// 预取受并发上限约束（`CoverLoader` 内部信号量），顺序决定谁先占用连接：
+/// 先填当前曲附近的可见行，长队列尾部慢慢补。
+fn queue_cover_order(items: &[Song], current: Option<usize>) -> Vec<String> {
+    let Some(current) = current.filter(|c| *c < items.len()) else {
+        return items.iter().map(|s| s.cover_url.clone()).collect();
+    };
+    let mut out = Vec::with_capacity(items.len());
+    out.push(items[current].cover_url.clone());
+    let mut d = 1;
+    while out.len() < items.len() {
+        let mut pushed = false;
+        if current >= d {
+            out.push(items[current - d].cover_url.clone());
+            pushed = true;
+        }
+        if current + d < items.len() {
+            out.push(items[current + d].cover_url.clone());
+            pushed = true;
+        }
+        if !pushed {
+            break;
+        }
+        d += 1;
+    }
+    out
 }
 
 /// 关闭主窗口时是否最小化到托盘（供引导期 `on_window_should_close` 使用；无 store 时按否）。
@@ -360,6 +389,8 @@ pub(crate) struct NowPlayingUi {
     pub(crate) simi_page: usize,
     /// 已为哪首歌预取过播放封面（避免重复预取）。
     pub(crate) cover_song: Option<i64>,
+    /// 最近一次渲染的大封面边长（逻辑 px）：切歌预取据此出档，与渲染同源。
+    pub(crate) cover_px: std::cell::Cell<f32>,
 }
 
 /// 主窗口根组件：导航与外壳。
@@ -429,6 +460,8 @@ impl Root {
             .or_else(siren_core::auth::load_cookie);
         let client = Arc::new(NeteaseClient::with_cookie(cookie));
         let covers = CoverLoader::new(client.clone(), handle.clone());
+        // 首帧之前就有预取（如冷启动恢复队列），先按窗口 DPR 初始化。
+        covers.set_dpr(window.scale_factor());
         let notifications = Notifications::new(cx);
         let services = Services {
             client,
@@ -573,6 +606,7 @@ impl Root {
                     album_page: 0,
                     simi_page: 0,
                     cover_song: None,
+                    cover_px: std::cell::Cell::new((np_width - 28.0).clamp(220.0, 420.0)),
                 },
                 np_width_slider,
                 login: LoginDialogState {
@@ -614,6 +648,32 @@ impl Root {
         if std::env::var("SIREN_START").ok().as_deref() == Some("account") {
             root.update(cx, |root, cx| root.open_account(cx));
         }
+        // 图片缓存：每 60s 记一次占用并顺带淘汰一次。
+        // `remove_asset` 只能在 UI 线程调用，所以淘汰挂在 GPUI 任务里而不是 tokio 任务。
+        root.update(cx, |_root, cx| {
+            cx.spawn(async move |this, cx| loop {
+                cx.background_executor().timer(std::time::Duration::from_secs(60)).await;
+                let alive = this.update(cx, |root, cx| {
+                    let stats = root.services.covers.stats();
+                    root.services.covers.evict(cx);
+                    let rss = siren_platform::rss_bytes()
+                        .map(|b| format!("{:.1} MB", b as f64 / (1024.0 * 1024.0)))
+                        .unwrap_or_else(|| "—".to_string());
+                    log::info!(
+                        "图片缓存：{} 张，压缩 {:.1} MB + 解码约 {:.1} MB = {:.1} MB；进程 RSS {}",
+                        stats.entries,
+                        stats.compressed_bytes as f64 / (1024.0 * 1024.0),
+                        stats.decoded_bytes as f64 / (1024.0 * 1024.0),
+                        stats.total_mb(),
+                        rss
+                    );
+                });
+                if alive.is_err() {
+                    break;
+                }
+            })
+            .detach();
+        });
         root
     }
 
@@ -658,7 +718,8 @@ impl Root {
         }
     }
 
-    /// 播放状态变化：切歌时预取其封面（播放条 56 / 正在播放栏 220），并重绘外壳。
+    /// 播放状态变化：切歌时预取封面（播放条 56 始终取；右栏大封面仅展开时取，
+    /// 尺寸取自 `now_playing` 上一次实际渲染值），并重绘外壳。
     fn on_playback(&mut self, playback: Entity<Playback>, cx: &mut Context<Self>) {
         let song = playback.read(cx).state().song;
         let id = song.as_ref().map(|s| s.id);
@@ -666,7 +727,11 @@ impl Root {
             self.np.cover_song = id;
             if let Some(song) = &song {
                 self.services.covers.prefetch([song.cover_url.clone()], 56.0, cx);
-                self.services.covers.prefetch([song.cover_url.clone()], 512.0, cx);
+                // 大封面只在右栏展开时预取：折叠态只渲染 44px 竖条，取了也没人看。
+                if self.np.open {
+                    let px = self.np.cover_px.get();
+                    self.services.covers.prefetch([song.cover_url.clone()], px, cx);
+                }
             }
             // 切歌：评论面板归属旧歌时关闭，避免新旧歌评论混列表（J6）。
             if self.comments.open && self.comments.song_id != id {
@@ -680,10 +745,9 @@ impl Root {
             let sig = (st.queue_len, st.current_index, st.song.as_ref().map(|s| s.id));
             if self.queue_cover_sig != Some(sig) {
                 self.queue_cover_sig = Some(sig);
-                let (items, _) = playback.read(cx).queue_snapshot();
-                self.services
-                    .covers
-                    .prefetch(items.iter().map(|s| s.cover_url.clone()), 40.0, cx);
+                let (items, current) = playback.read(cx).queue_snapshot();
+                let urls = queue_cover_order(&items, current);
+                self.services.covers.prefetch_bulk(urls, 40.0, cx);
             }
         }
         // 切歌：当前页面实体补一次 notify，驱动页面内的「当前播放」高亮刷新。
@@ -738,9 +802,8 @@ impl Root {
         let (items, current) = self.playback.read(cx).queue_snapshot();
         let song_id = current.and_then(|c| items.get(c)).map(|s| s.id);
         self.queue_cover_sig = Some((items.len(), current, song_id));
-        self.services
-            .covers
-            .prefetch(items.iter().map(|s| s.cover_url.clone()), 40.0, cx);
+        let urls = queue_cover_order(&items, current);
+        self.services.covers.prefetch_bulk(urls, 40.0, cx);
         if !items.is_empty() {
             self.scroll_queue_to_current(cx);
         }
@@ -1100,6 +1163,13 @@ impl Root {
     /// 收起 / 展开正在播放栏。
     fn toggle_now_playing(&mut self, cx: &mut Context<Self>) {
         self.np.open = !self.np.open;
+        if self.np.open {
+            // 折叠期间不预取大封面，展开时对当前曲补一次。
+            if let Some(song) = self.playback.read(cx).state().song {
+                let px = self.np.cover_px.get();
+                self.services.covers.prefetch([song.cover_url.clone()], px, cx);
+            }
+        }
         cx.notify();
     }
 
@@ -1164,6 +1234,8 @@ impl Render for Root {
         let client_decorated = matches!(window.window_decorations(), Decorations::Client { .. });
         let pads = gpui_kit::component::window_paddings(window);
         let vw = f32::from(window.viewport_size().width) - f32::from(pads.left) - f32::from(pads.right);
+        // DPR 可能随窗口跨屏变化：每帧写入，保证预取与渲染用同一套键。
+        self.services.covers.set_dpr(window.scale_factor());
         let weak = cx.weak_entity();
         let weak_page = cx.weak_entity();
         let weak_login = cx.weak_entity();
@@ -1664,5 +1736,59 @@ mod nav_tests {
         assert!(nav.forward());
         assert_eq!(nav.route(), pl(3));
         assert!(!nav.forward());
+    }
+}
+
+#[cfg(test)]
+mod queue_cover_tests {
+    // 不用 `use super::*`：会把父模块的 `gpui_kit::*` 带进来，`#[test]` 展开撞递归上限。
+    use super::queue_cover_order;
+    use siren_core::model::Song;
+
+    fn song(id: i64) -> Song {
+        Song {
+            id,
+            name: format!("s{id}"),
+            artists: String::new(),
+            album: String::new(),
+            cover_url: format!("cover-{id}"),
+            duration_ms: 0,
+            publish_time: 0,
+            artist_ids: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn no_current_keeps_original_order() {
+        let items: Vec<Song> = (0..4).map(song).collect();
+        assert_eq!(
+            queue_cover_order(&items, None),
+            vec!["cover-0", "cover-1", "cover-2", "cover-3"]
+        );
+    }
+
+    #[test]
+    fn current_first_then_outwards() {
+        let items: Vec<Song> = (0..5).map(song).collect();
+        assert_eq!(
+            queue_cover_order(&items, Some(2)),
+            vec!["cover-2", "cover-1", "cover-3", "cover-0", "cover-4"]
+        );
+    }
+
+    #[test]
+    fn edges_and_out_of_range_do_not_drop_items() {
+        let items: Vec<Song> = (0..3).map(song).collect();
+        // 当前在末尾：先末尾，再向前。
+        assert_eq!(
+            queue_cover_order(&items, Some(2)),
+            vec!["cover-2", "cover-1", "cover-0"]
+        );
+        // 越界/空队列：退回原顺序（不 panic、不丢条目）。
+        assert_eq!(
+            queue_cover_order(&items, Some(9)),
+            vec!["cover-0", "cover-1", "cover-2"]
+        );
+        assert!(queue_cover_order(&[], Some(0)).is_empty());
     }
 }

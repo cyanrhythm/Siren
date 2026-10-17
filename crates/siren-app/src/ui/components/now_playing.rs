@@ -59,6 +59,8 @@ impl Root {
         let vw = f32::from(window.viewport_size().width) - f32::from(pads.left) - f32::from(pads.right);
         let np_width = self.np_effective_w(vw, cx);
         let cover_size = (np_width - 28.0).clamp(220.0, 420.0);
+        // 记录实际渲染尺寸：切歌预取据此出档，避免再写死 512 导致档位错配。
+        self.np.cover_px.set(cover_size);
         let cover: AnyElement = match &song {
             Some(s) => self.services.covers.image(&s.cover_url, cover_size),
             None => cover_placeholder(200.0).into_any_element(),
