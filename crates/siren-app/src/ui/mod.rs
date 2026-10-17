@@ -1009,6 +1009,9 @@ impl Root {
 
     /// 创建歌单详情页实体（不触碰导航栈；供 `open_*` 与 `back`/`forward` 复用）。
     fn make_playlist_page(&mut self, id: i64, name: String, cx: &mut Context<Self>) {
+        // 滚动状态按名字存活在全局 registry 里，换歌单必须显式归零，
+        // 否则新歌单会继承上一个歌单的滚动位置与头部收起量。
+        smooth_scroll::smooth_scroll_reset("playlist-tracks", cx);
         let filter = self.pl_filter_input.clone();
         let add_input = self.pl_add_input.clone();
         let my_uid = Session::uid(cx);
@@ -1501,7 +1504,7 @@ thread_local! {
 /// 用 kit 的 `transition` 插值——可逆（滚回顶部自动展开），且自动尊重系统「减少动态效果」。
 /// `id` 需**逐页唯一**：同一 view 内重复的元素 id 会触发 gpui 的 a11y 断言。
 ///
-/// 歌单页用两个阈值做三阶段收起（见 `pages::dim::ACTION_COLLAPSE_AT_PX`）。
+/// 专辑/歌手页按该阈值收起 hero；歌单页改用 `smooth_virtual_list_with_header` 的收起量驱动。
 pub(crate) fn header_fold(
     id: &'static str,
     scroll_id: &'static str,

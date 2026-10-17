@@ -18,8 +18,10 @@ use siren_core::model::{PlaylistDetail, Song};
 use super::super::components::{overlay_close, overlay_scrim, overlay_scrim_strong, song_row, IndexCell, SongRow};
 use super::super::playback::Playback;
 use super::super::services::{task_failure, Services};
-use super::super::smooth_scroll::{smooth_scroll, smooth_virtual_list};
-use super::super::{collapse_box, column_header, fmt_duration, header_fold, icon, wheel_to_list, Column, PageEvent};
+use super::super::smooth_scroll::{
+    smooth_scroll, smooth_scroll_collapse, smooth_virtual_list_with_header, HeaderCollapse,
+};
+use super::super::{collapse_box, column_header, fmt_duration, icon, wheel_to_list, Column, PageEvent};
 use super::dim;
 use crate::theme::{self, spacing};
 use siren_core::player::{PlaySource, PlaySourceKind};
@@ -28,6 +30,11 @@ use siren_core::player::{PlaySource, PlaySourceKind};
 const HERO_H: f32 = 248.0;
 /// 操作栏高度：播放键 56 + `pb(10)`。
 const ACTION_ROW_H: f32 = 66.0;
+
+/// 头部收起第一阶段（hero + 胶囊 − 横栏）让出的高度。
+const HERO_COLLAPSE_H: f32 = HERO_H + PILLS_H - dim::STICKY_BAR_H;
+/// 头部完全收起让出的总高度（再叠加操作栏）。
+const HEADER_COLLAPSE_H: f32 = HERO_COLLAPSE_H + ACTION_ROW_H;
 /// 自建歌单「添加 / 名称和详情」胶囊行高度：pill 32 + `pb(14)`。
 const PILLS_H: f32 = 46.0;
 
@@ -983,26 +990,15 @@ impl Render for PlaylistPage {
         let edit_desc = self.detail.as_ref().map(|d| d.description.clone()).unwrap_or_default();
         let edit_cover = self.detail.as_ref().map(|d| d.cover_url.clone()).unwrap_or_default();
 
-        // 三阶段收起（对齐 Melodia 的 `showTitleBar` / `showPlayButton` 两个派生状态）：
-        //   一阶段 展开：hero + 操作栏 + 胶囊；
-        //   二阶段 越过 `HEADER_COLLAPSE_AT_PX`：hero 与胶囊收起，顶部只剩「歌单名横栏」，
-        //          操作栏（播放/随机/搜索/排序）仍然可见；
-        //   三阶段 越过 `ACTION_COLLAPSE_AT_PX`：操作栏也收起，横栏补上播放键。
-        // 滚回顶部两级都会平滑复原。
-        let fold_hero = header_fold(
-            "playlist-hero-collapse",
-            "playlist-tracks",
-            dim::HEADER_COLLAPSE_AT_PX,
-            window,
-            cx,
-        );
-        let fold_action = header_fold(
-            "playlist-action-collapse",
-            "playlist-tracks",
-            dim::ACTION_COLLAPSE_AT_PX,
-            window,
-            cx,
-        );
+        // 三阶段收起（对齐 Melodia 的 `showTitleBar` / `showPlayButton` 两个派生状态）。
+        //
+        // 收起量由滚动模型给出（`smooth_virtual_list_with_header`）：滚动先收头、收满后
+        // 列表才滚。**不再用「列表偏移 vs 阈值」判断折叠**——折叠会改变列表视口，视口又
+        // 反向改变量程，二者互锁会让底部停在不可达位置（日志里的「滚动量程反复伸缩」）。
+        // 现在量程恒定，收起量随滚动单调变化，滚回顶部自然复原。
+        let collapse = smooth_scroll_collapse("playlist-tracks", cx);
+        let fold_hero = (collapse / HERO_COLLAPSE_H).clamp(0.0, 1.0);
+        let fold_action = ((collapse - HERO_COLLAPSE_H) / ACTION_ROW_H).clamp(0.0, 1.0);
 
         let body: AnyElement = match &self.detail {
             Some(detail) => {
@@ -1318,10 +1314,14 @@ impl Render for PlaylistPage {
                         .child(div().text_sm().text_color(theme::text_gray()).child("没有匹配的歌曲"))
                         .into_any_element()
                 } else {
-                    smooth_virtual_list(
+                    smooth_virtual_list_with_header(
                         "playlist-tracks",
                         shown.len(),
                         dim::ROW_H,
+                        HeaderCollapse {
+                            max: HEADER_COLLAPSE_H,
+                            collapse,
+                        },
                         move |range, _window, cx| {
                             range
                                 .map(|i| {
