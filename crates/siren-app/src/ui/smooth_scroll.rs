@@ -59,14 +59,6 @@ struct Entry {
     offset: f32,
     /// 内容高（`smooth_scroll` 在 prepaint 量得；虚拟列表按行高×数量直接给）。
     content: f32,
-    /// 可收起头部的总高度（列表视口在头部完全收起后增加的高度；0 = 无折叠头）。
-    header_max: f32,
-    /// 当前已收起的头部高度（页面据此设置头部各段高度）。
-    collapse: f32,
-    /// 与 `viewport` 同帧的收起量：`viewport - layout_collapse` 才是展开态视口。
-    layout_collapse: f32,
-    /// 总滚动位移 = 头部收起 + 列表滚动；滚动条按它定位。
-    scroll: f32,
     /// 视口高（prepaint 量得）。
     viewport: f32,
     /// 滚动条命中区（窗口坐标）：左右上下。
@@ -97,7 +89,6 @@ struct Entry {
     diag_at: Option<Instant>,
     diag_dir: i8,
     diag_flips: u32,
-    diag_warned: bool,
 }
 
 impl Entry {
@@ -107,7 +98,7 @@ impl Entry {
 
     fn thumb_top(&self) -> f32 {
         if self.max > 0.0 {
-            (self.scroll / self.max).clamp(0.0, 1.0) * self.travel
+            (self.offset / self.max).clamp(0.0, 1.0) * self.travel
         } else {
             0.0
         }
@@ -505,94 +496,31 @@ pub(crate) fn smooth_virtual_list(
     window: &mut Window,
     cx: &mut App,
 ) -> impl IntoElement {
-    virtual_list_impl(
-        name,
-        item_count,
-        row_height,
-        HeaderCollapse::default(),
-        render_range,
-        window,
-        cx,
-    )
-}
-
-/// 带「可收起头部」的虚拟列表。
-///
-/// `header_max` = 头部完全收起后**列表视口增加的高度**（各段收起量之和）。滚动量程
-/// 按「展开态视口」计算，把收起头部当作滚动过程的第一段：先收头（列表不动），
-/// 收满后列表才滚。于是 `max` 与折叠进度无关，彻底消除
-/// 「折叠改变视口 → 量程变小 → 折叠阈值不可达 → 来回振荡 → 底部不可达」的反馈回路。
-///
-/// 页面用 [`smooth_scroll_collapse`] 读当前收起量，据此设置头部各段高度（差一帧，不可见）。
-pub(crate) fn smooth_virtual_list_with_header(
-    name: &'static str,
-    item_count: usize,
-    row_height: f32,
-    header: HeaderCollapse,
-    render_range: impl Fn(Range<usize>, &mut Window, &mut App) -> Vec<AnyElement> + 'static,
-    window: &mut Window,
-    cx: &mut App,
-) -> impl IntoElement {
-    virtual_list_impl(name, item_count, row_height, header, render_range, window, cx)
-}
-
-/// 折叠头的两项状态：完全收起后的视口增量、以及当前帧布局使用的收起量。
-#[derive(Clone, Copy, Default)]
-pub(crate) struct HeaderCollapse {
-    /// 头部完全收起后列表视口增加的总高度（0 = 无折叠头）。
-    pub max: f32,
-    /// 当前帧头部实际收起的高度（页面上一帧从 [`smooth_scroll_collapse`] 读到的值）。
-    pub collapse: f32,
-}
-
-/// 滚动量程：内容高 −「展开态视口」。`viewport_h` 已随头部收起而变大，减去 `collapse`
-/// 才是展开态视口，因此结果与当前折叠进度无关（恒定）。
-fn header_scroll_max(content_h: f32, viewport_h: f32, collapse: f32) -> f32 {
-    let view_expanded = (viewport_h - collapse).max(0.0);
-    (content_h - view_expanded).max(0.0)
-}
-
-fn virtual_list_impl(
-    name: &'static str,
-    item_count: usize,
-    row_height: f32,
-    header: HeaderCollapse,
-    render_range: impl Fn(Range<usize>, &mut Window, &mut App) -> Vec<AnyElement> + 'static,
-    window: &mut Window,
-    cx: &mut App,
-) -> impl IntoElement {
     let id = entry_id(name);
     ensure_registry(cx);
     let content_h = item_count as f32 * row_height;
-    let (viewport_h, dragging, layout_collapse) =
-        cx.global::<Registry>().0.get(&id).map_or((0.0, false, 0.0), |entry| {
-            (entry.viewport, entry.dragging, entry.layout_collapse)
-        });
-    // `viewport` 与 `layout_collapse` 同帧记录：相减得到展开态视口，量程因此恒定。
-    let max = header_scroll_max(content_h, viewport_h, layout_collapse);
-    let (header_max, collapse) = (header.max, header.collapse);
+    let (viewport_h, dragging) = cx
+        .global::<Registry>()
+        .0
+        .get(&id)
+        .map_or((0.0, false), |entry| (entry.viewport, entry.dragging));
+    let max = (content_h - viewport_h).max(0.0);
     let target = {
         let entry = cx.global_mut::<Registry>().0.entry(id.clone()).or_default();
         entry.content = content_h;
-        entry.header_max = header_max;
         entry.max = max;
         // 写回，避免列表缩短后 target 停留在越界值、视口瞬间跳回旧位置。
         entry.target = entry.target.clamp(0.0, max);
         entry.target
     };
     let ease = if dragging { Duration::ZERO } else { SCROLL_EASE };
-    // `scroll` 是「头部收起 + 列表滚动」的总位移；`offset` 只是列表自己的偏移。
-    let scroll = transition(
+    let offset = transition(
         (id.clone(), "scroll"),
         target,
         Transition::new(ease).ease(motion::ease_out()),
         window,
         cx,
     );
-    // 本帧的头部布局用的是传入的 `collapse`，列表位移必须与它对齐，否则会差一帧错位。
-    let offset = (scroll - collapse).max(0.0);
-    // 下一帧页面据此设置头部高度（滚动动画因此逐帧推进）。
-    let next_collapse = scroll.clamp(0.0, header_max.max(0.0));
 
     // 仅渲染可见范围（首行 + 视口内行数，多预读 2 行）。
     let first = (offset / row_height).floor().max(0.0) as usize;
@@ -614,25 +542,18 @@ fn virtual_list_impl(
 
     let mouse = window.mouse_position();
     let active = window.is_window_active();
-    // 滚动条按「头部完全展开时的总内容 / 头部完全收起时的总视口」算：
-    // 两者都是常量，滑块长度不会随折叠动画伸缩。
-    let total_content = content_h + header_max.max(0.0);
-    let total_viewport = viewport_h + (header_max.max(0.0) - collapse).max(0.0);
     let (bar_visible, thumb_top, thumb_h) = {
         let entry = cx.global_mut::<Registry>().0.entry(id.clone()).or_default();
         entry.offset = offset;
-        entry.scroll = scroll;
-        entry.collapse = next_collapse;
-        entry.layout_collapse = collapse;
-        // ── 诊断日志：布局（行数/视口/量程/目标/收起量）变化时才输出 ──
+        // ── 诊断日志：布局（行数/视口/量程/目标）变化时才输出，滚动本身不刷屏 ──
         let snap = (item_count, viewport_h as u32, max as u32, target as u32);
         if entry.diag_last != Some(snap) {
             log::debug!(
-                "[{name}] 虚拟列表：{item_count} 行 × {row_height:.0}px = {content_h:.0}；视口 {viewport_h:.0}；max {max:.0}；target {target:.0}；scroll {scroll:.0}；收起 {collapse:.0}；offset {offset:.0}；渲染 {first}..{last}"
+                "[{name}] 虚拟列表：{item_count} 行 × {row_height:.0}px = {content_h:.0}；视口 {viewport_h:.0}；max {max:.0}；target {target:.0}；offset {offset:.0}；渲染 {first}..{last}"
             );
             entry.diag_last = Some(snap);
         }
-        // 量程抖动检测：修复后 max 应恒定；若仍在变，说明另有反馈源。
+        // 量程抖动检测：折叠头由偏移驱动、折叠又改变列表视口，量程会来回变。
         let now = Instant::now();
         match entry.diag_at {
             None => {
@@ -640,11 +561,10 @@ fn virtual_list_impl(
                 entry.diag_max = max;
             }
             Some(at) if (max - entry.diag_max).abs() > 4.0 => {
-                // 只有「方向反复」才算抖动；正常内容变化是单调的。
+                // 只有「方向反复」才算抖动；折叠动画期间量程单调收缩，方向不变。
                 let dir = if max > entry.diag_max { 1 } else { -1 };
                 if now.duration_since(at) >= Duration::from_secs(1) {
                     entry.diag_flips = 0;
-                    entry.diag_warned = false;
                 }
                 if entry.diag_dir != 0 && dir != entry.diag_dir {
                     entry.diag_flips = entry.diag_flips.wrapping_add(1);
@@ -652,17 +572,16 @@ fn virtual_list_impl(
                 entry.diag_dir = dir;
                 entry.diag_max = max;
                 entry.diag_at = Some(now);
-                if entry.diag_flips == 3 && !entry.diag_warned {
-                    entry.diag_warned = true;
+                if entry.diag_flips == 3 {
                     let flips = entry.diag_flips;
                     log::warn!(
-                        "[{name}] 滚动量程在 1s 内反复伸缩（方向翻转 {flips} 次，当前 max {max:.0}）。若折叠头已接入 header_max，说明还有别的反馈源。"
+                        "[{name}] 滚动量程在 1s 内反复伸缩（方向翻转 {flips} 次，当前 max {max:.0}）。常见根因：折叠头由滚动偏移驱动，折叠又改变列表视口 → 量程来回收缩，底部可能不可达。"
                     );
                 }
             }
             Some(_) => {}
         }
-        let (thumb_h, travel) = thumb_geometry(total_viewport, total_content);
+        let (thumb_h, travel) = thumb_geometry(viewport_h, content_h);
         entry.thumb_h = thumb_h;
         entry.travel = travel;
         // 以真实光标位置为准（离开窗口后不再更新，故结合窗口是否激活）。
@@ -678,64 +597,4 @@ fn virtual_list_impl(
     );
     let bar = (max > 0.5).then(|| scroll_bar(name, thumb_h, thumb_top, opacity).into_any_element());
     scroll_container(name, id, body, bar)
-}
-
-/// 清零某个滚动区（换页/换歌单时调用）：目标、位移、收起量一并归零，不等缓动。
-pub(crate) fn smooth_scroll_reset(name: &'static str, cx: &mut App) {
-    ensure_registry(cx);
-    if let Some(entry) = cx.global_mut::<Registry>().0.get_mut(&entry_id(name)) {
-        entry.target = 0.0;
-        entry.offset = 0.0;
-        entry.scroll = 0.0;
-        entry.collapse = 0.0;
-        entry.layout_collapse = 0.0;
-        entry.pending = None;
-        entry.bar_hover = false;
-        entry.dragging = false;
-        entry.drag_grab = None;
-    }
-}
-
-/// 当前头部已收起的像素数（未使用折叠头的滚动区返回 0）。
-pub(crate) fn smooth_scroll_collapse(name: &'static str, cx: &App) -> f32 {
-    cx.try_global::<Registry>()
-        .and_then(|registry| registry.0.get(&entry_id(name)).map(|entry| entry.collapse))
-        .unwrap_or(0.0)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::header_scroll_max;
-
-    #[test]
-    fn header_scroll_max_stays_constant_while_header_collapses() {
-        let content = 1500.0;
-        let view_expanded = 600.0;
-        for collapse in [0.0, 40.0, 120.0, 230.0, 296.0] {
-            // 头部收起多少，列表视口就长多少。
-            let viewport = view_expanded + collapse;
-            assert_eq!(
-                header_scroll_max(content, viewport, collapse),
-                content - view_expanded,
-                "collapse={collapse} 时量程不应变化"
-            );
-        }
-    }
-
-    #[test]
-    fn short_content_is_revealed_purely_by_collapsing_header() {
-        // 内容比展开态视口高 100：量程 100，全部由「收头」吃掉，列表本身不滚。
-        let (content, view_expanded) = (700.0, 600.0);
-        let max = header_scroll_max(content, view_expanded, 0.0);
-        assert_eq!(max, 100.0);
-        let collapse = max.min(296.0);
-        assert_eq!(view_expanded + collapse, content);
-    }
-
-    #[test]
-    fn transient_viewport_smaller_than_collapse_is_not_negative() {
-        // 视口测量落后于收起量（一帧）时，展开态视口按 0 处理，量程不得为负。
-        assert_eq!(header_scroll_max(500.0, 24.0, 296.0), 500.0);
-        assert_eq!(header_scroll_max(0.0, 0.0, 0.0), 0.0);
-    }
 }

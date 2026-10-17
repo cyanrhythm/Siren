@@ -26,6 +26,11 @@ pub(crate) mod dim {
     pub(crate) const STICKY_BAR_H: f32 = 64.0;
     /// 内容区滚动超过该偏移即收起顶部 hero（滚回顶部再展开）。
     pub(crate) const HEADER_COLLAPSE_AT_PX: f32 = 8.0;
+    /// 歌单页三阶段收起的第二阶段阈值：越过它操作栏（播放/随机/搜索/排序）收起、横栏出现播放键。
+    ///
+    /// 差值取自 Melodia：`showTitleBar` 与 `showPlayButton` 两个派生状态之间正好隔着一个
+    /// `ActionBarVerticalPadding + PlayButtonSize = 16 + 56 = 72dp`，即「操作栏的播放键滚过横栏底边」。
+    pub(crate) const ACTION_COLLAPSE_AT_PX: f32 = HEADER_COLLAPSE_AT_PX + 72.0;
 }
 
 mod account;
