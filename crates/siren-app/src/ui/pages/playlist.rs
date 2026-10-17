@@ -18,9 +18,7 @@ use siren_core::model::{PlaylistDetail, Song};
 use super::super::components::{overlay_close, overlay_scrim, overlay_scrim_strong, song_row, IndexCell, SongRow};
 use super::super::playback::Playback;
 use super::super::services::{task_failure, Services};
-use super::super::smooth_scroll::{
-    header_fold_allowed, set_header_growth, smooth_scroll, smooth_scroll_max_expanded, smooth_virtual_list,
-};
+use super::super::smooth_scroll::{smooth_scroll, smooth_virtual_list};
 use super::super::{collapse_box, column_header, fmt_duration, header_fold, icon, wheel_to_list, Column, PageEvent};
 use super::dim;
 use crate::theme::{self, spacing};
@@ -30,9 +28,6 @@ use siren_core::player::{PlaySource, PlaySourceKind};
 const HERO_H: f32 = 248.0;
 /// 操作栏高度：播放键 56 + `pb(10)`。
 const ACTION_ROW_H: f32 = 66.0;
-
-/// 头部完全收起后列表视口增加的高度：hero + 胶囊 + 操作栏 − 收起后出现的横栏。
-const HEADER_GROWTH: f32 = HERO_H + PILLS_H + ACTION_ROW_H - dim::STICKY_BAR_H;
 /// 自建歌单「添加 / 名称和详情」胶囊行高度：pill 32 + `pb(14)`。
 const PILLS_H: f32 = 46.0;
 
@@ -994,41 +989,20 @@ impl Render for PlaylistPage {
         //          操作栏（播放/随机/搜索/排序）仍然可见；
         //   三阶段 越过 `ACTION_COLLAPSE_AT_PX`：操作栏也收起，横栏补上播放键。
         // 滚回顶部两级都会平滑复原。
-        // 短歌单不折叠：展开态量程不足以在收起后仍高过操作栏阈值时，折叠会把偏移钳回
-        // 阈值以下 → 量程复原 → 再折叠，来回振荡，底部反而不可达（日志 1af9177 的实证）。
-        // 判据：收起后剩下的量程仍大于操作栏阈值，折叠才稳定。
-        let fold_allowed = header_fold_allowed(
-            smooth_scroll_max_expanded("playlist-tracks", cx),
-            HEADER_GROWTH,
-            dim::ACTION_COLLAPSE_AT_PX,
+        let fold_hero = header_fold(
+            "playlist-hero-collapse",
+            "playlist-tracks",
+            dim::HEADER_COLLAPSE_AT_PX,
+            window,
+            cx,
         );
-        let fold_hero = if fold_allowed {
-            header_fold(
-                "playlist-hero-collapse",
-                "playlist-tracks",
-                dim::HEADER_COLLAPSE_AT_PX,
-                fold_allowed,
-                window,
-                cx,
-            )
-        } else {
-            0.0
-        };
-        let fold_action = if fold_allowed {
-            header_fold(
-                "playlist-action-collapse",
-                "playlist-tracks",
-                dim::ACTION_COLLAPSE_AT_PX,
-                fold_allowed,
-                window,
-                cx,
-            )
-        } else {
-            0.0
-        };
-        // 本帧头部实际让出的高度：写给列表，与视口同帧配对算出「展开态量程」。
-        let header_growth = (HERO_H + PILLS_H - dim::STICKY_BAR_H) * fold_hero + ACTION_ROW_H * fold_action;
-        set_header_growth("playlist-tracks", header_growth, cx);
+        let fold_action = header_fold(
+            "playlist-action-collapse",
+            "playlist-tracks",
+            dim::ACTION_COLLAPSE_AT_PX,
+            window,
+            cx,
+        );
 
         let body: AnyElement = match &self.detail {
             Some(detail) => {
