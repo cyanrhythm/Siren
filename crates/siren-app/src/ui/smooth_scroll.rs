@@ -135,6 +135,64 @@ pub(crate) fn smooth_scroll_offset(id: impl Into<ElementId>, cx: &App) -> f32 {
         .unwrap_or(0.0)
 }
 
+// 折叠锁：`(滚动区, 阈值)` → 已收起。
+//
+// 收起会把高度还给列表视口、量程同步缩小；若偏移因此被钳回阈值以下，折叠会展开、
+// 量程复原，再次越过阈值——形成闭环振荡，底部不可达。锁存后「收起」只由用户
+// 向上滚到顶部并继续上滚来解除（见 `should_unlock_fold`）。
+thread_local! {
+    static FOLD_LOCKS: std::cell::RefCell<HashMap<(&'static str, u32), bool>> =
+        std::cell::RefCell::new(HashMap::new());
+}
+
+fn fold_key(scroll_id: &'static str, threshold: f32) -> (&'static str, u32) {
+    (scroll_id, threshold.to_bits())
+}
+
+/// 该滚动区的这个折叠阈值当前是否已锁定为收起。
+pub(crate) fn fold_locked(scroll_id: &'static str, threshold: f32) -> bool {
+    FOLD_LOCKS.with(|locks| {
+        locks
+            .borrow()
+            .get(&fold_key(scroll_id, threshold))
+            .copied()
+            .unwrap_or(false)
+    })
+}
+
+/// 锁定为收起（阈值一旦越过就锁存到解锁为止）。
+pub(crate) fn lock_fold(scroll_id: &'static str, threshold: f32) {
+    FOLD_LOCKS.with(|locks| {
+        locks.borrow_mut().insert(fold_key(scroll_id, threshold), true);
+    });
+}
+
+/// 解除该滚动区的全部折叠锁（顶部继续上滚 / 换页时调用）。
+pub(crate) fn unlock_folds(scroll_id: &'static str) {
+    FOLD_LOCKS.with(|locks| {
+        locks.borrow_mut().retain(|(id, _), _| *id != scroll_id);
+    });
+}
+
+/// 顶部继续向上滚时解除折叠锁；否则收起后的头部无法复原。
+fn should_unlock_fold(offset: f32, dy: f32) -> bool {
+    dy > 0.0 && offset <= 1.0
+}
+
+/// 清零某个滚动区的滚动位置并解除折叠锁（换页/换列表时调用）。
+pub(crate) fn smooth_scroll_reset(name: &'static str, cx: &mut App) {
+    unlock_folds(name);
+    ensure_registry(cx);
+    if let Some(entry) = cx.global_mut::<Registry>().0.get_mut(&entry_id(name)) {
+        entry.target = 0.0;
+        entry.offset = 0.0;
+        entry.pending = None;
+        entry.bar_hover = false;
+        entry.dragging = false;
+        entry.drag_grab = None;
+    }
+}
+
 /// 置「滚动后驻留」并（重新）安排驻留结束；用于滚轮、拖动等任何应显形滚动条的操作。
 fn reveal_bar(name: &'static str, window: &mut Window, cx: &mut App) {
     let gen = {
@@ -278,6 +336,9 @@ fn scroll_bar(name: &'static str, thumb_h: f32, thumb_top: f32, opacity: f32) ->
 pub(crate) fn smooth_scroll_by(name: &'static str, dy: f32, window: &mut Window, cx: &mut App) {
     {
         let entry = cx.global_mut::<Registry>().0.entry(entry_id(name)).or_default();
+        if should_unlock_fold(entry.offset, dy) {
+            unlock_folds(name);
+        }
         if entry.max <= 0.0 {
             log::debug!("[{name}] 滚轮转发被忽略：max={:.0}（内容未量出或不足一屏）", entry.max);
             return;
@@ -324,6 +385,9 @@ fn on_wheel(name: &'static str, event: &ScrollWheelEvent, window: &mut Window, c
     cx.stop_propagation();
     {
         let entry = cx.global_mut::<Registry>().0.entry(entry_id(name)).or_default();
+        if should_unlock_fold(entry.offset, dy) {
+            unlock_folds(name);
+        }
         let before = entry.target;
         entry.target = (entry.target - dy).clamp(0.0, entry.max);
         if (entry.target - before).abs() > 0.01 {
@@ -597,4 +661,32 @@ pub(crate) fn smooth_virtual_list(
     );
     let bar = (max > 0.5).then(|| scroll_bar(name, thumb_h, thumb_top, opacity).into_any_element());
     scroll_container(name, id, body, bar)
+}
+
+#[cfg(test)]
+mod tests {
+    // 不用 `use super::*`：会把父模块的 `gpui_kit::*` 带进来，
+    // 展开 `#[test]` 时撞上默认递归深度上限。
+    use super::{fold_locked, lock_fold, should_unlock_fold, unlock_folds};
+
+    #[test]
+    fn fold_lock_latches_per_threshold_and_unlocks() {
+        unlock_folds("test-scroll");
+        assert!(!fold_locked("test-scroll", 8.0));
+        lock_fold("test-scroll", 8.0);
+        assert!(fold_locked("test-scroll", 8.0));
+        // 同一滚动区的另一个阈值独立（hero 收起时操作栏不该跟着锁）。
+        assert!(!fold_locked("test-scroll", 80.0));
+        unlock_folds("test-scroll");
+        assert!(!fold_locked("test-scroll", 8.0));
+    }
+
+    #[test]
+    fn unlock_only_when_scrolling_up_at_the_top() {
+        assert!(should_unlock_fold(0.0, 3.0));
+        assert!(should_unlock_fold(1.0, 3.0));
+        assert!(!should_unlock_fold(5.0, 3.0));
+        assert!(!should_unlock_fold(0.0, -3.0));
+        assert!(!should_unlock_fold(0.0, 0.0));
+    }
 }

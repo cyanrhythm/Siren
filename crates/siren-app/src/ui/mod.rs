@@ -1009,6 +1009,8 @@ impl Root {
 
     /// 创建歌单详情页实体（不触碰导航栈；供 `open_*` 与 `back`/`forward` 复用）。
     fn make_playlist_page(&mut self, id: i64, name: String, cx: &mut Context<Self>) {
+        // 新歌单：滚动位置与折叠锁归零（registry 按名字存活，跨页会继承）。
+        smooth_scroll::smooth_scroll_reset("playlist-tracks", cx);
         let filter = self.pl_filter_input.clone();
         let add_input = self.pl_add_input.clone();
         let my_uid = Session::uid(cx);
@@ -1032,6 +1034,7 @@ impl Root {
     }
 
     fn make_album_page(&mut self, id: i64, name: String, cx: &mut Context<Self>) {
+        smooth_scroll::smooth_scroll_reset("album-tracks", cx);
         let page = cx.new(|cx| AlbumPage::new(cx, self.services.clone(), self.playback.clone(), id, name));
         let sub = cx.subscribe(&page, |root: &mut Root, _e, ev: &PageEvent, cx| {
             root.on_page_event(ev, cx)
@@ -1510,7 +1513,13 @@ pub(crate) fn header_fold(
     cx: &mut App,
 ) -> f32 {
     let offset = smooth_scroll::smooth_scroll_offset(scroll_id, cx);
-    let collapsed = offset > threshold;
+    // 越过阈值即锁存为收起：折叠会让视口变大、量程变小，偏移可能被钳回阈值以下，
+    // 此时若跟着展开就会形成「展开→量程变大→再收起」的振荡，底部反而不可达。
+    let locked = smooth_scroll::fold_locked(scroll_id, threshold);
+    let collapsed = locked || offset > threshold;
+    if collapsed && !locked {
+        smooth_scroll::lock_fold(scroll_id, threshold);
+    }
     FOLD_LOG.with(|state| {
         let mut state = state.borrow_mut();
         if state.insert(id, collapsed) != Some(collapsed) {
