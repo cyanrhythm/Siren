@@ -32,6 +32,11 @@ const ACTION_ROW_H: f32 = 66.0;
 const PILLS_H: f32 = 46.0;
 /// 吸顶列头高度（与 `column_header` 的自然高度一致，用于内容坐标定位行）。
 const COLUMN_HEADER_H: f32 = 36.0;
+/// 横栏出现阈值：大标题（约 64px）的底边滚到横栏下沿时就出现。
+///
+/// 不用 `HERO_H - STICKY_BAR_H`（=184）：那是「整个 hero 滚完」才出现，标题离开后
+/// 顶部会空一段、感觉横栏来晚了。减去标题高度 ≈ 提前一行标题的距离。
+const STICKY_BAR_AT_PX: f32 = HERO_H - dim::STICKY_BAR_H - 64.0;
 
 /// 封面裁剪状态。
 struct CropState {
@@ -1011,22 +1016,10 @@ impl Render for PlaylistPage {
                 let base_color = self.services.covers.color(&detail.cover_url);
                 let hero_bg = base_color.map(theme::cover_backdrop);
 
-                // 随曲目区滚动收起 hero（对齐 Melodia 的 `PlaylistStickyBar`）：
-                // 滚过阈值后大封面让位给「封面取色底 + 歌单名」的紧凑横栏，把纵向空间还给曲目表；
-                // 滚回顶部平滑展开。`transition` 可逆，且尊重系统「减少动态效果」。
-                // 横栏里的播放键（对齐 Melodia `StickyPlayButtonSize = 48.dp`）：
-                // 三阶段里它**只在第三阶段**出现——Melodia 用 `showPlayButton`
-                // （操作栏的播放键滚过横栏底边）控制，界面上即「二阶段还能点操作栏的大播放键，
-                // 三阶段才轮到横栏的小播放键」。宽度与透明度一起插值，读起来是横向展开。
-                // 吸顶横栏（对齐 Melodia 的 `PlaylistStickyBar`）：盖在列表顶部，滚过 hero
-                // 后淡入；播放键在操作栏的播放键滚过横栏底边后再出现。
-                let bar_v = fade_after(
-                    "pl-sticky-bar",
-                    "playlist-tracks",
-                    HERO_H - dim::STICKY_BAR_H,
-                    window,
-                    cx,
-                );
+                // 吸顶横栏（对齐 Melodia 的 `PlaylistStickyBar`）：盖在列表顶部，大标题
+                // 滚到横栏下沿时淡入；播放键（`StickyPlayButtonSize = 48.dp`）在操作栏的
+                // 播放键滚过横栏底边后再出现（`showPlayButton`），宽度与透明度一起插值。
+                let bar_v = fade_after("pl-sticky-bar", "playlist-tracks", STICKY_BAR_AT_PX, window, cx);
                 let play_v = fade_after(
                     "pl-sticky-play",
                     "playlist-tracks",
