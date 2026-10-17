@@ -22,7 +22,7 @@ use super::super::components::{
 use super::super::playback::Playback;
 use super::super::services::{task_failure, Services};
 use super::super::smooth_scroll::{smooth_scroll, smooth_virtual_list_with_header, ListHeader};
-use super::super::{column_header, fade_after, fmt_duration, icon, wheel_to_list, Column, PageEvent};
+use super::super::{column_header, fade_after, fmt_duration, icon, Column, PageEvent};
 use super::dim;
 use crate::theme::{self, spacing};
 use siren_core::player::{PlaySource, PlaySourceKind};
@@ -1370,18 +1370,16 @@ impl Render for PlaylistPage {
                     .into_any_element()
                 };
 
-                wheel_to_list(
-                    div()
-                        .id("pl-body")
-                        .flex()
-                        .flex_col()
-                        .flex_1()
-                        .min_w(px(0.0))
-                        .w_full()
-                        .child(rows),
-                    "playlist-tracks",
-                )
-                .into_any_element()
+                // 列表已铺满整页并自行处理滚轮，故不再需要 body 级的滚轮转发。
+                div()
+                    .id("pl-body")
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .w_full()
+                    .child(rows)
+                    .into_any_element()
             }
             None => {
                 if self.failed {
