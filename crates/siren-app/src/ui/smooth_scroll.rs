@@ -18,7 +18,7 @@
 
 use std::collections::HashMap;
 use std::ops::Range;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gpui_kit::base::{transition, ElementExt, StyledExt as _, Transition};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -82,6 +82,13 @@ struct Entry {
     dragging: bool,
     /// 待生效的目标偏移：内容尚未量出（max=0）时先挂起，首帧量出后恢复（N5.6）。
     pending: Option<f32>,
+    /// 诊断：上次输出的（行数, 视口, 量程, 目标）快照，仅变化时打日志。
+    diag_last: Option<(usize, u32, u32, u32)>,
+    /// 诊断：量程抖动追踪（上次 max / 时刻 / 方向 / 近 1s 方向翻转次数）。
+    diag_max: f32,
+    diag_at: Option<Instant>,
+    diag_dir: i8,
+    diag_flips: u32,
 }
 
 impl Entry {
@@ -272,9 +279,16 @@ pub(crate) fn smooth_scroll_by(name: &'static str, dy: f32, window: &mut Window,
     {
         let entry = cx.global_mut::<Registry>().0.entry(entry_id(name)).or_default();
         if entry.max <= 0.0 {
+            log::debug!("[{name}] 滚轮转发被忽略：max={:.0}（内容未量出或不足一屏）", entry.max);
             return;
         }
+        let before = entry.target;
         entry.target = (entry.target - dy).clamp(0.0, entry.max);
+        log::debug!(
+            "[{name}] 滚轮转发 dy={dy:.1}：target {before:.0} → {:.0}（max {:.0}）",
+            entry.target,
+            entry.max
+        );
     }
     reveal_bar(name, window, cx);
     window.refresh();
@@ -310,7 +324,15 @@ fn on_wheel(name: &'static str, event: &ScrollWheelEvent, window: &mut Window, c
     cx.stop_propagation();
     {
         let entry = cx.global_mut::<Registry>().0.entry(entry_id(name)).or_default();
+        let before = entry.target;
         entry.target = (entry.target - dy).clamp(0.0, entry.max);
+        if (entry.target - before).abs() > 0.01 {
+            log::debug!(
+                "[{name}] 滚轮 dy={dy:.1}：target {before:.0} → {:.0}（max {:.0}）",
+                entry.target,
+                entry.max
+            );
+        }
     }
     reveal_bar(name, window, cx);
     window.refresh();
@@ -523,6 +545,42 @@ pub(crate) fn smooth_virtual_list(
     let (bar_visible, thumb_top, thumb_h) = {
         let entry = cx.global_mut::<Registry>().0.entry(id.clone()).or_default();
         entry.offset = offset;
+        // ── 诊断日志：布局（行数/视口/量程/目标）变化时才输出，滚动本身不刷屏 ──
+        let snap = (item_count, viewport_h as u32, max as u32, target as u32);
+        if entry.diag_last != Some(snap) {
+            log::debug!(
+                "[{name}] 虚拟列表：{item_count} 行 × {row_height:.0}px = {content_h:.0}；视口 {viewport_h:.0}；max {max:.0}；target {target:.0}；offset {offset:.0}；渲染 {first}..{last}"
+            );
+            entry.diag_last = Some(snap);
+        }
+        // 量程抖动检测：折叠头由偏移驱动、折叠又改变列表视口，量程会来回变。
+        let now = Instant::now();
+        match entry.diag_at {
+            None => {
+                entry.diag_at = Some(now);
+                entry.diag_max = max;
+            }
+            Some(at) if (max - entry.diag_max).abs() > 4.0 => {
+                // 只有「方向反复」才算抖动；折叠动画期间量程单调收缩，方向不变。
+                let dir = if max > entry.diag_max { 1 } else { -1 };
+                if now.duration_since(at) >= Duration::from_secs(1) {
+                    entry.diag_flips = 0;
+                }
+                if entry.diag_dir != 0 && dir != entry.diag_dir {
+                    entry.diag_flips = entry.diag_flips.wrapping_add(1);
+                }
+                entry.diag_dir = dir;
+                entry.diag_max = max;
+                entry.diag_at = Some(now);
+                if entry.diag_flips == 3 {
+                    let flips = entry.diag_flips;
+                    log::warn!(
+                        "[{name}] 滚动量程在 1s 内反复伸缩（方向翻转 {flips} 次，当前 max {max:.0}）。常见根因：折叠头由滚动偏移驱动，折叠又改变列表视口 → 量程来回收缩，底部可能不可达。"
+                    );
+                }
+            }
+            Some(_) => {}
+        }
         let (thumb_h, travel) = thumb_geometry(viewport_h, content_h);
         entry.thumb_h = thumb_h;
         entry.travel = travel;

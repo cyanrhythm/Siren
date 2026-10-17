@@ -1489,6 +1489,12 @@ pub(crate) fn wheel_to_list(el: Stateful<Div>, list: &'static str) -> Stateful<D
     })
 }
 
+thread_local! {
+    /// 诊断：上一次的折叠状态，仅在翻转时打一行日志（用于定位滚动量程抖动）。
+    static FOLD_LOG: std::cell::RefCell<std::collections::HashMap<&'static str, bool>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
 /// 顶部收起因子：0 = 展开，1 = 收起。
 ///
 /// 依据是内容区的平滑滚动偏移（[`smooth_scroll::smooth_scroll_offset`]）是否越过 `threshold`，
@@ -1503,7 +1509,14 @@ pub(crate) fn header_fold(
     window: &mut Window,
     cx: &mut App,
 ) -> f32 {
-    let collapsed = smooth_scroll::smooth_scroll_offset(scroll_id, cx) > threshold;
+    let offset = smooth_scroll::smooth_scroll_offset(scroll_id, cx);
+    let collapsed = offset > threshold;
+    FOLD_LOG.with(|state| {
+        let mut state = state.borrow_mut();
+        if state.insert(id, collapsed) != Some(collapsed) {
+            log::debug!("[{scroll_id}] 头部折叠 {collapsed}：偏移 {offset:.0} / 阈值 {threshold:.0}");
+        }
+    });
     transition(
         id,
         if collapsed { 1.0f32 } else { 0.0 },
