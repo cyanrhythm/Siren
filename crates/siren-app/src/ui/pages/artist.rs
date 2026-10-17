@@ -13,7 +13,7 @@ use siren_core::model::{Artist, ArtistAlbum, ArtistDetail, Song};
 use super::super::components::{song_row, IndexCell, SongRow};
 use super::super::motion;
 use super::super::playback::Playback;
-use super::super::services::Services;
+use super::super::services::{task_failure, Services};
 use super::super::smooth_scroll::{smooth_scroll, smooth_scroll_offset};
 use super::super::{fmt_date, hint, icon, load_error, PageEvent};
 use super::dim;
@@ -134,18 +134,16 @@ impl ArtistPage {
         let id = self.id;
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.services.handle.spawn(async move {
-            let ok = siren_core::network::api::artist_follow(&client, id, follow)
-                .await
-                .is_ok();
-            let _ = tx.send(ok);
+            let _ = tx.send(siren_core::network::api::artist_follow(&client, id, follow).await);
         });
         cx.spawn(async move |this, cx| {
-            let ok = rx.await.unwrap_or(false);
+            let result = rx.await;
+            let failure = task_failure(&result, "关注歌手");
             this.update(cx, |this, cx| {
-                if !ok {
+                if let Some(msg) = failure {
                     this.followed = !follow;
                     this.fans += if follow { -1 } else { 1 };
-                    this.services.toast_error("关注歌手失败，请重试", cx);
+                    this.services.toast_error(msg, cx);
                 } else {
                     this.services
                         .toast(if follow { "已关注歌手" } else { "已取消关注" }, cx);

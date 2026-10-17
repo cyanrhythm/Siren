@@ -12,11 +12,12 @@ use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+use siren_core::error::ResultExt;
 use siren_core::model::{PlaylistDetail, Song};
 
 use super::super::components::{overlay_close, overlay_scrim, overlay_scrim_strong, song_row, IndexCell, SongRow};
 use super::super::playback::Playback;
-use super::super::services::Services;
+use super::super::services::{task_failure, Services};
 use super::super::smooth_scroll::{smooth_scroll, smooth_virtual_list};
 use super::super::{collapse_box, column_header, fmt_duration, header_fold, icon, wheel_to_list, Column, PageEvent};
 use super::dim;
@@ -176,7 +177,7 @@ impl PlaylistPage {
             let t = std::time::Instant::now();
             let mut detail = siren_core::network::api::playlist_detail(&client, id)
                 .await
-                .ok()
+                .ok_or_warn("加载歌单详情")
                 .flatten();
             log::info!("[playlist] id={id} playlist/detail 用时 {:?}", t.elapsed());
             // 曲目被截断时，按 trackIds 分批补全（对齐 Melodia PlaylistTrackPaging）
@@ -275,15 +276,16 @@ impl PlaylistPage {
         let id = self.id;
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.services.handle.spawn(async move {
-            let ok = siren_core::network::api::playlist_subscribe(&client, id, subscribe)
-                .await
-                .is_ok();
-            let _ = tx.send(ok);
+            let _ = tx.send(siren_core::network::api::playlist_subscribe(&client, id, subscribe).await);
         });
         cx.spawn(async move |this, cx| {
-            let ok = rx.await.unwrap_or(false);
+            let result = rx.await;
+            let failure = task_failure(&result, "收藏歌单");
             this.update(cx, |this, cx| {
-                if ok {
+                if let Some(msg) = failure {
+                    this.subscribed = !subscribe;
+                    this.services.toast_error(msg, cx);
+                } else {
                     this.services.toast(
                         if subscribe {
                             "已收藏歌单"
@@ -292,9 +294,6 @@ impl PlaylistPage {
                         },
                         cx,
                     );
-                } else {
-                    this.subscribed = !subscribe;
-                    this.services.toast_error("收藏歌单失败，请重试", cx);
                 }
                 cx.notify();
             })
@@ -309,18 +308,16 @@ impl PlaylistPage {
         let pid = self.id;
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.services.handle.spawn(async move {
-            let ok = siren_core::network::api::playlist_delete_tracks(&client, pid, &[song_id])
-                .await
-                .is_ok();
-            let _ = tx.send(ok);
+            let _ = tx.send(siren_core::network::api::playlist_delete_tracks(&client, pid, &[song_id]).await);
         });
         cx.spawn(async move |this, cx| {
-            let ok = rx.await.unwrap_or(false);
+            let result = rx.await;
+            let failure = task_failure(&result, "移除歌曲");
             this.update(cx, |this, cx| {
-                if ok {
-                    this.load(cx);
+                if let Some(msg) = failure {
+                    this.services.toast_error(msg, cx);
                 } else {
-                    this.services.toast_error("移除歌曲失败，请重试", cx);
+                    this.load(cx);
                 }
             })
             .ok();
@@ -486,12 +483,23 @@ impl PlaylistPage {
                 .and_then(|e| e.to_str())
                 .unwrap_or("jpg")
                 .to_lowercase();
-            let Ok(bytes) = std::fs::read(&path) else { return };
+            let Ok(bytes) = std::fs::read(&path) else {
+                // 选图后无声返回会让用户以为「点了没反应」：读失败必须给出反馈。
+                log::warn!("读取封面文件失败: {}", path.display());
+                this.update(cx, |this, cx| this.services.toast_error("无法读取该图片", cx))
+                    .ok();
+                return;
+            };
             let Ok(decoded) = image::load_from_memory(&bytes) else {
+                log::warn!("解码封面失败（格式不支持？）: {}", path.display());
+                this.update(cx, |this, cx| this.services.toast_error("不支持的图片格式", cx))
+                    .ok();
                 return;
             };
             let (sw, sh) = (decoded.width() as f32, decoded.height() as f32);
             if sw <= 0.0 || sh <= 0.0 {
+                this.update(cx, |this, cx| this.services.toast_error("图片尺寸无效", cx))
+                    .ok();
                 return;
             }
             let max = 440.0_f32;
@@ -597,23 +605,38 @@ impl PlaylistPage {
                     let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, 90);
                     enc.encode_image(&rgb).ok().map(|_| buf)
                 });
-                let res = match bytes {
-                    Some(bytes) => {
-                        siren_core::network::api::update_playlist_cover(&client, pid, bytes, "jpg", "cover.jpg")
-                            .await
-                            .ok()
-                    }
+                // 三层语义：外层 None = 通道断开，内层 None = 本地图片处理失败，
+                // 内层 Err = 接口失败——三者给用户的提示不同。
+                let res: Option<siren_core::Result<String>> = match bytes {
+                    Some(bytes) => Some(
+                        siren_core::network::api::update_playlist_cover(&client, pid, bytes, "jpg", "cover.jpg").await,
+                    ),
                     None => None,
                 };
                 let _ = tx.send(res);
             });
-            let res = rx.await.ok().flatten();
+            let res = rx.await.ok();
+            let failure = match &res {
+                Some(Some(Ok(_))) => None,
+                Some(Some(Err(err))) => {
+                    log::warn!("更新歌单封面失败：{err}");
+                    Some(err.user_message())
+                }
+                Some(None) => {
+                    log::warn!("更新歌单封面失败：图片编码失败");
+                    Some("图片处理失败，请换一张图片")
+                }
+                None => {
+                    log::warn!("更新歌单封面：任务未返回（通道断开）");
+                    Some("操作未完成，请重试")
+                }
+            };
             this.update(cx, |this, cx| {
-                if res.is_some() {
+                if let Some(msg) = failure {
+                    this.services.toast_error(msg, cx);
+                } else {
                     this.load(cx);
                     cx.emit(PageEvent::PlaylistChanged);
-                } else {
-                    this.services.toast_error("封面更新失败，请重试", cx);
                 }
                 cx.notify();
             })
@@ -751,18 +774,16 @@ impl PlaylistPage {
         cx.emit(PageEvent::PlaylistChanged);
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.services.handle.spawn(async move {
-            let ok = siren_core::network::api::playlist_subscribe(&client, id, false)
-                .await
-                .is_ok();
-            let _ = tx.send(ok);
+            let _ = tx.send(siren_core::network::api::playlist_subscribe(&client, id, false).await);
         });
         cx.spawn(async move |this, cx| {
-            let ok = rx.await.unwrap_or(false);
-            if !ok {
+            let result = rx.await;
+            let failure = task_failure(&result, "移出歌单");
+            if let Some(msg) = failure {
                 // 云端失败则回滚乐观更新并提示。
                 this.update(cx, |this, cx| {
                     this.subscribed = true;
-                    this.services.toast_error("移出歌单失败，请重试", cx);
+                    this.services.toast_error(msg, cx);
                     cx.emit(PageEvent::PlaylistChanged);
                     cx.notify();
                 })
@@ -793,7 +814,7 @@ impl PlaylistPage {
         self.services.handle.spawn(async move {
             let songs = siren_core::network::api::cloud_search(&client, &keyword, 1, 20)
                 .await
-                .ok()
+                .ok_or_warn("搜索云盘")
                 .map(|v| siren_core::model::parse_search_songs(&v))
                 .unwrap_or_default();
             let _ = tx.send(songs);
@@ -819,18 +840,16 @@ impl PlaylistPage {
         let pid = self.id;
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.services.handle.spawn(async move {
-            let ok = siren_core::network::api::playlist_add_tracks(&client, pid, &[song_id])
-                .await
-                .is_ok();
-            let _ = tx.send(ok);
+            let _ = tx.send(siren_core::network::api::playlist_add_tracks(&client, pid, &[song_id]).await);
         });
         cx.spawn(async move |this, cx| {
-            let ok = rx.await.unwrap_or(false);
+            let result = rx.await;
+            let failure = task_failure(&result, "添加歌曲");
             this.update(cx, |this, cx| {
-                if ok {
-                    this.add_results.retain(|s| s.id != song_id);
+                if let Some(msg) = failure {
+                    this.services.toast_error(msg, cx);
                 } else {
-                    this.services.toast_error("添加歌曲失败，请重试", cx);
+                    this.add_results.retain(|s| s.id != song_id);
                 }
                 cx.notify();
             })

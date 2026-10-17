@@ -9,6 +9,7 @@ use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+use super::super::services::task_failure;
 use super::super::session::Session;
 use super::super::smooth_scroll::smooth_scroll;
 use super::super::{Root, Route, PLAYLIST_PAGE};
@@ -187,19 +188,19 @@ impl Root {
         let client = self.services.client.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.services.handle.spawn(async move {
-            let id = siren_core::network::api::playlist_create(&client, &name, 0).await.ok();
-            let _ = tx.send(id);
+            let _ = tx.send(siren_core::network::api::playlist_create(&client, &name, 0).await);
         });
         self.ops.create_open = false;
         cx.notify();
         cx.spawn(async move |this, cx| {
-            let id = rx.await.ok().flatten();
+            let result = rx.await;
+            let failure = task_failure(&result, "创建歌单");
             this.update(cx, |this, cx| {
-                if id.is_some() {
+                if let Some(msg) = failure {
+                    this.services.toast_error(msg, cx);
+                } else {
                     this.services.toast_success("歌单已创建", cx);
                     this.library.update(cx, |page, cx| page.reload_playlists(cx));
-                } else {
-                    this.services.toast_error("创建歌单失败", cx);
                 }
                 cx.notify();
             })
@@ -236,7 +237,10 @@ impl Root {
                         this.services.covers.prefetch(urls, 48.0, cx);
                     }
                     Some(Err(err)) => this.services.toast_error(err.user_message(), cx),
-                    None => this.services.toast_error("加载歌单失败，请重试", cx),
+                    None => {
+                        log::warn!("加载歌单失败：任务未返回（通道断开）");
+                        this.services.toast_error("加载歌单失败，请重试", cx)
+                    }
                 }
                 cx.notify();
             })
@@ -271,7 +275,10 @@ impl Root {
                         this.services.covers.prefetch(urls, 48.0, cx);
                     }
                     Some(Err(err)) => this.services.toast_error(err.user_message(), cx),
-                    None => this.services.toast_error("加载歌单失败，请重试", cx),
+                    None => {
+                        log::warn!("加载歌单失败：任务未返回（通道断开）");
+                        this.services.toast_error("加载歌单失败，请重试", cx)
+                    }
                 }
                 cx.notify();
             })
@@ -294,22 +301,20 @@ impl Root {
         let client = self.services.client.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.services.handle.spawn(async move {
-            let ok = siren_core::network::api::playlist_add_tracks(&client, pid, &[song])
-                .await
-                .is_ok();
-            let _ = tx.send(ok);
+            let _ = tx.send(siren_core::network::api::playlist_add_tracks(&client, pid, &[song]).await);
         });
         self.ops.picker_song = None;
         cx.notify();
         // 待接口返回后再刷新列表
         cx.spawn(async move |this, cx| {
-            let ok = rx.await.unwrap_or(false);
+            let result = rx.await;
+            let failure = task_failure(&result, "添加到歌单");
             this.update(cx, |this, cx| {
-                if ok {
+                if let Some(msg) = failure {
+                    this.services.toast_error(msg, cx);
+                } else {
                     this.services.toast_success("已添加到歌单", cx);
                     this.library.update(cx, |page, cx| page.reload_playlists(cx));
-                } else {
-                    this.services.toast_error("添加到歌单失败", cx);
                 }
                 cx.notify();
             })
@@ -538,35 +543,34 @@ impl Root {
         let new_name = name.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.services.handle.spawn(async move {
-            let mut ok = true;
-            if !name.is_empty() {
-                ok = ok
-                    && siren_core::network::api::playlist_rename(&client, id, &name)
-                        .await
-                        .is_ok();
+            // 两项都是「非空才提交」，任一失败即整体失败：保留首个错误供提示。
+            let result: siren_core::Result<()> = async {
+                if !name.is_empty() {
+                    siren_core::network::api::playlist_rename(&client, id, &name).await?;
+                }
+                if !desc.is_empty() {
+                    siren_core::network::api::playlist_update_desc(&client, id, &desc).await?;
+                }
+                Ok(())
             }
-            if !desc.is_empty() {
-                ok = ok
-                    && siren_core::network::api::playlist_update_desc(&client, id, &desc)
-                        .await
-                        .is_ok();
-            }
-            let _ = tx.send(ok);
+            .await;
+            let _ = tx.send(result);
         });
         self.ops.edit = None;
         cx.notify();
         // 待接口返回后再刷新列表，并即时更新当前打开歌单页的标题。
         cx.spawn(async move |this, cx| {
-            let ok = rx.await.unwrap_or(false);
+            let result = rx.await;
+            let failure = task_failure(&result, "保存歌单信息");
             this.update(cx, |this, cx| {
-                if ok {
+                if let Some(msg) = failure {
+                    this.services.toast_error(msg, cx);
+                } else {
                     this.services.toast_success("已保存歌单信息", cx);
                     this.library.update(cx, |page, cx| page.reload_playlists(cx));
                     if !new_name.is_empty() {
                         this.update_open_playlist_name(id, &new_name, cx);
                     }
-                } else {
-                    this.services.toast_error("保存失败", cx);
                 }
                 cx.notify();
             })
@@ -595,24 +599,24 @@ impl Root {
         let client = self.services.client.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.services.handle.spawn(async move {
-            let ok = siren_core::network::api::playlist_delete(&client, id).await.is_ok();
-            let _ = tx.send(ok);
+            let _ = tx.send(siren_core::network::api::playlist_delete(&client, id).await);
         });
         self.ops.delete_pid = None;
         DELETE_PNAME.with(|slot| *slot.borrow_mut() = None);
         cx.notify();
         // 待接口返回后再刷新列表；若删除的是当前打开的歌单则返回首页
         cx.spawn(async move |this, cx| {
-            let ok = rx.await.unwrap_or(false);
+            let result = rx.await;
+            let failure = task_failure(&result, "删除歌单");
             this.update(cx, |this, cx| {
-                if ok {
+                if let Some(msg) = failure {
+                    this.services.toast_error(msg, cx);
+                } else {
                     this.services.toast_success("歌单已删除", cx);
                     this.library.update(cx, |page, cx| page.reload_playlists(cx));
                     if matches!(this.route(), Route::Playlist { id: cur, .. } if cur == id) {
                         this.navigate(Route::Home, cx);
                     }
-                } else {
-                    this.services.toast_error("删除歌单失败", cx);
                 }
                 cx.notify();
             })

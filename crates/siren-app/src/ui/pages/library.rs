@@ -12,7 +12,7 @@ use gpui_kit::*;
 
 use siren_core::model::{Album, Artist, Playlist};
 
-use super::super::services::Services;
+use super::super::services::{task_failure, Services};
 use super::super::session::{Account, Session};
 use super::super::smooth_scroll::smooth_virtual_list;
 use super::super::{hint_center, icon, load_error, PageEvent, PLAYLIST_PAGE};
@@ -267,7 +267,7 @@ impl LibraryPage {
                         this.services.covers.prefetch(urls, 48.0, cx);
                     }
                     Some(Err(err)) => this.services.toast_error(err.user_message(), cx),
-                    None => {}
+                    None => log::warn!("我的歌单：任务未返回（通道断开）"),
                 }
                 cx.notify();
             })
@@ -310,7 +310,7 @@ impl LibraryPage {
                         this.services.covers.prefetch(urls, 48.0, cx);
                     }
                     Some(Err(err)) => this.services.toast_error(err.user_message(), cx),
-                    None => {}
+                    None => log::warn!("我的歌单（下一页）：任务未返回（通道断开）"),
                 }
                 cx.notify();
             })
@@ -344,7 +344,7 @@ impl LibraryPage {
                         this.services.covers.prefetch(urls, 48.0, cx);
                     }
                     Some(Err(err)) => this.services.toast_error(err.user_message(), cx),
-                    None => {}
+                    None => log::warn!("收藏的专辑：任务未返回（通道断开）"),
                 }
                 cx.notify();
             })
@@ -378,7 +378,7 @@ impl LibraryPage {
                         this.services.covers.prefetch(urls, 48.0, cx);
                     }
                     Some(Err(err)) => this.services.toast_error(err.user_message(), cx),
-                    None => {}
+                    None => log::warn!("关注的歌手：任务未返回（通道断开）"),
                 }
                 cx.notify();
             })
@@ -660,7 +660,7 @@ impl LibraryPage {
                         this.load_my_playlists(cx);
                     }
                     Some(Err(err)) => this.services.toast_error(err.user_message(), cx),
-                    None => {}
+                    None => log::warn!("置顶歌单：任务未返回（通道断开）"),
                 }
                 cx.notify();
             })
@@ -687,20 +687,18 @@ impl LibraryPage {
         let client = self.services.client.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.services.handle.spawn(async move {
-            let ok = siren_core::network::api::playlist_order_update(&client, &ids)
-                .await
-                .is_ok();
-            let _ = tx.send(ok);
+            let _ = tx.send(siren_core::network::api::playlist_order_update(&client, &ids).await);
         });
         cx.spawn(async move |this, cx| {
-            let ok = rx.await.unwrap_or(false);
-            if !ok {
+            let result = rx.await;
+            let failure = task_failure(&result, "保存歌单排序");
+            if let Some(msg) = failure {
                 // 云端保存失败则回滚本地顺序并提示，避免显示与云端不一致。
                 this.update(cx, |this, cx| {
                     let mut items: Vec<Playlist> = this.my_playlists.as_ref().clone();
                     items.swap(i, j);
                     this.my_playlists = Arc::new(items);
-                    this.services.toast_error("排序保存失败，请重试", cx);
+                    this.services.toast_error(msg, cx);
                     cx.notify();
                 })
                 .ok();

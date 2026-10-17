@@ -7,6 +7,7 @@ use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+use siren_core::error::ResultExt;
 use siren_core::model::{AccountBinding, UserLevel, VipInfo};
 
 use super::super::services::Services;
@@ -61,9 +62,15 @@ impl AccountPage {
         let uid = Session::uid(cx).unwrap_or_default();
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.services.handle.spawn(async move {
-            let level = siren_core::network::api::user_level(&client).await.ok();
-            let vip = siren_core::network::api::vip_info(&client).await.ok();
-            let bindings = siren_core::network::api::user_bindings(&client, uid).await.ok();
+            let level = siren_core::network::api::user_level(&client)
+                .await
+                .ok_or_warn("加载用户等级");
+            let vip = siren_core::network::api::vip_info(&client)
+                .await
+                .ok_or_warn("加载 VIP 信息");
+            let bindings = siren_core::network::api::user_bindings(&client, uid)
+                .await
+                .ok_or_warn("加载账号绑定");
             let _ = tx.send((level, vip, bindings));
         });
         cx.spawn(async move |this, cx| {
@@ -106,7 +113,7 @@ impl AccountPage {
                     Some(Ok(points)) if points > 0 => services.toast_success(format!("签到成功！积分+{points}"), cx),
                     Some(Ok(_)) => services.toast("今天已经签到过了", cx),
                     Some(Err(e)) => services.toast_error(e.user_message(), cx),
-                    None => {}
+                    None => log::warn!("签到：任务未返回（通道断开）"),
                 }
                 this.load(cx);
             })
@@ -145,7 +152,7 @@ impl AccountPage {
                     services.toast_success("资料保存成功", cx);
                 }
                 Some(Err(e)) => services.toast_error(e.user_message(), cx),
-                None => {}
+                None => log::warn!("保存资料：任务未返回（通道断开）"),
             })
             .ok();
         })
@@ -191,7 +198,7 @@ impl AccountPage {
                 }
                 Some(Ok(_)) => services.toast_error("头像更新失败", cx),
                 Some(Err(e)) => services.toast_error(e.user_message(), cx),
-                None => {}
+                None => log::warn!("上传头像：任务未返回（通道断开）"),
             })
             .ok();
         })

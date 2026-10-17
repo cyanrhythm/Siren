@@ -10,7 +10,7 @@ use gpui_kit::*;
 
 use siren_core::model::{Playlist, UserBrief, UserProfile};
 
-use super::super::services::Services;
+use super::super::services::{task_failure, Services};
 use super::super::smooth_scroll::smooth_scroll;
 use super::super::{hint, icon, load_error, page_shell_with_header, PageEvent};
 use super::dim;
@@ -120,18 +120,16 @@ impl ProfilePage {
         let uid = self.uid;
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.services.handle.spawn(async move {
-            let ok = siren_core::network::api::user_follow(&client, uid, follow)
-                .await
-                .is_ok();
-            let _ = tx.send(ok);
+            let _ = tx.send(siren_core::network::api::user_follow(&client, uid, follow).await);
         });
         cx.spawn(async move |this, cx| {
-            let ok = rx.await.unwrap_or(false);
+            let result = rx.await;
+            let failure = task_failure(&result, "关注用户");
             this.update(cx, |this, cx| {
                 if let Some(p) = this.profile.as_mut() {
-                    if !ok {
+                    if let Some(msg) = failure {
                         p.followed = !follow;
-                        this.services.toast_error("关注用户失败，请重试", cx);
+                        this.services.toast_error(msg, cx);
                     } else {
                         this.services.toast(if follow { "已关注" } else { "已取消关注" }, cx);
                     }

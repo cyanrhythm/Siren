@@ -11,6 +11,8 @@ use gpui_kit::component::input::Input;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+use siren_core::error::ResultExt;
+
 use super::components::{overlay_close, overlay_focus, overlay_scrim};
 use super::{icon, Root};
 use crate::theme::{self, spacing};
@@ -95,7 +97,7 @@ impl Root {
             handle.spawn(async move {
                 let key = siren_core::network::api::login_qr_key(&client_key)
                     .await
-                    .ok()
+                    .ok_or_warn("获取二维码 key")
                     .filter(|k| !k.is_empty());
                 let _ = tx.send(key);
             });

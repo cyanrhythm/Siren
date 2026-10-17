@@ -12,6 +12,7 @@ use gpui_kit::*;
 use super::covers::CoverLoader;
 use super::notifications::Notifications;
 use super::settings_store::SettingsStore;
+use siren_core::error::ResultExt;
 use siren_core::lyrics::LyricLine;
 use siren_core::model::{Artist, ArtistAlbum, ArtistDetail, AudioQuality, CommentPage, Song, SongWiki};
 use siren_core::network::client::NeteaseClient;
@@ -308,7 +309,7 @@ impl Playback {
             let _ = tx.send(
                 siren_core::network::api::playlist_detail(&client, id)
                     .await
-                    .ok()
+                    .ok_or_warn("加载歌单详情")
                     .flatten(),
             );
         });
@@ -336,7 +337,12 @@ impl Playback {
         let client = self.client.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.handle.spawn(async move {
-            let _ = tx.send(siren_core::network::api::album_detail(&client, id).await.ok().flatten());
+            let _ = tx.send(
+                siren_core::network::api::album_detail(&client, id)
+                    .await
+                    .ok_or_warn("加载专辑详情")
+                    .flatten(),
+            );
         });
         cx.spawn(async move |this, cx| {
             let detail = rx.await.ok().flatten();
@@ -362,7 +368,12 @@ impl Playback {
         let client = self.client.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.handle.spawn(async move {
-            let _ = tx.send(siren_core::network::api::song_detail(&client, id).await.ok().flatten());
+            let _ = tx.send(
+                siren_core::network::api::song_detail(&client, id)
+                    .await
+                    .ok_or_warn("加载歌曲详情")
+                    .flatten(),
+            );
         });
         cx.spawn(async move |this, cx| {
             let song = rx.await.ok().flatten();
@@ -416,7 +427,7 @@ impl Playback {
                         }
                         this.notifications.update(cx, |n, cx| n.error(err.user_message(), cx));
                     }
-                    None => {}
+                    None => log::warn!("喜欢歌曲：任务未返回（通道断开）"),
                 }
                 cx.notify();
             })
@@ -996,7 +1007,7 @@ impl Playback {
             handle_detail.spawn(async move {
                 let detail = siren_core::network::api::song_detail(&client_detail, song_id)
                     .await
-                    .ok()
+                    .ok_or_warn("加载歌曲详情")
                     .flatten();
                 let _ = tx.send(detail);
             });
@@ -1043,7 +1054,9 @@ impl Playback {
         cx.spawn(async move |this, cx| {
             let (tx, rx) = tokio::sync::oneshot::channel();
             handle_wiki.spawn(async move {
-                let wiki = siren_core::network::api::song_wiki(&client_wiki, song_id).await.ok();
+                let wiki = siren_core::network::api::song_wiki(&client_wiki, song_id)
+                    .await
+                    .ok_or_warn("加载歌曲百科");
                 let _ = tx.send(wiki);
             });
             let wiki = rx.await.ok().flatten();
@@ -1076,7 +1089,10 @@ impl Playback {
                 let comments = api::comments(&client_extra, &tid, "0", 20).await.unwrap_or_default();
                 let artist = match artist_id {
                     Some(aid) => {
-                        let detail = api::artist_detail(&client_extra, aid).await.ok().flatten();
+                        let detail = api::artist_detail(&client_extra, aid)
+                            .await
+                            .ok_or_warn("加载歌手详情")
+                            .flatten();
                         let albums = api::artist_albums(&client_extra, aid, 10).await.unwrap_or_default();
                         let simi = api::similar_artists(&client_extra, aid).await.unwrap_or_default();
                         let (fans, followed) = api::artist_follow_count(&client_extra, aid).await.unwrap_or((0, false));
@@ -1182,11 +1198,14 @@ impl Playback {
         self.handle.spawn(async move {
             let url = match siren_core::network::api::song_url_eapi(&client, id, level)
                 .await
-                .ok()
+                .ok_or_warn("解析播放地址")
                 .flatten()
             {
                 Some(url) => Some(url),
-                None => siren_core::network::api::song_url(&client, id).await.ok().flatten(),
+                None => siren_core::network::api::song_url(&client, id)
+                    .await
+                    .ok_or_warn("解析备选播放地址")
+                    .flatten(),
             };
             let _ = tx.send(url);
         });

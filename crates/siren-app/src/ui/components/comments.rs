@@ -8,6 +8,7 @@ use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::Disableable as _;
 use gpui_kit::*;
 
+use siren_core::error::ResultExt;
 use siren_core::model::CommentItem;
 use siren_core::network::api;
 
@@ -59,7 +60,7 @@ impl Root {
         let client = self.services.client.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.services.handle.spawn(async move {
-            let page = api::comments(&client, &tid, &cursor, 20).await.ok();
+            let page = api::comments(&client, &tid, &cursor, 20).await.ok_or_warn("加载评论");
             let _ = tx.send(page);
         });
         cx.spawn(async move |this, cx| {
@@ -78,6 +79,7 @@ impl Root {
                     this.comments.has_more = page.has_more;
                     this.services.covers.prefetch(avatars, 32.0, cx);
                 } else {
+                    log::warn!("加载评论失败：接口无数据或任务未返回");
                     this.services.toast_error("评论加载失败，请重试", cx);
                 }
                 cx.notify();
@@ -130,7 +132,10 @@ impl Root {
                         }
                         this.services.toast_error(err.user_message(), cx);
                     }
-                    None => this.services.toast_error("操作失败，请重试", cx),
+                    None => {
+                        log::warn!("评论点赞：任务未返回（通道断开）");
+                        this.services.toast_error("操作失败，请重试", cx)
+                    }
                 }
                 cx.notify();
             })
@@ -156,7 +161,9 @@ impl Root {
         cx.notify();
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.services.handle.spawn(async move {
-            let page = api::comment_floor(&client, &tid, parent_id, 20).await.ok();
+            let page = api::comment_floor(&client, &tid, parent_id, 20)
+                .await
+                .ok_or_warn("加载楼层评论");
             let _ = tx.send(page);
         });
         cx.spawn(async move |this, cx| {
@@ -171,6 +178,7 @@ impl Root {
                     this.comments.floor_items = page.comments;
                     this.services.covers.prefetch(avatars, 32.0, cx);
                 } else {
+                    log::warn!("加载楼层评论失败：接口无数据或任务未返回");
                     this.services.toast_error("回复加载失败，请重试", cx);
                 }
                 cx.notify();

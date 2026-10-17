@@ -8,11 +8,12 @@ use gpui_kit::component::button::Button;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+use siren_core::error::ResultExt;
 use siren_core::model::AlbumDetail;
 
 use super::super::components::{song_row, IndexCell, SongRow};
 use super::super::playback::Playback;
-use super::super::services::Services;
+use super::super::services::{task_failure, Services};
 use super::super::smooth_scroll::smooth_virtual_list;
 use super::super::{collapse_box, column_header, header_fold, icon, wheel_to_list, Column, PageEvent};
 use super::dim;
@@ -78,7 +79,10 @@ impl AlbumPage {
         let id = self.id;
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.services.handle.spawn(async move {
-            let detail = siren_core::network::api::album_detail(&client, id).await.ok().flatten();
+            let detail = siren_core::network::api::album_detail(&client, id)
+                .await
+                .ok_or_warn("加载专辑详情")
+                .flatten();
             let _ = tx.send(detail);
         });
         cx.notify();
@@ -112,15 +116,16 @@ impl AlbumPage {
         let id = self.id;
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.services.handle.spawn(async move {
-            let ok = siren_core::network::api::album_subscribe(&client, id, subscribe)
-                .await
-                .is_ok();
-            let _ = tx.send(ok);
+            let _ = tx.send(siren_core::network::api::album_subscribe(&client, id, subscribe).await);
         });
         cx.spawn(async move |this, cx| {
-            let ok = rx.await.unwrap_or(false);
+            let result = rx.await;
+            let failure = task_failure(&result, "收藏专辑");
             this.update(cx, |this, cx| {
-                if ok {
+                if let Some(msg) = failure {
+                    this.subscribed = !subscribe;
+                    this.services.toast_error(msg, cx);
+                } else {
                     this.services.toast(
                         if subscribe {
                             "已收藏专辑"
@@ -129,9 +134,6 @@ impl AlbumPage {
                         },
                         cx,
                     );
-                } else {
-                    this.subscribed = !subscribe;
-                    this.services.toast_error("收藏专辑失败，请重试", cx);
                 }
                 cx.notify();
             })
