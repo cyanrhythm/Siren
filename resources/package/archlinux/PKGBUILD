@@ -36,7 +36,7 @@ source=("$pkgname::git+$url.git"
         'siren.desktop')
 sha256sums=('SKIP'
             'SKIP')
-
+options=('!lto')
 pkgver() {
     cd "$pkgname" || exit 1
     local version
