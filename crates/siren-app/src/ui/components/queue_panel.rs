@@ -19,6 +19,7 @@ use siren_core::model::Song;
 use super::super::settings_store::SettingsStore;
 use super::super::smooth_scroll::{smooth_scroll, smooth_scroll_offset, smooth_scroll_to};
 use super::super::{cover_placeholder, icon, motion, Root};
+use super::buttons::icon_button;
 use super::collect::{overlay_close, overlay_scrim};
 use super::queue_layout::{reorder_target, row_content_top, GAP, PAD, ROW_H, SECTION_H, STRIDE};
 use crate::theme;
@@ -86,37 +87,29 @@ impl Root {
             )
             .child(div().flex_1())
             .when(n > 1, |el| {
-                el.child(
-                    div()
-                        .id("queue-clear")
-                        .size(px(28.0))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(px(theme::RADIUS_SM))
-                        .cursor_pointer()
-                        .hover(|s| s.bg(theme::surface()))
-                        .on_click(move |_ev, _window, cx| {
-                            weak_clear.update(cx, |root, cx| root.open_queue_clear(cx)).ok();
-                        })
-                        .child(icon(IconName::Trash, 16.0, theme::text_gray())),
-                )
+                el.child(icon_button(
+                    "queue-clear",
+                    IconName::Trash,
+                    16.0,
+                    theme::text_gray(),
+                    28.0,
+                    theme::RADIUS_SM,
+                    move |_ev, _window, cx| {
+                        weak_clear.update(cx, |root, cx| root.open_queue_clear(cx)).ok();
+                    },
+                ))
             })
-            .child(
-                div()
-                    .id("queue-close")
-                    .size(px(28.0))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(theme::RADIUS_SM))
-                    .cursor_pointer()
-                    .hover(|s| s.bg(theme::surface()))
-                    .on_click(move |_ev, _window, cx| {
-                        weak_close.update(cx, |root, cx| root.set_queue_open(false, cx)).ok();
-                    })
-                    .child(icon(IconName::X, 16.0, theme::text_gray())),
-            );
+            .child(icon_button(
+                "queue-close",
+                IconName::X,
+                16.0,
+                theme::text_gray(),
+                28.0,
+                theme::RADIUS_SM,
+                move |_ev, _window, cx| {
+                    weak_close.update(cx, |root, cx| root.set_queue_open(false, cx)).ok();
+                },
+            ));
 
         // 内容（带内边距的列表）交给平滑滚动容器；拖动排序挂在包裹层上（用当前滚动偏移做坐标补偿）。
         let content = div().v_flex().w_full().p(px(PAD)).child(list);

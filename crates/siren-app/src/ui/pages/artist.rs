@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 
-use gpui_kit::assets::IconName;
 use gpui_kit::base::{transition, StyledExt, Transition};
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -10,12 +9,13 @@ use gpui_kit::*;
 
 use siren_core::model::{Artist, ArtistAlbum, ArtistDetail, Song};
 
+use super::super::components::{detail_shell, sticky_bar, StickyBar};
 use super::super::components::{song_row, IndexCell, SongRow};
 use super::super::motion;
 use super::super::playback::Playback;
 use super::super::services::{task_failure, Services};
 use super::super::smooth_scroll::{smooth_scroll, smooth_scroll_offset};
-use super::super::{fmt_date, hint, icon, load_error, PageEvent};
+use super::super::{fmt_date, hint, load_error, PageEvent};
 use super::dim;
 use crate::theme::{self, spacing};
 
@@ -436,68 +436,38 @@ impl Render for ArtistPage {
             cx,
         );
         let weak_bar_play = cx.weak_entity();
-        let sticky_bar = div()
-            .w_full()
-            .rounded_t(px(theme::RADIUS_MD))
-            .h(px(dim::STICKY_BAR_H * fold))
-            .overflow_hidden()
-            .flex()
-            .items_center()
-            .gap(px(spacing::MD))
-            .px(px(spacing::MD))
-            .bg(theme::pane())
-            .child(
-                div()
-                    .id("artist-bar-play")
-                    .flex_none()
-                    .size(px(48.0))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded_full()
-                    .bg(theme::accent())
-                    .cursor_pointer()
-                    .on_click(move |_ev, _window, cx| {
-                        weak_bar_play.update(cx, |this, cx| this.play_all(cx)).ok();
-                    })
-                    .child(icon(IconName::Play, 22.0, theme::text_primary())),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w(px(0.0))
-                    .text_lg()
-                    .font_weight(FontWeight::BOLD)
-                    .text_color(theme::text_primary())
-                    .truncate()
-                    .child(self.name.clone()),
-            )
-            // 横栏与歌单页同形：[播放键][歌手名]——返回键不在这里，应用标题栏已有全局前进/后退，
-            // 页面自带的返回键（hero 右端那个）已按同一逻辑删除。
-            .into_any_element();
+        // 横栏与歌单/专辑页同形：[播放键][歌手名]。歌手页没有可取色的封面，故用面板底色。
+        let mut bar = StickyBar::new(
+            dim::STICKY_BAR_H * fold,
+            self.name.clone(),
+            "artist-bar-play",
+            move |_ev, _window, cx| {
+                weak_bar_play.update(cx, |this, cx| this.play_all(cx)).ok();
+            },
+        );
+        bar.bg = Some(theme::pane());
+        let sticky_bar = sticky_bar(bar);
 
         // hero 区占位高度 = `p(MD) * 2 + 头像 108`。
         const HERO_BLOCK_H: f32 = 132.0;
-        div()
-            .v_flex()
-            .flex_1()
-            .min_w(px(0.0))
-            .h_full()
-            .rounded(px(theme::RADIUS_MD))
-            .overflow_hidden()
-            .bg(theme::pane())
-            .child(
-                // padding 必须放内层：折叠容器自身带 padding 时，高度插值到 0 也仍占 padding，
-                // 收起后会在横栏上方留一条空白（hero 的 `p(MD)` 同理）。
-                div()
-                    .w_full()
-                    .h(px(HERO_BLOCK_H * (1.0 - fold)))
-                    .overflow_hidden()
-                    .opacity(1.0 - fold)
-                    .child(div().w_full().p(px(spacing::MD)).child(header)),
-            )
-            .child(sticky_bar)
-            .child(scroll)
+        detail_shell(
+            div()
+                .v_flex()
+                .w_full()
+                .child(
+                    // padding 必须放内层：折叠容器自身带 padding 时，高度插值到 0 也仍占 padding，
+                    // 收起后会在横栏上方留一条空白（hero 的 `p(MD)` 同理）。
+                    div()
+                        .w_full()
+                        .h(px(HERO_BLOCK_H * (1.0 - fold)))
+                        .overflow_hidden()
+                        .opacity(1.0 - fold)
+                        .child(div().w_full().p(px(spacing::MD)).child(header)),
+                )
+                .child(sticky_bar)
+                .child(scroll)
+                .into_any_element(),
+        )
     }
 }
 

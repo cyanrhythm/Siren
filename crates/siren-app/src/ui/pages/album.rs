@@ -11,11 +11,13 @@ use gpui_kit::*;
 use siren_core::error::ResultExt;
 use siren_core::model::AlbumDetail;
 
-use super::super::components::{song_row, IndexCell, SongRow};
+use super::super::components::{
+    detail_shell, icon_button, play_circle, song_row, sticky_bar, IndexCell, SongRow, StickyBar,
+};
 use super::super::playback::Playback;
 use super::super::services::{task_failure, Services};
 use super::super::smooth_scroll::smooth_virtual_list;
-use super::super::{collapse_box, column_header, header_fold, icon, wheel_to_list, Column, PageEvent};
+use super::super::{collapse_box, column_header, header_fold, wheel_to_list, Column, PageEvent};
 use super::dim;
 use crate::theme::{self, spacing};
 
@@ -158,28 +160,21 @@ impl Render for AlbumPage {
         );
         // 页面顶部不再有自己的导航行（返回键在应用标题栏、专辑名在 hero 里，皆重复）；
         // 原来的收藏星标下沉到操作栏（与歌单页把 ⋯ 下沉到操作栏同一处理）。
-        let star_button = div()
-            .id("album-star")
-            .size(px(dim::ROUND_BTN))
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded_full()
-            .cursor_pointer()
-            .hover(|s| s.bg(theme::surface()))
-            .on_click(move |_ev, _window, cx| {
+        let star_button = icon_button(
+            "album-star",
+            if subscribed { IconName::Star } else { IconName::StarOff },
+            24.0,
+            if subscribed {
+                theme::accent()
+            } else {
+                theme::text_gray()
+            },
+            dim::ROUND_BTN,
+            dim::ROUND_BTN / 2.0,
+            move |_ev, _window, cx| {
                 weak_star.update(cx, |p, cx| p.toggle_subscribe(cx)).ok();
-            })
-            .child(icon(
-                if subscribed { IconName::Star } else { IconName::StarOff },
-                24.0,
-                if subscribed {
-                    theme::accent()
-                } else {
-                    theme::text_gray()
-                },
-            ))
-            .into_any_element();
+            },
+        );
 
         let body: AnyElement = match &self.detail {
             Some(detail) => {
@@ -251,59 +246,24 @@ impl Render for AlbumPage {
                 // 播放键 + 专辑名（与歌单页横栏同形）；收藏星标下沉到操作栏，故这里不再有它。
                 let weak_bar_play = cx.weak_entity();
                 let bar_cover = self.services.covers.color(&detail.cover_url);
-                let sticky_bar = div()
-                    .w_full()
-                    .rounded_t(px(theme::RADIUS_MD))
-                    .h(px(dim::STICKY_BAR_H * fold))
-                    .overflow_hidden()
-                    .flex()
-                    .items_center()
-                    .gap(px(spacing::SM))
-                    .px(px(spacing::MD))
-                    .when_some(bar_cover.map(|c| theme::darken(c, 0.42)), |el, bg| el.bg(bg))
-                    .child(
-                        div()
-                            .id("album-bar-play")
-                            .flex_none()
-                            .size(px(48.0))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .rounded_full()
-                            .bg(theme::accent())
-                            .cursor_pointer()
-                            .on_click(move |_ev, _window, cx| {
-                                weak_bar_play
-                                    .update(cx, |page, cx| {
-                                        let items = page.detail.as_ref().map(|d| d.songs.clone()).unwrap_or_default();
-                                        let source = page.source();
-                                        page.playback
-                                            .update(cx, |pb, cx| pb.play_from_source(items, 0, Some(source), cx));
-                                    })
-                                    .ok();
+                let mut bar = StickyBar::new(
+                    dim::STICKY_BAR_H * fold,
+                    detail.name.clone(),
+                    "album-bar-play",
+                    move |_ev, _window, cx| {
+                        weak_bar_play
+                            .update(cx, |page, cx| {
+                                let items = page.detail.as_ref().map(|d| d.songs.clone()).unwrap_or_default();
+                                let source = page.source();
+                                page.playback
+                                    .update(cx, |pb, cx| pb.play_from_source(items, 0, Some(source), cx));
                             })
-                            .child(icon(IconName::Play, 22.0, theme::text_primary())),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w(px(0.0))
-                            .text_lg()
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(theme::text_primary())
-                            .truncate()
-                            .child(detail.name.clone()),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w(px(0.0))
-                            .text_lg()
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(theme::text_primary())
-                            .truncate()
-                            .child(detail.name.clone()),
-                    );
+                            .ok();
+                    },
+                );
+                // 取色未就绪时保持透明（与改前 when_some 一致）。
+                bar.bg = bar_cover.map(|c| theme::darken(c, 0.42));
+                let sticky_bar = sticky_bar(bar);
 
                 // 吸顶列头：专辑行没有「专辑」列，故列头为 # / 标题 / 时长（列宽与行共用 `dim::*`）。
                 let column_header = column_header(
@@ -384,33 +344,17 @@ impl Render for AlbumPage {
                             .pb(px(spacing::SM))
                             // 播放键在前、收藏在后（与歌单页动作栏同序：主动作靠左）。
                             .when(count > 0, |el| {
-                                el.child(
-                                    div()
-                                        .id("album-play")
-                                        .size(px(56.0))
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .rounded_full()
-                                        .bg(theme::accent())
-                                        .cursor_pointer()
-                                        .on_click(move |_ev, _window, cx| {
-                                            weak_play
-                                                .update(cx, |page, cx| {
-                                                    let items = page
-                                                        .detail
-                                                        .as_ref()
-                                                        .map(|d| d.songs.clone())
-                                                        .unwrap_or_default();
-                                                    let source = page.source();
-                                                    page.playback.update(cx, |pb, cx| {
-                                                        pb.play_from_source(items, 0, Some(source), cx)
-                                                    });
-                                                })
-                                                .ok();
+                                el.child(play_circle("album-play", 56.0, 26.0, move |_ev, _window, cx| {
+                                    weak_play
+                                        .update(cx, |page, cx| {
+                                            let items =
+                                                page.detail.as_ref().map(|d| d.songs.clone()).unwrap_or_default();
+                                            let source = page.source();
+                                            page.playback
+                                                .update(cx, |pb, cx| pb.play_from_source(items, 0, Some(source), cx));
                                         })
-                                        .child(icon(IconName::Play, 26.0, theme::text_primary())),
-                                )
+                                        .ok();
+                                }))
                             })
                             .child(star_button)
                             .into_any_element(),
@@ -449,14 +393,6 @@ impl Render for AlbumPage {
             }
         };
         // 外壳：页面顶部不再有自己的导航行，收起后顶部只剩横栏一行（同歌单页）。
-        div()
-            .v_flex()
-            .flex_1()
-            .min_w(px(0.0))
-            .h_full()
-            .rounded(px(theme::RADIUS_MD))
-            .overflow_hidden()
-            .bg(theme::pane())
-            .child(body)
+        detail_shell(body)
     }
 }

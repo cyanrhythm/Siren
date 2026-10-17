@@ -10,9 +10,10 @@ use gpui_kit::*;
 
 use siren_core::model::{Playlist, UserBrief, UserProfile};
 
+use super::super::components::icon_button;
 use super::super::services::{task_failure, Services};
 use super::super::smooth_scroll::smooth_scroll;
-use super::super::{hint, icon, load_error, page_shell_with_header, PageEvent};
+use super::super::{hint, load_error, page_shell_with_header, PageEvent};
 use super::dim;
 use crate::theme::{self, spacing};
 
@@ -200,21 +201,17 @@ impl ProfilePage {
                         )
                     }),
             )
-            .child(
-                div()
-                    .id("profile-back")
-                    .size(px(dim::ROUND_BTN))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded_full()
-                    .cursor_pointer()
-                    .hover(|s| s.bg(theme::surface()))
-                    .on_click(move |_ev, _window, cx| {
-                        weak_back.update(cx, |_p, cx| cx.emit(PageEvent::Back)).ok();
-                    })
-                    .child(icon(IconName::ChevronLeft, 18.0, theme::text_gray())),
-            )
+            .child(icon_button(
+                "profile-back",
+                IconName::ChevronLeft,
+                18.0,
+                theme::text_gray(),
+                dim::ROUND_BTN,
+                dim::ROUND_BTN / 2.0,
+                move |_ev, _window, cx| {
+                    weak_back.update(cx, |_p, cx| cx.emit(PageEvent::Back)).ok();
+                },
+            ))
             .into_any_element()
     }
 

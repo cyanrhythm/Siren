@@ -15,7 +15,10 @@ use gpui_kit::*;
 use siren_core::error::ResultExt;
 use siren_core::model::{PlaylistDetail, Song};
 
-use super::super::components::{overlay_close, overlay_scrim, overlay_scrim_strong, song_row, IndexCell, SongRow};
+use super::super::components::{
+    detail_shell, overlay_close, overlay_scrim, overlay_scrim_strong, play_circle, song_row, sticky_bar, IndexCell,
+    SongRow, StickyBar,
+};
 use super::super::playback::Playback;
 use super::super::services::{task_failure, Services};
 use super::super::smooth_scroll::{smooth_scroll, smooth_virtual_list_with_header, ListHeader};
@@ -1027,58 +1030,29 @@ impl Render for PlaylistPage {
                     window,
                     cx,
                 );
-                let weak_bar_play = cx.weak_entity();
-                let bar_play = div()
-                    .w(px(48.0 * play_v))
-                    .flex_none()
-                    .overflow_hidden()
-                    .opacity(play_v)
-                    .child(
-                        div()
-                            .id("pl-bar-play")
-                            .flex_none()
-                            .size(px(48.0))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .rounded_full()
-                            .bg(theme::accent())
-                            .cursor_pointer()
-                            .on_click(move |_ev, _window, cx| {
-                                weak_bar_play
-                                    .update(cx, |page, cx| {
-                                        let items = page.detail.as_ref().map(|d| d.tracks.clone()).unwrap_or_default();
-                                        let source = page.source();
-                                        page.playback
-                                            .update(cx, |pb, cx| pb.play_from_source(items, 0, Some(source), cx));
-                                    })
-                                    .ok();
-                            })
-                            .child(icon(IconName::Play, 22.0, theme::text_primary())),
-                    );
                 // 底色同 Melodia：用同一封面主色的实色（64px 内渐变会近乎全黑）。
-                let bar_bg = base_color.map(|c| theme::darken(c, 0.42)).unwrap_or_else(theme::pane);
-                let sticky_bar = div()
-                    .w_full()
-                    .h_full()
-                    .rounded_t(px(theme::RADIUS_MD))
-                    .flex()
-                    .items_center()
-                    .gap(px(spacing::SM))
-                    .px(px(spacing::MD))
-                    .bg(bar_bg)
-                    .opacity(bar_v)
-                    .child(bar_play)
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w(px(0.0))
-                            .text_lg()
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(theme::text_primary())
-                            .truncate()
-                            .child(detail.name.clone()),
-                    );
+                let weak_bar_play = cx.weak_entity();
+                let mut bar = StickyBar::new(
+                    dim::STICKY_BAR_H,
+                    detail.name.clone(),
+                    "pl-bar-play",
+                    move |_ev, _window, cx| {
+                        weak_bar_play
+                            .update(cx, |page, cx| {
+                                let items = page.detail.as_ref().map(|d| d.tracks.clone()).unwrap_or_default();
+                                let source = page.source();
+                                page.playback
+                                    .update(cx, |pb, cx| pb.play_from_source(items, 0, Some(source), cx));
+                            })
+                            .ok();
+                    },
+                );
+                bar.opacity = bar_v;
+                bar.play_opacity = play_v;
+                // 播放键出现时横向展开（48 → 0），与改前一致。
+                bar.play_width = 48.0 * play_v;
+                bar.bg = Some(base_color.map(|c| theme::darken(c, 0.42)).unwrap_or_else(theme::pane));
+                let sticky_bar = sticky_bar(bar);
                 // 吸顶横栏容器：交给列表画在内容之上、滚动条之下（滚动条不能被盖住）。
                 let top_bar = div()
                     .absolute()
@@ -1171,28 +1145,16 @@ impl Render for PlaylistPage {
                     .gap(px(18.0))
                     .px(px(spacing::XL))
                     .pb(px(10.0))
-                    .child(
-                        div()
-                            .id("pl-play")
-                            .size(px(56.0))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .rounded_full()
-                            .bg(theme::accent())
-                            .cursor_pointer()
-                            .on_click(move |_ev, _window, cx| {
-                                weak_play
-                                    .update(cx, |page, cx| {
-                                        let items = page.detail.as_ref().map(|d| d.tracks.clone()).unwrap_or_default();
-                                        let source = page.source();
-                                        page.playback
-                                            .update(cx, |pb, cx| pb.play_from_source(items, 0, Some(source), cx));
-                                    })
-                                    .ok();
+                    .child(play_circle("pl-play", 56.0, 26.0, move |_ev, _window, cx| {
+                        weak_play
+                            .update(cx, |page, cx| {
+                                let items = page.detail.as_ref().map(|d| d.tracks.clone()).unwrap_or_default();
+                                let source = page.source();
+                                page.playback
+                                    .update(cx, |pb, cx| pb.play_from_source(items, 0, Some(source), cx));
                             })
-                            .child(icon(IconName::Play, 26.0, theme::text_primary())),
-                    )
+                            .ok();
+                    }))
                     .child(
                         div()
                             .id("pl-shuffle")
@@ -1453,16 +1415,7 @@ impl Render for PlaylistPage {
         };
         // 外壳：页面顶部不再有自己的导航行（返回键在应用标题栏、歌单名在 hero 里，皆重复），
         // 收起后顶部只剩横栏一行。
-        let shell = div()
-            .v_flex()
-            .flex_1()
-            .min_w(px(0.0))
-            .h_full()
-            .rounded(px(theme::RADIUS_MD))
-            .overflow_hidden()
-            .bg(theme::pane())
-            .child(body)
-            .into_any_element();
+        let shell = detail_shell(body);
         let overlay = self.crop.is_some().then(|| self.crop_overlay(cx.weak_entity()));
         let add_overlay = self.add_open.then(|| self.add_overlay(cx.weak_entity(), window, cx));
         let remove_track_overlay = self
