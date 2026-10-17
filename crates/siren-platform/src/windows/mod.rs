@@ -17,6 +17,7 @@ mod audio;
 mod display;
 mod icon;
 mod native;
+mod process;
 mod shell;
 mod single_instance;
 mod window_system;
@@ -35,6 +36,7 @@ pub(crate) fn native_library() -> &'static dyn NativeLibraryLocator {
 }
 
 pub(crate) use audio::device_prefixes;
+pub(crate) use process::rss_bytes;
 pub(crate) use shell::open_url;
 pub(crate) use single_instance::{ensure_single_instance, poll_activation_events};
 

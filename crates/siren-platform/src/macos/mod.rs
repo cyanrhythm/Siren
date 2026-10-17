@@ -44,6 +44,11 @@ pub(crate) fn native_library() -> &'static dyn NativeLibraryLocator {
 }
 
 pub(crate) use audio::device_prefixes;
+
+/// macOS：暂未接入 `task_info`，返回 `None`（设置页显示「—」）。
+pub(crate) fn rss_bytes() -> Option<u64> {
+    None
+}
 pub(crate) use shell::open_url;
 pub(crate) use single_instance::{ensure_single_instance, poll_activation_events};
 

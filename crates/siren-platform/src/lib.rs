@@ -29,6 +29,7 @@
 //! | 系统托盘（tray-icon） | ✅ | 🟡 ksni 待实机验证 | ⬜ 待验证 |
 //! | 窗口系统（显隐/几何/图标/句柄） | ✅ | 🟡 Wayland：协议不可及项降级（上层 GPUI 兜底）；X11 待补 | ⬜ 待补（当前降级） |
 //! | 单实例 | ✅ | ✅ flock + D-Bus 激活 | ⬜ 占位放行 |
+//! | 进程 RSS（缓存日志/设置页） | ✅ `GetProcessMemoryInfo` | ✅ `/proc/self/status` | ⬜ 暂返回 `None` |
 //!
 //! **降级约定**：上表 ⬜ / 🟡 能力在对应平台的实现一律 no-op / `None` / `false`，
 //! 绝不 panic；上层据返回值决定降级行为（如隐藏不可用时最小化到托盘、
@@ -46,6 +47,7 @@ pub mod audio;
 pub mod lyric_window;
 pub mod media_session;
 pub mod native_library;
+pub mod process;
 pub mod shell;
 pub mod single_instance;
 pub mod tray;
@@ -84,6 +86,7 @@ pub use media_session::{
     PlaywireMediaSession as PlatformMediaSession,
 };
 pub use native_library::{mpv_library_candidates, prepare_native_environment};
+pub use process::rss_bytes;
 pub use shell::open_url;
 pub use single_instance::{ensure_single_instance, poll_activation_events, ActivationEvent};
 pub use tray::{create_tray, poll_tray_events, Tray as PlatformTray, TrayEvent};
