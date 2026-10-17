@@ -10,6 +10,13 @@
 2. `cargo clippy --workspace --all-targets -- -D warnings`
 3. `cargo test --workspace`
 
+## 提交流程
+
+代码写完、上面三条验证通过后，**直接按约定格式提交 commit，无需逐次确认**。
+
+只有破坏性操作才先征求同意：改写已有提交（`rebase` / `filter-branch`）、
+强推远端、删除分支或标签。
+
 ## 提交信息
 
 采用约定式提交：`type(scope): 中文描述`，scope 取 crate 简称（`app` / `core` / `platform`）。
