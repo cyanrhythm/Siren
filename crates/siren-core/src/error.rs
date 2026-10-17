@@ -79,6 +79,28 @@ impl From<serde_json::Error> for Error {
 /// 结果别名。
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// 「丢弃错误但留痕」：语义等同 `.ok()`，额外记一条 `warn` 日志。
+///
+/// 用于**失败可降级**的路径（可选数据、装饰信息、备选地址）：界面继续走空态，
+/// 但日志里必须留下原因——否则线上只能看到「界面空着」，无从判断是接口失败、
+/// 没数据，还是字段解析变了。用户可感知的失败**不应**用本方法，走 Toast。
+pub trait ResultExt<T> {
+    /// 转成 `Option<T>`；失败时以 `context` 为前缀记 `warn`。
+    fn ok_or_warn(self, context: &str) -> Option<T>;
+}
+
+impl<T> ResultExt<T> for Result<T> {
+    fn ok_or_warn(self, context: &str) -> Option<T> {
+        match self {
+            Ok(value) => Some(value),
+            Err(err) => {
+                log::warn!("{context}失败：{err}");
+                None
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -105,5 +127,15 @@ mod tests {
             Error::Unauthorized.user_message(),
             Error::Network(String::new()).user_message()
         );
+    }
+
+    #[test]
+    fn ok_or_warn_keeps_value_and_drops_error() {
+        let ok: Result<i32> = Ok(7);
+        assert_eq!(ok.ok_or_warn("测试"), Some(7));
+
+        let err: Result<i32> = Err(Error::Network("boom".into()));
+        // 语义必须与 `.ok()` 完全一致，否则调用方的降级分支会被改变。
+        assert_eq!(err.ok_or_warn("测试"), None);
     }
 }
