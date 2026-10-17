@@ -62,3 +62,40 @@ pub fn filter_audio_devices(devices: Vec<AudioDevice>, prefixes: &[&str]) -> Vec
         .filter(|d| prefixes.iter().any(|p| d.name.starts_with(p)))
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dev(name: &str) -> AudioDevice {
+        AudioDevice {
+            name: name.to_string(),
+            description: name.to_string(),
+        }
+    }
+
+    #[test]
+    fn filter_keeps_only_matching_prefixes_in_order() {
+        let devices = vec![
+            dev("wasapi/{aaa}"),
+            dev("auto"),
+            dev("wasapi/{bbb}"),
+            dev("pipewire/out"),
+        ];
+        let kept = filter_audio_devices(devices, &["wasapi/"]);
+        assert_eq!(
+            kept.iter().map(|d| d.name.as_str()).collect::<Vec<_>>(),
+            ["wasapi/{aaa}", "wasapi/{bbb}"]
+        );
+    }
+
+    #[test]
+    fn filter_accepts_multiple_prefixes_and_empty_input() {
+        let devices = vec![dev("coreaudio/x"), dev("pipewire/y"), dev("alsa/z")];
+        let kept = filter_audio_devices(devices, &["coreaudio/", "alsa/"]);
+        assert_eq!(kept.len(), 2);
+        // 空前缀列表 = 不过滤任何设备，但也绝不能 panic 或返回垃圾。
+        assert!(filter_audio_devices(vec![dev("auto")], &[]).is_empty());
+        assert!(filter_audio_devices(vec![], &["wasapi/"]).is_empty());
+    }
+}

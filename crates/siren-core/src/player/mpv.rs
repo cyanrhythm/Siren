@@ -147,12 +147,9 @@ impl Mpv {
     /// **需要 mpv ≥ 0.38**：`loadfile` 的 `<index>=-1` 参数在旧版不被识别，会返回错误码。
     /// 返回 `Err` 时上层不应把状态置为「播放中」（否则成为无声的假播放）。
     pub fn load_file_from(&self, url: &str, start_ms: Option<i64>) -> Result<(), String> {
-        match start_ms {
-            Some(ms) if ms > 0 => {
-                let opt = format!("start={:.3}", ms as f64 / 1000.0);
-                self.command(&["loadfile", url, "replace", "-1", &opt])
-            }
-            _ => self.load_file(url),
+        match start_option(start_ms) {
+            Some(opt) => self.command(&["loadfile", url, "replace", "-1", &opt]),
+            None => self.load_file(url),
         }
     }
 
@@ -167,8 +164,7 @@ impl Mpv {
 
     /// 音量百分比（0.0..=100.0）。
     pub fn set_volume(&self, percent: f64) {
-        let clamped = percent.clamp(0.0, 100.0);
-        self.set_property("volume", &format!("{clamped:.3}"));
+        self.set_property("volume", &volume_property(percent));
     }
 
     pub fn stop(&self) {
@@ -310,6 +306,35 @@ impl Mpv {
     }
 }
 
+// ── 参数序列化（纯函数：不触碰 FFI，故可单测）────────────────────────
+//
+// libmpv 的命令/属性参数都是字符串，格式错会静默变成「加载后不跳转」「音量被夹」
+// 这类难查的行为差异，因此把「毫秒 → 选项串」的换算单独提出来固定住。
+
+/// `loadfile` 的 `start=` 选项：`None` / 非正值表示从头开始（不追加选项）。
+///
+/// 保留三位小数（毫秒精度）；`start=0.000` 无意义，故与 `None` 同样处理。
+fn start_option(start_ms: Option<i64>) -> Option<String> {
+    match start_ms {
+        Some(ms) if ms > 0 => Some(format!("start={:.3}", ms as f64 / 1000.0)),
+        _ => None,
+    }
+}
+
+/// 音量属性串：夹到 0..=100 并统一三位小数。
+///
+/// 非有限值里的 NaN 按 0 处理：`f64::clamp` 对 NaN 会原样返回，
+/// 直接格式化就成了 libmpv 不认识的 `"NaN"`（±∞ 由 clamp 正常收敛到边界）。
+fn volume_property(percent: f64) -> String {
+    let percent = if percent.is_nan() { 0.0 } else { percent };
+    format!("{:.3}", percent.clamp(0.0, 100.0))
+}
+
+/// libmpv 的秒 → 毫秒（截断，与 `(s * 1000.0) as i64` 语义一致）。
+fn seconds_to_ms(seconds: f64) -> i64 {
+    (seconds * 1000.0) as i64
+}
+
 impl Drop for Mpv {
     fn drop(&mut self) {
         // 持锁销毁：与 `with_handle` 互斥，确保不会在 FFI 调用中途释放句柄。
@@ -348,11 +373,11 @@ impl crate::player::PlaybackController for Mpv {
     }
 
     fn position_ms(&self) -> Option<i64> {
-        self.position().map(|s| (s * 1000.0) as i64)
+        self.position().map(seconds_to_ms)
     }
 
     fn duration_ms(&self) -> Option<i64> {
-        self.duration().map(|s| (s * 1000.0) as i64)
+        self.duration().map(seconds_to_ms)
     }
 
     fn is_paused(&self) -> Option<bool> {
@@ -361,5 +386,74 @@ impl crate::player::PlaybackController for Mpv {
 
     fn eof_reached(&self) -> Option<bool> {
         Mpv::eof_reached(self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── 参数序列化 ────────────────────────────────────────────────
+    // 这几条不需要 libmpv：一旦格式漂移，上层会表现成「恢复进度不生效」而非报错。
+
+    #[test]
+    fn start_option_keeps_millisecond_precision() {
+        assert_eq!(start_option(Some(1500)).as_deref(), Some("start=1.500"));
+        assert_eq!(start_option(Some(250)).as_deref(), Some("start=0.250"));
+        assert_eq!(start_option(Some(3_600_001)).as_deref(), Some("start=3600.001"));
+    }
+
+    #[test]
+    fn start_option_omits_non_positive_positions() {
+        // `start=0.000` 与「从头开始」等价，没必要追加参数（旧版 mpv 还可能拒绝）。
+        assert_eq!(start_option(None), None);
+        assert_eq!(start_option(Some(0)), None);
+        assert_eq!(start_option(Some(-42)), None);
+    }
+
+    #[test]
+    fn volume_is_clamped_and_formatted() {
+        assert_eq!(volume_property(50.0), "50.000");
+        assert_eq!(volume_property(0.0), "0.000");
+        assert_eq!(volume_property(100.0), "100.000");
+        // 越界值不得原样透传给 libmpv（否则可能被拒绝或产生 >100 的增益）。
+        assert_eq!(volume_property(150.0), "100.000");
+        assert_eq!(volume_property(-10.0), "0.000");
+        // 非有限值不得变成 libmpv 不认识的 "NaN"，按静音处理。
+        assert_eq!(volume_property(f64::NAN), "0.000");
+        assert_eq!(volume_property(f64::INFINITY), "100.000");
+    }
+
+    #[test]
+    fn seconds_convert_to_ms_by_truncation() {
+        assert_eq!(seconds_to_ms(0.0), 0);
+        assert_eq!(seconds_to_ms(1.5), 1500);
+        assert_eq!(seconds_to_ms(2.9999), 2999);
+        assert_eq!(seconds_to_ms(-1.0), -1000);
+    }
+
+    // ── 加载失败降级 ──────────────────────────────────────────────
+    // 没有 libmpv 的环境（CI）也能跑：验证「找不到库」是 Err 而不是 panic。
+
+    #[test]
+    fn empty_candidate_list_reports_reason() {
+        let err = Mpv::load(&[]).err().expect("空候选列表必须失败");
+        assert_eq!(err, "未提供任何 libmpv 候选路径");
+    }
+
+    #[test]
+    fn missing_library_reports_last_candidate() {
+        let candidates = vec!["/nonexistent/siren-no-such-libmpv.so.2".to_string()];
+        let err = Mpv::load(&candidates).err().expect("不存在的库必须失败");
+        // 错误信息要带上是哪个候选，否则用户无法判断是路径还是符号缺失。
+        assert!(err.contains("/nonexistent/siren-no-such-libmpv.so.2"), "实际: {err}");
+        assert!(!err.is_empty());
+    }
+
+    #[test]
+    fn load_failure_does_not_panic_and_reports_last_of_many() {
+        let candidates = vec!["/nonexistent/a.so".to_string(), "/nonexistent/b.so".to_string()];
+        let err = Mpv::load(&candidates).err().expect("全部候选都不存在时必须失败");
+        assert!(err.contains("/nonexistent/b.so"), "应报告最后一个候选，实际: {err}");
     }
 }

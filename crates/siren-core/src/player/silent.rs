@@ -43,4 +43,24 @@ mod tests {
         // 降级引擎不报告暂停态：返回 `None`，否则 tick 每拍会把 playing 打回 false（K6）。
         assert_eq!(SilentEngine.is_paused(), None);
     }
+
+    #[test]
+    fn load_reports_accepted_so_ui_still_shows_playback() {
+        // 缺 libmpv 时不应让「播放」变成错误：界面/队列照常走，只是不出声。
+        assert!(SilentEngine.load("https://example.invalid/song.mp3"));
+        assert!(SilentEngine.load_from("https://example.invalid/song.mp3", Some(12_000)));
+    }
+
+    #[test]
+    fn eof_never_fires_so_auto_advance_does_not_spin() {
+        // `eof_reached = false`：静音引擎没有真实播放进度，若报 true 会无限自动切歌。
+        assert_eq!(SilentEngine.eof_reached(), Some(false));
+    }
+
+    #[test]
+    fn position_and_duration_are_unknown() {
+        // 返回 `None` 让上层保留自身状态（「无进度信息」≠「进度为 0」）。
+        assert_eq!(SilentEngine.position_ms(), None);
+        assert_eq!(SilentEngine.duration_ms(), None);
+    }
 }
