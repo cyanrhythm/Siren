@@ -1079,6 +1079,15 @@ impl Render for PlaylistPage {
                             .truncate()
                             .child(detail.name.clone()),
                     );
+                // 吸顶横栏容器：交给列表画在内容之上、滚动条之下（滚动条不能被盖住）。
+                let top_bar = div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .right_0()
+                    .h(px(dim::STICKY_BAR_H))
+                    .when(bar_v > 0.0, |el| el.child(sticky_bar))
+                    .into_any_element();
 
                 // 列头：与曲目行共用列宽（`dim::*`）。现在它是滚动内容的一部分，随头部一起滚走；
                 // Melodia 用 `stickyHeader` 把它吸在横栏下，需要的话后续在浮层里补。
@@ -1334,6 +1343,7 @@ impl Render for PlaylistPage {
                         ListHeader {
                             height: header_h,
                             element: header,
+                            sticky: Some(top_bar),
                         },
                         move |range, _window, cx| {
                             range
@@ -1398,13 +1408,6 @@ impl Render for PlaylistPage {
                     .into_any_element()
                 };
 
-                let top_bar = div()
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .right_0()
-                    .h(px(dim::STICKY_BAR_H))
-                    .when(bar_v > 0.0, |el| el.child(sticky_bar));
                 wheel_to_list(
                     div()
                         .id("pl-body")
@@ -1413,16 +1416,7 @@ impl Render for PlaylistPage {
                         .flex_1()
                         .min_w(px(0.0))
                         .w_full()
-                        .child(
-                            div()
-                                .relative()
-                                .v_flex()
-                                .flex_1()
-                                .min_h(px(0.0))
-                                .w_full()
-                                .child(rows)
-                                .child(top_bar),
-                        ),
+                        .child(rows),
                     "playlist-tracks",
                 )
                 .into_any_element()

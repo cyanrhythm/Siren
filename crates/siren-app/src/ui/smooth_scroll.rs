@@ -576,6 +576,8 @@ pub(crate) struct ListHeader {
     /// 头部高度（内容坐标）。
     pub height: f32,
     pub element: AnyElement,
+    /// 吸顶浮层：画在内容之上、滚动条之下（滚动条必须压在最上层，不能被浮层盖住）。
+    pub sticky: Option<AnyElement>,
 }
 
 impl ListHeader {
@@ -583,6 +585,7 @@ impl ListHeader {
         Self {
             height: 0.0,
             element: div().into_any_element(),
+            sticky: None,
         }
     }
 }
@@ -617,7 +620,12 @@ fn virtual_list_impl(
 ) -> impl IntoElement {
     let id = entry_id(name);
     ensure_registry(cx);
-    let header_h = header.height.max(0.0);
+    let ListHeader {
+        height,
+        element,
+        sticky,
+    } = header;
+    let header_h = height.max(0.0);
     let content_h = header_h + item_count as f32 * row_height;
     let (viewport_h, dragging) = cx
         .global::<Registry>()
@@ -659,7 +667,7 @@ fn virtual_list_impl(
         .right(px(0.0))
         .h(px(header_h))
         .overflow_hidden()
-        .child(header.element)
+        .child(element)
         .into_any_element();
     let rows_el = div()
         .absolute()
@@ -676,6 +684,8 @@ fn virtual_list_impl(
         .right(px(0.0))
         .child(header_el)
         .child(rows_el)
+        // 吸顶浮层压在内容之上；滚动条在 `scroll_container` 里最后加入，因此仍压住浮层。
+        .when_some(sticky, |el, sticky| el.child(sticky))
         .into_any_element();
 
     let mouse = window.mouse_position();
