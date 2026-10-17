@@ -648,6 +648,13 @@ impl Root {
         if std::env::var("SIREN_START").ok().as_deref() == Some("account") {
             root.update(cx, |root, cx| root.open_account(cx));
         }
+        // `SIREN_START=playlist:<id>`：开发/UI 冒烟用，启动即打开指定歌单（名字由详情接口补）。
+        if let Some(id) = std::env::var("SIREN_START")
+            .ok()
+            .and_then(|value| value.strip_prefix("playlist:").and_then(|s| s.parse::<i64>().ok()))
+        {
+            root.update(cx, |root, cx| root.open_playlist(id, String::new(), cx));
+        }
         // 图片缓存：每 60s 记一次占用并顺带淘汰一次。
         // `remove_asset` 只能在 UI 线程调用，所以淘汰挂在 GPUI 任务里而不是 tokio 任务。
         root.update(cx, |_root, cx| {

@@ -165,6 +165,19 @@ cargo run --release -p siren-app    # 发布构建（LTO + strip）
 | Linux | `libmpv.so.2` → `libmpv.so` → 系统 `mpv` |
 | macOS | `libmpv.2.dylib`（Homebrew 路径） |
 
+### UI 冒烟（截图）
+
+无显示环境（CI / 远程）下也能起界面并截图：脚本用 Xvfb + 软件 GL 启动应用，
+可指定歌单直接打开、滚到列表底部，产物在 `target/ui-smoke/`。
+
+```bash
+scripts/ui-smoke.sh                                             # 只截首页
+SMOKE_PLAYLIST=569850893 SMOKE_SCROLL=40 scripts/ui-smoke.sh    # 打开歌单并滚到底
+```
+
+依赖：`Xvfb`、ImageMagick（`import` / `convert`）、`python3`（经 `libXtst` 发滚轮）。
+`SMOKE_PLAYLIST` 走开发入口 `SIREN_START=playlist:<id>`，其余可调项见脚本头注释。
+
 ### 打包（Windows）
 
 ```bash
@@ -191,6 +204,7 @@ Get-ChildItem assets/native/windows/bin/*.dll
 | `SIREN_LOG_DIR` | 覆盖日志目录 |
 | `SIREN_LOG_LEVEL` | `off`/`error`/`warn`/`info`/`debug`/`trace`，默认 `info` |
 | `SIREN_LOG_STDERR` | 设为 `0`/`false`/`no` 时不镜像到标准错误（默认镜像） |
+| `SIREN_START` | 开发入口：`search` / `settings` / `account` / `recent` / `artist` / `playlist:<id>`，启动即跳到对应页面 |
 | `RC` / `RC_x86_64_pc_windows_msvc` | 指定 `rc.exe`（交叉构建时用桩脚本绕行，见 CONTRIBUTING） |
 
 ### 数据与日志位置
