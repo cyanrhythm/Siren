@@ -9,8 +9,11 @@ use windows::Win32::System::Threading::GetCurrentProcess;
 /// 当前进程工作集（字节）。
 pub(crate) fn rss_bytes() -> Option<u64> {
     unsafe {
-        let mut counters = PROCESS_MEMORY_COUNTERS::default();
-        counters.cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
+        // `cb` 必须先填结构体大小（Windows 侧靠它判断版本），故与非默认字段一起构造。
+        let mut counters = PROCESS_MEMORY_COUNTERS {
+            cb: std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32,
+            ..Default::default()
+        };
         GetProcessMemoryInfo(GetCurrentProcess(), &mut counters, counters.cb)
             .ok()
             .map(|_| counters.WorkingSetSize as u64)
