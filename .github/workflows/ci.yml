@@ -2,7 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    # dev 是日常开发分支（提交主要落在这里），与主干同样需要跑三条门槛；
+    # 否则 dev 上的推送完全不经过 CI，规范只能靠本地自觉。
+    branches: [main, master, dev]
   pull_request:
   workflow_dispatch:
 
