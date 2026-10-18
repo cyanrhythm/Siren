@@ -47,7 +47,11 @@ const EVICT_MIN_AGE: Duration = Duration::from_secs(10);
 /// 主色最多保留条数（每条约 100 B，但仍要有上限）。
 const COLOR_MAX_ENTRIES: usize = 512;
 /// 低于该档不取主色：小图取色偏差大，且低档多用于列表/头像。
-const COLOR_MIN_BUCKET: u32 = 128;
+/// 取色专用档：主色**只从这一档**算（对齐 Melodia 的「取色独立请求」）。
+///
+/// 512/1024 这类大图不再顺带算色（省 CPU），需要颜色时按此档单独排一次请求——
+/// 这一档同时服务 40~120px 的列表/头像，所以通常并不是额外流量。
+const COLOR_BUCKET: u32 = 128;
 /// 交互预取（页面/切歌）的并发上限。
 const PREFETCH_CONCURRENCY: usize = 6;
 /// 批量预取（整条队列）的并发上限：单独一把额度，避免长队列把交互封面的
@@ -111,8 +115,10 @@ impl CoverStats {
     }
 }
 
-/// 主色条目：（颜色, 来源档位, 最近使用）。
-type ColorEntry = (Rgba, u32, Instant);
+/// 主色条目：（颜色, 最近使用）。
+///
+/// 不再记录来源档位：颜色统一由 [`COLOR_BUCKET`] 算出，不存在「哪个档位的颜色胜出」。
+type ColorEntry = (Rgba, Instant);
 /// 主色表：base URL → 条目。
 type ColorMap = Arc<Mutex<HashMap<String, ColorEntry>>>;
 
@@ -274,7 +280,7 @@ impl CoverLoader {
     pub(crate) fn color(&self, url: &str) -> Option<Rgba> {
         let base = base_url(url);
         let mut colors = self.colors.lock().unwrap();
-        colors.get_mut(&base).map(|(color, _, seen)| {
+        colors.get_mut(&base).map(|(color, seen)| {
             *seen = Instant::now();
             *color
         })
@@ -331,131 +337,121 @@ impl CoverLoader {
             if url.is_empty() {
                 continue;
             }
-            let key = sized_url(&url, req);
-            if !seen.insert(key.clone()) {
-                continue;
-            }
-            if self.cache.lock().unwrap().contains_key(&key) {
-                continue;
-            }
-            if !self.inflight.lock().unwrap().insert(key.clone()) {
-                continue;
-            }
-
-            // 抓取、写缓存、清 inflight 全在 tokio 任务里完成：不依赖发起方的页面实体存活，
-            // 页面先销毁导致通知任务被取消时也不会把键永久留在 inflight（否则该封面永不加载）。
-            let client = self.client.clone();
-            let cache = self.cache.clone();
-            let colors = self.colors.clone();
-            let inflight = self.inflight.clone();
-            let sem = sem.clone();
-            let gen_arc = self.gen.clone();
-            let disk = self.disk.clone();
-            let disk_bytes = self.disk_bytes.clone();
-            let disk_files = self.disk_files.clone();
-            let (tx, rx) = tokio::sync::oneshot::channel::<()>();
             let base = base_url(&url);
-            self.handle.spawn(async move {
-                // 并发上限：批量预取（如打开大队列）排队进行，不一次打满连接。
-                let Ok(_permit) = sem.acquire().await else {
-                    // 信号量只会在关闭时失败（当前不会发生）；仍要清 inflight 并唤醒等待方，
-                    // 否则该键永久留在 inflight，对应封面再也抓不到。
+            let has_color = self.colors.lock().unwrap().contains_key(&base);
+            for (key, bucket, want_color) in fetch_plan(&url, req, has_color) {
+                if !seen.insert(key.clone()) {
+                    continue;
+                }
+                if self.cache.lock().unwrap().contains_key(&key) {
+                    continue;
+                }
+                if !self.inflight.lock().unwrap().insert(key.clone()) {
+                    continue;
+                }
+
+                // 抓取、写缓存、清 inflight 全在 tokio 任务里完成：不依赖发起方的页面实体存活，
+                // 页面先销毁导致通知任务被取消时也不会把键永久留在 inflight（否则该封面永不加载）。
+                let client = self.client.clone();
+                let cache = self.cache.clone();
+                let colors = self.colors.clone();
+                let inflight = self.inflight.clone();
+                let sem = sem.clone();
+                let gen_arc = self.gen.clone();
+                let disk = self.disk.clone();
+                let disk_bytes = self.disk_bytes.clone();
+                let disk_files = self.disk_files.clone();
+                let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+                let base = base.clone();
+                self.handle.spawn(async move {
+                    // 并发上限：批量预取（如打开大队列）排队进行，不一次打满连接。
+                    let Ok(_permit) = sem.acquire().await else {
+                        // 信号量只会在关闭时失败（当前不会发生）；仍要清 inflight 并唤醒等待方，
+                        // 否则该键永久留在 inflight，对应封面再也抓不到。
+                        inflight.lock().unwrap().remove(&key);
+                        let _ = tx.send(());
+                        return;
+                    };
+                    // ① 磁盘命中：读本地字节，冷启动不必重新下载。读盘放 blocking 线程池。
+                    let from_disk = match disk.clone() {
+                        Some(cache) => {
+                            let key = key.clone();
+                            tokio::task::spawn_blocking(move || cache.get(&key))
+                                .await
+                                .ok()
+                                .flatten()
+                        }
+                        None => None,
+                    };
+                    let hits_disk = from_disk.is_some();
+                    if hits_disk {
+                        log::debug!("封面磁盘命中：{key}");
+                    }
+                    let fetched = match from_disk {
+                        Some(bytes) => Some(bytes),
+                        None => client.get_bytes(&key).await.ok(),
+                    };
+                    if let Some(bytes) = fetched {
+                        // ② 网络取到的新字节回写磁盘（命中的不重复写，省一次 IO）。
+                        if !hits_disk {
+                            if let Some(cache) = disk.clone() {
+                                let key = key.clone();
+                                let len = bytes.len() as u64;
+                                let payload = bytes.clone();
+                                let written = tokio::task::spawn_blocking(move || {
+                                    cache.put(&key, &payload);
+                                })
+                                .await;
+                                if written.is_ok() {
+                                    disk_bytes.fetch_add(len, Ordering::Relaxed);
+                                    disk_files.fetch_add(1, Ordering::Relaxed);
+                                }
+                            }
+                        }
+                        // 解码 / 取主色是 CPU 密集，放到 blocking 线程池，避免拖慢同 runtime 的网络请求。
+                        let computed = tokio::task::spawn_blocking(move || {
+                            // 主色只从取色专用档算（见 `COLOR_BUCKET`），大图不再顺带算色。
+                            let color = if want_color { dominant_color(&bytes) } else { None };
+                            let image = guess_format(&bytes).map(|fmt| Arc::new(Image::from_bytes(fmt, bytes)));
+                            (color, image)
+                        })
+                        .await;
+                        if let Ok((color, image)) = computed {
+                            // 清空缓存后（gen 变化）旧任务不得回写。
+                            if gen_arc.load(Ordering::Relaxed) == gen {
+                                if let Some(color) = color {
+                                    // 单一来源（COLOR_BUCKET）→ 先到先得即可，不存在档位覆盖问题。
+                                    colors.lock().unwrap().entry(base).or_insert((color, Instant::now()));
+                                }
+                                if let Some(image) = image {
+                                    let mut cache = cache.lock().unwrap();
+                                    // 持锁复查：clear() 先自增 gen 再 drain，若本任务在
+                                    // 自增前拿到锁、自增后插入，这里是最后一道拦截。
+                                    if gen_arc.load(Ordering::Relaxed) == gen {
+                                        cache.insert(
+                                            key.clone(),
+                                            Entry {
+                                                image,
+                                                bucket,
+                                                last_seen: Instant::now(),
+                                            },
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
                     inflight.lock().unwrap().remove(&key);
                     let _ = tx.send(());
-                    return;
-                };
-                // ① 磁盘命中：读本地字节，冷启动不必重新下载。读盘放 blocking 线程池。
-                let from_disk = match disk.clone() {
-                    Some(cache) => {
-                        let key = key.clone();
-                        tokio::task::spawn_blocking(move || cache.get(&key))
-                            .await
-                            .ok()
-                            .flatten()
-                    }
-                    None => None,
-                };
-                let hits_disk = from_disk.is_some();
-                if hits_disk {
-                    log::debug!("封面磁盘命中：{key}");
-                }
-                let fetched = match from_disk {
-                    Some(bytes) => Some(bytes),
-                    None => client.get_bytes(&key).await.ok(),
-                };
-                if let Some(bytes) = fetched {
-                    // ② 网络取到的新字节回写磁盘（命中的不重复写，省一次 IO）。
-                    if !hits_disk {
-                        if let Some(cache) = disk.clone() {
-                            let key = key.clone();
-                            let len = bytes.len() as u64;
-                            let payload = bytes.clone();
-                            let written = tokio::task::spawn_blocking(move || {
-                                cache.put(&key, &payload);
-                            })
-                            .await;
-                            if written.is_ok() {
-                                disk_bytes.fetch_add(len, Ordering::Relaxed);
-                                disk_files.fetch_add(1, Ordering::Relaxed);
-                            }
-                        }
-                    }
-                    // 解码 / 取主色是 CPU 密集，放到 blocking 线程池，避免拖慢同 runtime 的网络请求。
-                    let computed = tokio::task::spawn_blocking(move || {
-                        let color = if req >= COLOR_MIN_BUCKET {
-                            dominant_color(&bytes)
-                        } else {
-                            None
-                        };
-                        let image = guess_format(&bytes).map(|fmt| Arc::new(Image::from_bytes(fmt, bytes)));
-                        (color, image)
-                    })
-                    .await;
-                    if let Ok((color, image)) = computed {
-                        // 清空缓存后（gen 变化）旧任务不得回写。
-                        if gen_arc.load(Ordering::Relaxed) == gen {
-                            if let Some(color) = color {
-                                let mut map = colors.lock().unwrap();
-                                // 同一封面取「最大档」的颜色：与到达顺序无关。
-                                match map.get_mut(&base) {
-                                    Some((stored, stored_bucket, _)) if req > *stored_bucket => {
-                                        *stored = color;
-                                        *stored_bucket = req;
-                                    }
-                                    Some(_) => {}
-                                    None => {
-                                        map.insert(base, (color, req, Instant::now()));
-                                    }
-                                }
-                            }
-                            if let Some(image) = image {
-                                let mut cache = cache.lock().unwrap();
-                                // 持锁复查：clear() 先自增 gen 再 drain，若本任务在
-                                // 自增前拿到锁、自增后插入，这里是最后一道拦截。
-                                if gen_arc.load(Ordering::Relaxed) == gen {
-                                    cache.insert(
-                                        key.clone(),
-                                        Entry {
-                                            image,
-                                            bucket: req,
-                                            last_seen: Instant::now(),
-                                        },
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-                inflight.lock().unwrap().remove(&key);
-                let _ = tx.send(());
-            });
+                });
 
-            // 仅用于完成后通知发起方重绘（发起方可能已销毁，忽略即可）。
-            cx.spawn(async move |this, cx| {
-                let _ = rx.await;
-                this.update(cx, |_this, cx| cx.notify()).ok();
-            })
-            .detach();
+                // 仅用于完成后通知发起方重绘（发起方可能已销毁，忽略即可）。
+                cx.spawn(async move |this, cx| {
+                    let _ = rx.await;
+                    this.update(cx, |_this, cx| cx.notify()).ok();
+                })
+                .detach();
+            }
         }
     }
 
@@ -507,7 +503,7 @@ impl CoverLoader {
         if colors.len() <= COLOR_MAX_ENTRIES {
             return;
         }
-        let mut items: Vec<(String, Instant)> = colors.iter().map(|(k, (_, _, seen))| (k.clone(), *seen)).collect();
+        let mut items: Vec<(String, Instant)> = colors.iter().map(|(k, (_, seen))| (k.clone(), *seen)).collect();
         items.sort_by_key(|(_, seen)| *seen);
         let remove_n = colors.len() - COLOR_MAX_ENTRIES;
         for (key, _) in items.into_iter().take(remove_n) {
@@ -556,6 +552,21 @@ impl CoverLoader {
         }
         stats
     }
+}
+
+/// 预取计划：主档 + （需要取色时的）取色档。
+///
+/// 返回 `(档位化 URL, 该条目的档位, 是否算主色)`。主色只从 [`COLOR_BUCKET`] 算，
+/// 所以大图（512/1024）不再顺带算色；缺色时额外排一次 128 档——这一档本身服务
+/// 40~120px 的列表与头像，通常并不是额外流量（命中缓存时更不会发请求）。
+///
+/// 抽成纯函数是为了能单测「档位与取色解耦」，不必真的发网络请求。
+fn fetch_plan(url: &str, req: u32, has_color: bool) -> Vec<(String, u32, bool)> {
+    let mut plan = vec![(sized_url(url, req), req, req == COLOR_BUCKET)];
+    if req != COLOR_BUCKET && !has_color {
+        plan.push((sized_url(url, COLOR_BUCKET), COLOR_BUCKET, true));
+    }
+    plan
 }
 
 /// 网易云封面支持 `?param=WxH` 生成指定尺寸，减少下载量。
@@ -620,7 +631,9 @@ mod tests {
 
     use gpui_kit::{Image, ImageFormat};
 
-    use super::{bucket, entry_cost, fallback_buckets, request_bucket, sized_url, CoverStats, Entry};
+    use super::{
+        bucket, entry_cost, fallback_buckets, fetch_plan, request_bucket, sized_url, CoverStats, Entry, COLOR_BUCKET,
+    };
 
     #[test]
     fn sized_url_appends_param_with_correct_separator() {
@@ -690,6 +703,45 @@ mod tests {
             last_seen: Instant::now(),
         };
         assert_eq!(entry_cost(&entry), 512 * 512 * 4 + 1000);
+    }
+
+    #[test]
+    fn fetch_plan_separates_color_bucket_from_display_bucket() {
+        let url = "https://p1.music.126.net/cover.jpg";
+        let sized = |b: u32| format!("{url}?param={b}y{b}");
+
+        // 请求的就是取色档：只排一条，且由它算色。
+        assert_eq!(
+            fetch_plan(url, COLOR_BUCKET, false),
+            vec![(sized(COLOR_BUCKET), COLOR_BUCKET, true)]
+        );
+
+        // 大图 + 缺色：主档不算色，另排 128 档专门取色。
+        assert_eq!(
+            fetch_plan(url, 1024, false),
+            vec![(sized(1024), 1024, false), (sized(COLOR_BUCKET), COLOR_BUCKET, true)]
+        );
+
+        // 已有主色：不再多排取色请求。
+        assert_eq!(fetch_plan(url, 1024, true), vec![(sized(1024), 1024, false)]);
+
+        // 列表小档同样会补一条取色档（档位小，但取色不受影响）。
+        assert_eq!(
+            fetch_plan(url, 64, false),
+            vec![(sized(64), 64, false), (sized(COLOR_BUCKET), COLOR_BUCKET, true)]
+        );
+    }
+
+    #[test]
+    fn fetch_plan_collapses_for_urls_without_param_support() {
+        // 非 126.net（或已带 param）的 URL 不会被改写：两条计划落在同一个键上，
+        // 调用方的 `seen` 去重因此只发一次请求（不会重复下载）。
+        let url = "https://example.com/cover.jpg";
+        let plan = fetch_plan(url, 1024, false);
+        assert_eq!(plan.len(), 2);
+        assert_eq!(plan[0].0, url);
+        assert_eq!(plan[1].0, url);
+        assert!(plan.iter().any(|(_, bucket, want)| *bucket == COLOR_BUCKET && *want));
     }
 
     #[test]

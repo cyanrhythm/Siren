@@ -734,11 +734,31 @@ impl Root {
         if id != self.np.cover_song {
             self.np.cover_song = id;
             if let Some(song) = &song {
+                // 播放条小图立即取：切歌瞬间就要显示，且只有几 KB。
                 self.services.covers.prefetch([song.cover_url.clone()], 56.0, cx);
                 // 大封面只在右栏展开时预取：折叠态只渲染 44px 竖条，取了也没人看。
+                // P2.5 去抖：连续快速切歌时不为「路过的曲目」留下 1024 档大图（单张 1 MB+），
+                // 300ms 后仍停在这首歌才真正预取；展开右栏是显式操作，走 `toggle_now_playing`
+                // 立即取，不受此限。
                 if self.np.open {
                     let px = self.np.cover_px.get();
-                    self.services.covers.prefetch([song.cover_url.clone()], px, cx);
+                    let url = song.cover_url.clone();
+                    let covers = self.services.covers.clone();
+                    let playback = playback.clone();
+                    cx.spawn(async move |this, cx| {
+                        cx.background_executor()
+                            .timer(std::time::Duration::from_millis(300))
+                            .await;
+                        let still = playback.read_with(cx, |pb, _| pb.state().song.as_ref().map(|s| s.id));
+                        if still != id {
+                            return;
+                        }
+                        this.update(cx, |_root, cx| {
+                            covers.prefetch([url], px, cx);
+                        })
+                        .ok();
+                    })
+                    .detach();
                 }
             }
             // 切歌：评论面板归属旧歌时关闭，避免新旧歌评论混列表（J6）。
