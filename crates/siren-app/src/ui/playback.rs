@@ -1231,18 +1231,39 @@ impl Playback {
 
         let level = SettingsStore::of(cx).quality().code();
         let cache_on = SettingsStore::of(cx).audio_cache();
-        // 音频缓存命中：直接播本地文件——连播放地址都不用解析，断网也能放。
-        if cache_on {
-            if let Some(path) = self.audio_cache.as_ref().and_then(|c| c.lookup(song_id, level)) {
-                log::debug!("音频缓存命中 id={song_id} level={level}：{}", path.display());
-                let resume = self.resume_ms.take().filter(|_| Some(song.id) == self.resume_song_id);
-                self.resume_song_id = None;
-                self.player.play_url_from(path.to_string_lossy().as_ref(), resume);
-                self.needs_resolve = false;
-                self.status = format!("播放中：{}", song.name).into();
-                cx.notify();
-                return;
-            }
+        let cached = if cache_on {
+            self.audio_cache.as_ref().and_then(|c| c.lookup(song_id, level))
+        } else {
+            None
+        };
+        // 「这一首从哪来」一条 INFO 日志说清：本地缓存 / 网络（含为什么没命中）。
+        match &cached {
+            Some(path) => log::info!(
+                "音频来源：本地缓存 id={song_id} level={level}「{}」文件={}",
+                song.name,
+                path.display()
+            ),
+            None => log::info!(
+                "音频来源：网络 id={song_id} level={level}「{}」（{}）",
+                song.name,
+                if !cache_on {
+                    "音频缓存已关闭"
+                } else if self.audio_cache.is_none() {
+                    "本地缓存不可用"
+                } else {
+                    "缓存未命中，播放后写入"
+                }
+            ),
+        }
+        // 命中：直接播本地文件——连播放地址都不用解析，断网也能放。
+        if let Some(path) = cached {
+            let resume = self.resume_ms.take().filter(|_| Some(song.id) == self.resume_song_id);
+            self.resume_song_id = None;
+            self.player.play_url_from(path.to_string_lossy().as_ref(), resume);
+            self.needs_resolve = false;
+            self.status = format!("播放中：{}", song.name).into();
+            cx.notify();
+            return;
         }
 
         let client = self.client.clone();
@@ -1294,13 +1315,13 @@ impl Playback {
                                     match client.get_bytes(&cache_url).await {
                                         Ok(bytes) => {
                                             if cache.store(cache_id, cache_level, &bytes) {
-                                                log::debug!(
-                                                    "音频已缓存 id={cache_id} level={cache_level} {} KB",
+                                                log::info!(
+                                                    "音频缓存写入完成 id={cache_id} level={cache_level} {} KB",
                                                     bytes.len() / 1024
                                                 );
                                             }
                                         }
-                                        Err(err) => log::debug!("音频缓存下载失败 id={cache_id}：{err}"),
+                                        Err(err) => log::warn!("音频缓存下载失败 id={cache_id}：{err}"),
                                     }
                                 });
                             }
