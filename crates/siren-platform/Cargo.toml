@@ -12,6 +12,8 @@ authors.workspace = true
 siren-core.workspace = true
 # 日志门面（平台失败路径按约定记日志，不得静默）
 log.workspace = true
+# 跨平台目录（数据/缓存），见 app_paths.rs
+directories.workspace = true
 playwire.workspace = true
 raw-window-handle.workspace = true
 png.workspace = true

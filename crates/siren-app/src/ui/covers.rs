@@ -19,9 +19,15 @@
 //!
 //! 淘汰按 `last_seen`（每次渲染命中都会刷新）选「至少 10s 没被碰过」的条目，
 //! 屏上正在用的图不会刚被删掉又被下一帧重新解码（那会变成逐帧抖动）。
+//!
+//! ## 磁盘层
+//!
+//! 内存未命中时先查 [`super::cover_disk::DiskCache`]（500 MB、LRU）：
+//! 命中则直接读本地字节解码，冷启动也能秒开；未命中才走网络，成功后回写磁盘。
+//! 磁盘用量由后台周期任务刷新，`stats()` 只读原子量，不在渲染路径遍历目录。
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -29,6 +35,7 @@ use gpui_kit::*;
 
 use siren_core::network::client::NeteaseClient;
 
+use super::cover_disk::{DiskCache, DiskStats};
 use super::{cover_placeholder, cover_placeholder_round};
 
 /// 缓存总上限：压缩字节 + 解码位图估算。
@@ -89,6 +96,8 @@ pub(crate) struct CoverStats {
     pub entries: usize,
     pub compressed_bytes: u64,
     pub decoded_bytes: u64,
+    /// 磁盘缓存（封面/头像的本地字节）。
+    pub disk: DiskStats,
 }
 
 impl CoverStats {
@@ -119,6 +128,11 @@ pub(crate) struct CoverLoader {
     gen: Arc<AtomicU64>,
     sem: Arc<tokio::sync::Semaphore>,
     bulk_sem: Arc<tokio::sync::Semaphore>,
+    /// 磁盘层（无缓存目录时为 None，功能降级为纯内存）。
+    disk: Option<Arc<DiskCache>>,
+    /// 磁盘用量快照：由周期任务刷新，`stats()` 只读（渲染路径不遍历目录）。
+    disk_bytes: Arc<AtomicU64>,
+    disk_files: Arc<AtomicUsize>,
     client: Arc<NeteaseClient>,
     handle: tokio::runtime::Handle,
 }
@@ -130,6 +144,41 @@ fn base_url(url: &str) -> String {
 
 impl CoverLoader {
     pub(crate) fn new(client: Arc<NeteaseClient>, handle: tokio::runtime::Handle) -> Self {
+        let disk = DiskCache::open_default().map(Arc::new);
+        if let Some(cache) = &disk {
+            log::info!("封面磁盘缓存：{}", cache.dir().display());
+        } else {
+            log::warn!("封面磁盘缓存不可用（取不到缓存目录），仅用内存缓存");
+        }
+        let disk_bytes = Arc::new(AtomicU64::new(0));
+        let disk_files = Arc::new(AtomicUsize::new(0));
+        // 启动即后台 trim 一次（对齐 Melodia 的启动清理），之后每 60s 刷新用量。
+        if let Some(cache) = disk.clone() {
+            let bytes = disk_bytes.clone();
+            let files = disk_files.clone();
+            handle.spawn(async move {
+                let mut tick = tokio::time::interval(Duration::from_secs(60));
+                loop {
+                    let cache = cache.clone();
+                    let stats = tokio::task::spawn_blocking(move || {
+                        // 先淘汰再统计，日志里的数字才是「稳定后的占用」。
+                        cache.trim();
+                        cache.stats()
+                    })
+                    .await
+                    .unwrap_or_default();
+                    bytes.store(stats.bytes, Ordering::Relaxed);
+                    files.store(stats.files, Ordering::Relaxed);
+                    log::debug!(
+                        "封面磁盘缓存：{} 个文件 / {:.1} MB（上限 {} MB）",
+                        stats.files,
+                        stats.bytes as f64 / (1024.0 * 1024.0),
+                        super::cover_disk::DISK_LIMIT_BYTES / (1024 * 1024)
+                    );
+                    tick.tick().await;
+                }
+            });
+        }
         Self {
             cache: Arc::new(Mutex::new(HashMap::new())),
             colors: Arc::new(Mutex::new(HashMap::new())),
@@ -138,8 +187,19 @@ impl CoverLoader {
             gen: Arc::new(AtomicU64::new(0)),
             sem: Arc::new(tokio::sync::Semaphore::new(PREFETCH_CONCURRENCY)),
             bulk_sem: Arc::new(tokio::sync::Semaphore::new(BULK_PREFETCH_CONCURRENCY)),
+            disk,
+            disk_bytes,
+            disk_files,
             client,
             handle,
+        }
+    }
+
+    /// 磁盘用量快照（原子量，渲染路径可安全调用）。
+    fn disk_stats(&self) -> DiskStats {
+        DiskStats {
+            bytes: self.disk_bytes.load(Ordering::Relaxed),
+            files: self.disk_files.load(Ordering::Relaxed),
         }
     }
 
@@ -290,6 +350,9 @@ impl CoverLoader {
             let inflight = self.inflight.clone();
             let sem = sem.clone();
             let gen_arc = self.gen.clone();
+            let disk = self.disk.clone();
+            let disk_bytes = self.disk_bytes.clone();
+            let disk_files = self.disk_files.clone();
             let (tx, rx) = tokio::sync::oneshot::channel::<()>();
             let base = base_url(&url);
             self.handle.spawn(async move {
@@ -301,7 +364,42 @@ impl CoverLoader {
                     let _ = tx.send(());
                     return;
                 };
-                if let Ok(bytes) = client.get_bytes(&key).await {
+                // ① 磁盘命中：读本地字节，冷启动不必重新下载。读盘放 blocking 线程池。
+                let from_disk = match disk.clone() {
+                    Some(cache) => {
+                        let key = key.clone();
+                        tokio::task::spawn_blocking(move || cache.get(&key))
+                            .await
+                            .ok()
+                            .flatten()
+                    }
+                    None => None,
+                };
+                let hits_disk = from_disk.is_some();
+                if hits_disk {
+                    log::debug!("封面磁盘命中：{key}");
+                }
+                let fetched = match from_disk {
+                    Some(bytes) => Some(bytes),
+                    None => client.get_bytes(&key).await.ok(),
+                };
+                if let Some(bytes) = fetched {
+                    // ② 网络取到的新字节回写磁盘（命中的不重复写，省一次 IO）。
+                    if !hits_disk {
+                        if let Some(cache) = disk.clone() {
+                            let key = key.clone();
+                            let len = bytes.len() as u64;
+                            let payload = bytes.clone();
+                            let written = tokio::task::spawn_blocking(move || {
+                                cache.put(&key, &payload);
+                            })
+                            .await;
+                            if written.is_ok() {
+                                disk_bytes.fetch_add(len, Ordering::Relaxed);
+                                disk_files.fetch_add(1, Ordering::Relaxed);
+                            }
+                        }
+                    }
                     // 解码 / 取主色是 CPU 密集，放到 blocking 线程池，避免拖慢同 runtime 的网络请求。
                     let computed = tokio::task::spawn_blocking(move || {
                         let color = if req >= COLOR_MIN_BUCKET {
@@ -417,7 +515,7 @@ impl CoverLoader {
         }
     }
 
-    /// 清空全部缓存（设置页「清除图片缓存」）。
+    /// 清空全部缓存（设置页「清除图片缓存」）：内存 + 磁盘。
     pub(crate) fn clear(&self, cx: &mut App) {
         // 旧任务据此丢弃回写；inflight 一并清空。
         self.gen.fetch_add(1, Ordering::Relaxed);
@@ -427,6 +525,15 @@ impl CoverLoader {
         };
         self.colors.lock().unwrap().clear();
         self.inflight.lock().unwrap().clear();
+        if let Some(disk) = self.disk.clone() {
+            // 删文件放 blocking 线程池，避免设置页点一下卡住 UI。
+            self.handle.spawn(async move {
+                let removed = tokio::task::spawn_blocking(move || disk.clear()).await.unwrap_or(0);
+                log::info!("已清除封面磁盘缓存：{removed} 个文件");
+            });
+        }
+        self.disk_bytes.store(0, Ordering::Relaxed);
+        self.disk_files.store(0, Ordering::Relaxed);
         let mut seen = HashSet::new();
         for image in images {
             if seen.insert(image.id) {
@@ -440,6 +547,7 @@ impl CoverLoader {
         let cache = self.cache.lock().unwrap();
         let mut stats = CoverStats {
             entries: cache.len(),
+            disk: self.disk_stats(),
             ..Default::default()
         };
         for entry in cache.values() {
@@ -590,6 +698,7 @@ mod tests {
             entries: 2,
             compressed_bytes: 100,
             decoded_bytes: 4096,
+            disk: Default::default(),
         };
         assert_eq!(stats.total_bytes(), 4196);
         assert!(stats.total_mb() > 0.0);

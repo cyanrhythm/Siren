@@ -143,7 +143,7 @@ impl Root {
             ))
             .child(section(
                 "图片缓存",
-                "封面与头像的内存缓存：上限 64 MB，超出后按最近使用淘汰",
+                "封面与头像：内存上限 64 MB（按最近使用淘汰）；磁盘 500 MB（命中时不再下载）",
                 self.cache_control(weak.clone()),
             ));
 
@@ -158,6 +158,7 @@ impl Root {
         let rss = siren_platform::rss_bytes()
             .map(|bytes| format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0)))
             .unwrap_or_else(|| "—".to_string());
+        let (disk_mb, disk_files) = super::super::cover_disk::summary(stats.disk);
         let usage = format!(
             "{} 张 · 约 {:.1} MB（压缩 {:.1} MB + 解码 {:.1} MB）· 进程 RSS {}",
             stats.entries,
@@ -165,6 +166,10 @@ impl Root {
             stats.compressed_bytes as f64 / (1024.0 * 1024.0),
             stats.decoded_bytes as f64 / (1024.0 * 1024.0),
             rss
+        );
+        let disk = format!(
+            "磁盘 {disk_files} 个文件 · {disk_mb:.1} MB / {} MB",
+            super::super::cover_disk::DISK_LIMIT_BYTES / (1024 * 1024)
         );
         let weak_clear = weak;
         div()
@@ -174,11 +179,12 @@ impl Root {
             .gap(px(spacing::MD))
             .child(
                 div()
+                    .v_flex()
                     .flex_1()
                     .min_w(px(0.0))
-                    .text_sm()
-                    .text_color(theme::text_primary())
-                    .child(usage),
+                    .gap(px(spacing::XXS))
+                    .child(div().text_sm().text_color(theme::text_primary()).child(usage))
+                    .child(div().text_xs().text_color(theme::text_gray()).child(disk)),
             )
             .child(
                 Button::new("clear-cover-cache")

@@ -6048,6 +6048,7 @@ dependencies = [
 name = "siren-platform"
 version = "0.1.0"
 dependencies = [
+ "directories",
  "libc",
  "log",
  "playwire",
