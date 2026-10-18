@@ -27,6 +27,8 @@ pub struct Settings {
     media_keys: Option<bool>,
     /// 关闭主窗口时最小化到系统托盘（而非退出），默认开启。
     close_to_tray: Option<bool>,
+    /// 播放过的歌曲是否缓存到本地磁盘（`cache_dir/audio_cache`），默认开启。
+    audio_cache: Option<bool>,
     /// 正在播放卡片顺序（代码列表，见 [`DEFAULT_CARDS`]）。
     cards: Option<Vec<String>>,
     /// 正在播放面板中隐藏的卡片（代码）。
@@ -107,6 +109,17 @@ impl Settings {
     /// 设置关闭到托盘并落盘。
     pub fn set_close_to_tray(&mut self, enabled: bool) {
         self.close_to_tray = Some(enabled);
+        self.save();
+    }
+
+    /// 是否把播放过的歌曲缓存到本地（默认开启）。关闭后只流式播放、不落盘。
+    pub fn audio_cache(&self) -> bool {
+        self.audio_cache.unwrap_or(true)
+    }
+
+    /// 设置音频缓存开关并落盘。
+    pub fn set_audio_cache(&mut self, enabled: bool) {
+        self.audio_cache = Some(enabled);
         self.save();
     }
 

@@ -22,7 +22,7 @@
 //!
 //! ## 磁盘层
 //!
-//! 内存未命中时先查 [`super::cover_disk::DiskCache`]（500 MB、LRU）：
+//! 内存未命中时先查磁盘层（[`crate::disk_lru::DiskLru`]，500 MB / LRU）：
 //! 命中则直接读本地字节解码，冷启动也能秒开；未命中才走网络，成功后回写磁盘。
 //! 磁盘用量由后台周期任务刷新，`stats()` 只读原子量，不在渲染路径遍历目录。
 
@@ -35,8 +35,9 @@ use gpui_kit::*;
 
 use siren_core::network::client::NeteaseClient;
 
-use super::cover_disk::{DiskCache, DiskStats};
+use super::cover_disk::{cover_file_name, COVER_DISK_LIMIT, COVER_DISK_LOW_WATER};
 use super::{cover_placeholder, cover_placeholder_round};
+use crate::disk_lru::{DiskLru, DiskStats};
 
 /// 缓存总上限：压缩字节 + 解码位图估算。
 const CACHE_MAX_BYTES: u64 = 64 * 1024 * 1024;
@@ -135,7 +136,7 @@ pub(crate) struct CoverLoader {
     sem: Arc<tokio::sync::Semaphore>,
     bulk_sem: Arc<tokio::sync::Semaphore>,
     /// 磁盘层（无缓存目录时为 None，功能降级为纯内存）。
-    disk: Option<Arc<DiskCache>>,
+    disk: Option<Arc<DiskLru>>,
     /// 磁盘用量快照：由周期任务刷新，`stats()` 只读（渲染路径不遍历目录）。
     disk_bytes: Arc<AtomicU64>,
     disk_files: Arc<AtomicUsize>,
@@ -150,40 +151,18 @@ fn base_url(url: &str) -> String {
 
 impl CoverLoader {
     pub(crate) fn new(client: Arc<NeteaseClient>, handle: tokio::runtime::Handle) -> Self {
-        let disk = DiskCache::open_default().map(Arc::new);
-        if let Some(cache) = &disk {
-            log::info!("封面磁盘缓存：{}", cache.dir().display());
-        } else {
-            log::warn!("封面磁盘缓存不可用（取不到缓存目录），仅用内存缓存");
-        }
+        let disk = siren_platform::app_paths::image_cache_dir()
+            .and_then(|dir| DiskLru::open(dir, COVER_DISK_LIMIT, COVER_DISK_LOW_WATER))
+            .map(Arc::new);
         let disk_bytes = Arc::new(AtomicU64::new(0));
         let disk_files = Arc::new(AtomicUsize::new(0));
-        // 启动即后台 trim 一次（对齐 Melodia 的启动清理），之后每 60s 刷新用量。
-        if let Some(cache) = disk.clone() {
-            let bytes = disk_bytes.clone();
-            let files = disk_files.clone();
-            handle.spawn(async move {
-                let mut tick = tokio::time::interval(Duration::from_secs(60));
-                loop {
-                    let cache = cache.clone();
-                    let stats = tokio::task::spawn_blocking(move || {
-                        // 先淘汰再统计，日志里的数字才是「稳定后的占用」。
-                        cache.trim();
-                        cache.stats()
-                    })
-                    .await
-                    .unwrap_or_default();
-                    bytes.store(stats.bytes, Ordering::Relaxed);
-                    files.store(stats.files, Ordering::Relaxed);
-                    log::debug!(
-                        "封面磁盘缓存：{} 个文件 / {:.1} MB（上限 {} MB）",
-                        stats.files,
-                        stats.bytes as f64 / (1024.0 * 1024.0),
-                        super::cover_disk::DISK_LIMIT_BYTES / (1024 * 1024)
-                    );
-                    tick.tick().await;
-                }
-            });
+        match &disk {
+            Some(cache) => {
+                log::info!("封面磁盘缓存：{}", cache.dir().display());
+                // 启动即 trim 一次（对齐 Melodia 的启动清理），之后每 60s 刷新用量。
+                cache.spawn_maintenance(&handle, "封面磁盘缓存", disk_bytes.clone(), disk_files.clone());
+            }
+            None => log::warn!("封面磁盘缓存不可用（取不到缓存目录），仅用内存缓存"),
         }
         Self {
             cache: Arc::new(Mutex::new(HashMap::new())),
@@ -376,7 +355,7 @@ impl CoverLoader {
                     let from_disk = match disk.clone() {
                         Some(cache) => {
                             let key = key.clone();
-                            tokio::task::spawn_blocking(move || cache.get(&key))
+                            tokio::task::spawn_blocking(move || cache.get(&cover_file_name(&key)))
                                 .await
                                 .ok()
                                 .flatten()
@@ -395,11 +374,11 @@ impl CoverLoader {
                         // ② 网络取到的新字节回写磁盘（命中的不重复写，省一次 IO）。
                         if !hits_disk {
                             if let Some(cache) = disk.clone() {
-                                let key = key.clone();
+                                let name = cover_file_name(&key);
                                 let len = bytes.len() as u64;
                                 let payload = bytes.clone();
                                 let written = tokio::task::spawn_blocking(move || {
-                                    cache.put(&key, &payload);
+                                    cache.put(&name, &payload);
                                 })
                                 .await;
                                 if written.is_ok() {

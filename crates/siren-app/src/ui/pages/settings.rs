@@ -71,6 +71,21 @@ impl Root {
     ) -> AnyElement {
         let current = self.playback.read(cx).quality(cx);
         let media_on = self.playback.read(cx).media_keys_enabled(cx);
+        let audio_cache_on = self.playback.read(cx).audio_cache_enabled(cx);
+        let audio_cache_control = {
+            let weak_toggle = weak.clone();
+            Switch::new("audio-cache")
+                .checked(audio_cache_on)
+                .on_click(move |checked, _window, cx| {
+                    weak_toggle
+                        .update(cx, |root, cx| {
+                            root.playback
+                                .update(cx, |pb, cx| pb.set_audio_cache_enabled(*checked, cx));
+                        })
+                        .ok();
+                })
+                .into_any_element()
+        };
 
         let weak_media = weak.clone();
         let media_control = Switch::new("media-keys")
@@ -145,6 +160,17 @@ impl Root {
                 "图片缓存",
                 "封面与头像：内存上限 64 MB（按最近使用淘汰）；磁盘 500 MB（命中时不再下载）",
                 self.cache_control(weak.clone()),
+            ))
+            .child(section(
+                "音频缓存",
+                "播放过的歌曲落盘，再次播放直接读本地（也支持断网播放）；关闭后只流式播放",
+                div()
+                    .v_flex()
+                    .w_full()
+                    .gap(px(10.0))
+                    .child(toggle_row("播放时缓存到本地", audio_cache_control))
+                    .child(self.audio_cache_control(weak.clone(), cx))
+                    .into_any_element(),
             ));
 
         let scroll = smooth_scroll("settings-scroll", content, window, cx);
@@ -158,7 +184,7 @@ impl Root {
         let rss = siren_platform::rss_bytes()
             .map(|bytes| format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0)))
             .unwrap_or_else(|| "—".to_string());
-        let (disk_mb, disk_files) = super::super::cover_disk::summary(stats.disk);
+        let (disk_mb, disk_files) = crate::disk_lru::summary(stats.disk);
         let usage = format!(
             "{} 张 · 约 {:.1} MB（压缩 {:.1} MB + 解码 {:.1} MB）· 进程 RSS {}",
             stats.entries,
@@ -169,7 +195,7 @@ impl Root {
         );
         let disk = format!(
             "磁盘 {disk_files} 个文件 · {disk_mb:.1} MB / {} MB",
-            super::super::cover_disk::DISK_LIMIT_BYTES / (1024 * 1024)
+            super::super::cover_disk::COVER_DISK_LIMIT / (1024 * 1024)
         );
         let weak_clear = weak;
         div()
@@ -193,6 +219,46 @@ impl Root {
                         weak_clear
                             .update(cx, |root, cx| {
                                 root.services.covers.clear(cx);
+                                cx.notify();
+                            })
+                            .ok();
+                    }),
+            )
+            .into_any_element()
+    }
+
+    /// 音频缓存占用与清除入口（开关在调用方那行）。
+    fn audio_cache_control(&self, weak: WeakEntity<Self>, cx: &App) -> AnyElement {
+        let playback = self.playback.read(cx);
+        let stats = playback.audio_cache_stats();
+        let limit = playback.audio_cache_limit();
+        let (mb, files) = crate::disk_lru::summary(stats);
+        let text = if limit == 0 {
+            "本地缓存不可用（取不到缓存目录）".to_string()
+        } else {
+            format!("已缓存 {files} 首 · {mb:.1} MB / {} MB", limit / (1024 * 1024))
+        };
+        let weak_clear = weak;
+        div()
+            .w_full()
+            .flex()
+            .items_center()
+            .gap(px(spacing::MD))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .text_xs()
+                    .text_color(theme::text_gray())
+                    .child(text),
+            )
+            .child(
+                Button::new("clear-audio-cache")
+                    .label("清除音频缓存")
+                    .on_click(move |_ev, _window, cx| {
+                        weak_clear
+                            .update(cx, |root, cx| {
+                                root.playback.update(cx, |pb, cx| pb.clear_audio_cache(cx));
                                 cx.notify();
                             })
                             .ok();

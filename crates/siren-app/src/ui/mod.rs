@@ -5,6 +5,7 @@
 //!
 //! 页面通过 [`PageEvent`] 事件请求导航（`OpenPlaylist` / `Back`），不依赖外壳类型。
 
+mod audio_cache;
 pub mod components;
 mod cover_disk;
 pub mod covers;

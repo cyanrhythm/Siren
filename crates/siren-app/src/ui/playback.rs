@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 use gpui_kit::component::slider::{SliderEvent, SliderState, SliderValue};
 use gpui_kit::*;
 
+use super::audio_cache::AudioCache;
 use super::covers::CoverLoader;
 use super::notifications::Notifications;
 use super::settings_store::SettingsStore;
@@ -108,6 +109,8 @@ pub(crate) struct Playback {
     volume_slider: Entity<SliderState>,
     media: Option<PlatformMediaSession>,
     media_cmds: std::sync::mpsc::Receiver<MediaCommand>,
+    /// 播放过的歌曲字节落盘（`cache_dir/audio_cache`，2 GB LRU）；取不到目录时为 None。
+    audio_cache: Option<AudioCache>,
     _progress_sub: Subscription,
     _volume_sub: Subscription,
 }
@@ -234,10 +237,13 @@ impl Playback {
                     }
                 },
             );
+            // 音频缓存：取不到系统缓存目录时降级为「不落盘」，播放不受影响。
+            let audio_cache = AudioCache::open(&handle);
             Self {
                 client,
                 handle,
                 covers,
+                audio_cache,
                 notifications,
                 player,
                 status: "就绪".into(),
@@ -464,6 +470,38 @@ impl Playback {
     /// 设置音质档位（写入设置 store 并落盘）。
     pub(crate) fn set_quality(&mut self, quality: AudioQuality, cx: &mut Context<Self>) {
         cx.global_mut::<SettingsStore>().set_quality(quality);
+        cx.notify();
+    }
+
+    /// 音频缓存是否开启（设置项，默认开）。
+    pub(crate) fn audio_cache_enabled(&self, cx: &App) -> bool {
+        SettingsStore::of(cx).audio_cache()
+    }
+
+    /// 开关音频缓存并落盘。
+    pub(crate) fn set_audio_cache_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        cx.global_mut::<SettingsStore>().set_audio_cache(enabled);
+        cx.notify();
+    }
+
+    /// 音频缓存用量（原子量快照，渲染路径可安全调用）。
+    pub(crate) fn audio_cache_stats(&self) -> crate::disk_lru::DiskStats {
+        self.audio_cache.as_ref().map(|c| c.stats()).unwrap_or_default()
+    }
+
+    /// 音频缓存上限（字节）；无缓存目录时为 0。
+    pub(crate) fn audio_cache_limit(&self) -> u64 {
+        self.audio_cache.as_ref().map(|c| c.limit()).unwrap_or(0)
+    }
+
+    /// 清空音频缓存（下次播放重新下载）。
+    pub(crate) fn clear_audio_cache(&mut self, cx: &mut Context<Self>) {
+        if let Some(cache) = self.audio_cache.clone() {
+            self.handle.spawn(async move {
+                let removed = tokio::task::spawn_blocking(move || cache.clear()).await.unwrap_or(0);
+                log::info!("已清除音频缓存：{removed} 个文件");
+            });
+        }
         cx.notify();
     }
 
@@ -1191,9 +1229,24 @@ impl Playback {
         // 详情/歌词/百科/评论/歌手：与播放解耦，冷启动恢复时也会调用（见 `load_restored_metadata`）。
         self.fetch_song_metadata(&song, gen, cx);
 
+        let level = SettingsStore::of(cx).quality().code();
+        let cache_on = SettingsStore::of(cx).audio_cache();
+        // 音频缓存命中：直接播本地文件——连播放地址都不用解析，断网也能放。
+        if cache_on {
+            if let Some(path) = self.audio_cache.as_ref().and_then(|c| c.lookup(song_id, level)) {
+                log::debug!("音频缓存命中 id={song_id} level={level}：{}", path.display());
+                let resume = self.resume_ms.take().filter(|_| Some(song.id) == self.resume_song_id);
+                self.resume_song_id = None;
+                self.player.play_url_from(path.to_string_lossy().as_ref(), resume);
+                self.needs_resolve = false;
+                self.status = format!("播放中：{}", song.name).into();
+                cx.notify();
+                return;
+            }
+        }
+
         let client = self.client.clone();
         let id = song.id;
-        let level = SettingsStore::of(cx).quality().code();
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.handle.spawn(async move {
             let url = match siren_core::network::api::song_url_eapi(&client, id, level)
@@ -1230,6 +1283,28 @@ impl Playback {
                         this.needs_resolve = false;
                         this.status = format!("播放中：{}", song.name).into();
                         this.save_progress();
+                        // 后台把这次的音频写入缓存（不阻塞起播）；播放地址有时效，尽早拉。
+                        if cache_on {
+                            if let Some(cache) = this.audio_cache.clone() {
+                                let client = this.client.clone();
+                                let cache_url = url.clone();
+                                let cache_level = level;
+                                let cache_id = song_id;
+                                this.handle.spawn(async move {
+                                    match client.get_bytes(&cache_url).await {
+                                        Ok(bytes) => {
+                                            if cache.store(cache_id, cache_level, &bytes) {
+                                                log::debug!(
+                                                    "音频已缓存 id={cache_id} level={cache_level} {} KB",
+                                                    bytes.len() / 1024
+                                                );
+                                            }
+                                        }
+                                        Err(err) => log::debug!("音频缓存下载失败 id={cache_id}：{err}"),
+                                    }
+                                });
+                            }
+                        }
                     }
                     None => {
                         log::warn!("无可用播放地址 id={}", song.id);

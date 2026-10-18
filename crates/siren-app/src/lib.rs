@@ -11,6 +11,7 @@
 // `gpui_kit::*` 通配导入下展开 `#[test]` 会触及默认递归深度上限。
 #![recursion_limit = "256"]
 
+mod disk_lru;
 pub mod theme;
 pub mod ui;
 

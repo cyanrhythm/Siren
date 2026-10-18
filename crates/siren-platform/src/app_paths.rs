@@ -14,8 +14,8 @@
 //! |---|---|
 //! | 数据（配置、登录态） | `data_dir` |
 //! | 日志 | `data_dir/logs/` |
-//! | 图片缓存 | `cache_dir/image_cache/` |
-//! | 音频缓存 | `cache_dir/audio_cache/` |
+//! | 图片缓存 | `cache_dir/image_cache/`（已实现，`ui/cover_disk.rs`） |
+//! | 音频缓存 | `cache_dir/audio_cache/`（已实现，`ui/audio_cache.rs`） |
 //! | 元数据缓存 | `cache_dir/meta_cache/` |
 //! | 下载临时 | `cache_dir/download_tmp/` |
 //! | 默认下载目录 | `~/Music/Siren/` |
@@ -58,6 +58,11 @@ pub fn image_cache_dir() -> Option<PathBuf> {
     cache_dir().map(|dir| dir.join("image_cache"))
 }
 
+/// 音频缓存目录（播放过的歌曲字节，见 `ui/audio_cache.rs`）。
+pub fn audio_cache_dir() -> Option<PathBuf> {
+    cache_dir().map(|dir| dir.join("audio_cache"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -72,6 +77,11 @@ mod tests {
         assert!(images.starts_with(&cache));
         if let Some(data) = data_dir() {
             assert!(!images.starts_with(&data), "缓存不应写进数据目录");
+        }
+        // 音频缓存与之同级。
+        if let Some(audio) = audio_cache_dir() {
+            assert_eq!(audio, cache.join("audio_cache"));
+            assert!(audio.starts_with(&cache));
         }
     }
 }

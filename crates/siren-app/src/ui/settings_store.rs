@@ -47,6 +47,16 @@ impl SettingsStore {
         self.data.set_media_keys(enabled);
     }
 
+    /// 是否把播放过的歌曲缓存到本地磁盘。
+    pub(crate) fn audio_cache(&self) -> bool {
+        self.data.audio_cache()
+    }
+
+    /// 设置音频缓存开关（落盘）。
+    pub(crate) fn set_audio_cache(&mut self, enabled: bool) {
+        self.data.set_audio_cache(enabled);
+    }
+
     /// 关闭主窗口是否最小化到托盘。
     pub(crate) fn close_to_tray(&self) -> bool {
         self.data.close_to_tray()
