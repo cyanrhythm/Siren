@@ -41,10 +41,6 @@ resources/native/**/*.dll
 resources/native/**/*.so
 resources/native/**/*.so.*
 resources/native/**/*.dylib
-assets/native/**/*.dll
-assets/native/**/*.so
-assets/native/**/*.so.*
-assets/native/**/*.dylib
 
 # 运行时/崩溃日志产物
 crash.log

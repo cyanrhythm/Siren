@@ -40,7 +40,7 @@ category = "Music"
 description = "网易云音乐第三方桌面客户端（Rust + GPUI）"
 authors = ["cyanrhythm"]
 icons = ["../../assets/icons/siren.ico"]
-resources = ["../../assets/native/windows/bin/*.dll"]
+resources = ["../../resources/native/windows/bin/*.dll"]
 before-packaging-command = "cargo build --release -p siren-app"
 formats = ["nsis"]
 
