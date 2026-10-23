@@ -2,9 +2,9 @@
 //! 1. 把当前提交号写进 `SIREN_GIT_HASH`（「关于」页展示）；
 //! 2. Windows 下把图标与版本信息编进 exe（其它平台跳过）。
 //!
-//! 资源交给 [`winresource`] 而不是自己调 `rc.exe`：
-//! - 工具链覆盖 MSVC（`rc.exe`，自带 SDK 路径探测）、GNU（`windres`，含交叉前缀）、
-//!   LLVM（`llvm-rc`），不必在本仓库里维护一套查找逻辑；
+//! 资源交给 [`tauri_winres`] 而不是自己调 `rc.exe`：
+//! - 它是 Tauri 维护的 winres 分支，内部委托 `embed-resource` 做工具链探测，
+//!   覆盖 MSVC（`rc.exe`）、GNU（`windres`，含交叉前缀）与 LLVM（`llvm-rc`）；
 //! - `FileVersion` / `ProductVersion` 默认取 `CARGO_PKG_VERSION`，不会与
 //!   workspace 版本脱节（自建版本曾长期停在 0.1.0 而 workspace 已是 0.2.0）；
 //! - 图标文件变化会自动 `rerun-if-changed`。
@@ -19,7 +19,7 @@ fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
         return;
     }
-    let mut resource = winresource::WindowsResource::new();
+    let mut resource = tauri_winres::WindowsResource::new();
     resource
         .set_icon("../../assets/icons/siren.ico")
         .set("CompanyName", "cyanrhythm")

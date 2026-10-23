@@ -134,7 +134,7 @@ flowchart TD
 ### 依赖
 
 - **Rust**：stable 通道（`rust-toolchain.toml` 已声明；最低 1.85）
-- **Windows**：MSVC 工具链 + Windows SDK（`build.rs` 经 `winresource` 调 `rc.exe` 编译图标与版本资源；缺工具链时只警告、不中断构建）
+- **Windows**：MSVC 工具链 + Windows SDK（`build.rs` 经 `tauri-winres` 编译图标与版本资源；缺工具链时只警告、不中断构建）
 - **Linux**：GPUI 所需的系统库，以及 libmpv：
 
   ```bash
@@ -214,7 +214,7 @@ makepkg -si
 | `SIREN_LOG_LEVEL` | `off`/`error`/`warn`/`info`/`debug`/`trace`，默认 `info` |
 | `SIREN_LOG_STDERR` | 设为 `0`/`false`/`no` 时不镜像到标准错误（默认镜像） |
 | `SIREN_START` | 开发入口：`search` / `settings` / `about` / `account` / `recent` / `artist` / `playlist:<id>`，启动即跳到对应页面 |
-| `RC` / `RC_x86_64_pc_windows_msvc` / `WINDRES` | 指定资源编译器（MSVC / GNU 交叉构建各取所需，见 `winresource`） |
+| `RC` / `RC_x86_64_pc_windows_msvc` / `WINDRES` | 指定资源编译器（MSVC / GNU 交叉构建各取所需，见 `tauri-winres`） |
 
 ### 数据与日志位置
 

@@ -20,7 +20,7 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 
 [build-dependencies]
 # Windows exe 的图标与版本信息（见 build.rs）
-winresource.workspace = true
+tauri-winres.workspace = true
 
 [[bin]]
 name = "siren"
