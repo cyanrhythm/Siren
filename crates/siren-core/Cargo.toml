@@ -19,7 +19,6 @@ hex.workspace = true
 md-5.workspace = true
 rand.workspace = true
 num-bigint.workspace = true
-num-traits.workspace = true
 
 # 序列化
 serde.workspace = true

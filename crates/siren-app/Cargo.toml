@@ -53,4 +53,4 @@ header-image = "../../assets/packaging/install-header.bmp"
 # 安装界面语言：简体中文优先（可加 "English" 作备选）。
 languages = ["SimpChinese"]
 # 自定义模板：在默认模板基础上开启 ManifestDPIAware（高 DPI 清晰）并接入卸载图标。
-template = "packaging/installer.nsi"
+template = "../../resources/package/windows/installer.nsi"
