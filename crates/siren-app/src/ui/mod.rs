@@ -142,6 +142,8 @@ pub(crate) enum Route {
     Settings,
     /// 账号设置。
     Account,
+    /// 关于应用。
+    About,
 }
 
 /// 页面回传给外壳的导航事件。
@@ -177,6 +179,8 @@ pub(crate) enum PageEvent {
     OpenSettings,
     /// 打开账号设置。
     OpenAccount,
+    /// 打开「关于应用」。
+    OpenAbout,
     /// 请求新建歌单。
     OpenCreate,
     /// 请求把歌曲加入歌单。
@@ -514,6 +518,7 @@ impl Root {
             Some("search") => Route::Search,
             Some("settings") => Route::Settings,
             Some("account") => Route::Account,
+            Some("about") => Route::About,
             Some("recent") => Route::RecentPlay,
             _ => Route::Home,
         };
@@ -713,6 +718,7 @@ impl Root {
                 self.navigate(Route::RecentPlay, cx);
             }
             PageEvent::OpenSettings => self.navigate(Route::Settings, cx),
+            PageEvent::OpenAbout => self.navigate(Route::About, cx),
             PageEvent::OpenAccount => self.open_account(cx),
             PageEvent::OpenCreate => self.open_create(cx),
             PageEvent::AddToPlaylist { song_id } => self.open_picker(*song_id, cx),
@@ -815,7 +821,7 @@ impl Root {
                     page.update(cx, |_, cx| cx.notify());
                 }
             }
-            Route::Settings => {}
+            Route::Settings | Route::About => {}
         }
         cx.notify();
     }
@@ -1244,6 +1250,7 @@ impl Root {
                 .map(|p| p.clone().into_any_element())
                 .unwrap_or_else(|| div().into_any_element()),
             Route::Settings => self.settings_page(weak, window, cx),
+            Route::About => pages::about::about_page(),
             Route::Account => self
                 .account_page
                 .as_ref()

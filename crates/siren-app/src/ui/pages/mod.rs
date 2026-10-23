@@ -28,6 +28,7 @@ pub(crate) mod dim {
     pub(crate) const HEADER_COLLAPSE_AT_PX: f32 = 8.0;
 }
 
+pub(crate) mod about;
 mod account;
 mod album;
 mod artist;

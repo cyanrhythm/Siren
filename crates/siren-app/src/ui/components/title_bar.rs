@@ -104,6 +104,13 @@ impl Root {
                         },
                     ));
                     let weak = weak_account.clone();
+                    menu = menu.item(PopupMenuItem::new("关于应用").icon(Icon::new(IconName::Info)).on_click(
+                        move |_ev, _window, cx| {
+                            weak.update(cx, |root, cx| root.on_page_event(&PageEvent::OpenAbout, cx))
+                                .ok();
+                        },
+                    ));
+                    let weak = weak_account.clone();
                     menu.item(
                         PopupMenuItem::new("退出登录")
                             .icon(Icon::new(IconName::LogOut))
@@ -121,9 +128,16 @@ impl Root {
                         },
                     ));
                     let weak = weak_account.clone();
-                    menu.item(PopupMenuItem::new("设置").icon(Icon::new(IconName::Settings)).on_click(
+                    menu = menu.item(PopupMenuItem::new("设置").icon(Icon::new(IconName::Settings)).on_click(
                         move |_ev, _window, cx| {
                             weak.update(cx, |root, cx| root.on_page_event(&PageEvent::OpenSettings, cx))
+                                .ok();
+                        },
+                    ));
+                    let weak = weak_account.clone();
+                    menu.item(PopupMenuItem::new("关于应用").icon(Icon::new(IconName::Info)).on_click(
+                        move |_ev, _window, cx| {
+                            weak.update(cx, |root, cx| root.on_page_event(&PageEvent::OpenAbout, cx))
                                 .ok();
                         },
                     ))
