@@ -63,6 +63,11 @@ raw-window-handle = "0.6"
 # ── UI（siren-app）──────────────────────────────────────────────
 gpui-kit = "0.8"
 
+# ── 构建期（siren-app build.rs）─────────────────────────────────
+# Windows exe 的图标 + 版本信息：MSVC（rc.exe）与 GNU（windres）/ LLVM 都覆盖，
+# 版本字段默认取自 CARGO_PKG_VERSION。
+winresource = "0.1"
+
 # ── 构建配置 ────────────────────────────────────────────────────
 
 [profile.release]

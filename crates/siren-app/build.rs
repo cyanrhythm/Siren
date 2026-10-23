@@ -1,57 +1,30 @@
-//! 构建脚本：Windows 下用 Windows SDK 的 `rc.exe` 编译资源（图标 + 版本信息），
-//! 并把生成的 `.res` 交给链接器（MSVC `link.exe` 可直接链接 `.res`）。
-
-use std::path::PathBuf;
-use std::process::Command;
+//! 构建脚本：把图标与版本信息编进 Windows exe（其它平台什么都不做）。
+//!
+//! 交给 [`winresource`] 而不是自己调 `rc.exe`：
+//! - 工具链覆盖 MSVC（`rc.exe`，自带 SDK 路径探测）、GNU（`windres`，含交叉前缀）、
+//!   LLVM（`llvm-rc`），不必在本仓库里维护一套查找逻辑；
+//! - `FileVersion` / `ProductVersion` 默认取 `CARGO_PKG_VERSION`，不会与
+//!   workspace 版本脱节（自建版本曾长期停在 0.1.0 而 workspace 已是 0.2.0）；
+//! - 图标文件变化会自动 `rerun-if-changed`。
+//!
+//! 找不到资源编译器时只警告、不失败：`cargo check --target x86_64-pc-windows-gnu`
+//! 这类纯检查（不需要链接资源）在无 MinGW 的机器上也应当能过。
 
 fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
         return;
     }
-    println!("cargo:rerun-if-changed=application.rc");
-    println!("cargo:rerun-if-changed=../../assets/icons/siren.ico");
-
-    let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR 未设置");
-    let res_path = format!("{out_dir}/siren.res");
-    let rc = find_rc().expect("未找到 rc.exe（Windows SDK 资源编译器）");
-
-    let status = Command::new(&rc)
-        .arg("/nologo")
-        .arg("/fo")
-        .arg(&res_path)
-        .arg("application.rc")
-        .status()
-        .unwrap_or_else(|e| panic!("执行 {} 失败: {e}", rc.display()));
-    assert!(status.success(), "rc.exe 编译资源失败");
-
-    println!("cargo:rustc-link-arg={res_path}");
-}
-
-/// 定位 `rc.exe`：优先环境变量，其次 Windows Kits 目录，再次 PATH。
-fn find_rc() -> Option<PathBuf> {
-    for key in ["RC_x86_64_pc_windows_msvc", "RC"] {
-        if let Ok(value) = std::env::var(key) {
-            if !value.trim().is_empty() {
-                return Some(PathBuf::from(value));
-            }
-        }
+    let mut resource = winresource::WindowsResource::new();
+    resource
+        .set_icon("../../assets/icons/siren.ico")
+        .set("CompanyName", "cyanrhythm")
+        .set("FileDescription", "Siren")
+        .set("InternalName", "siren")
+        .set("OriginalFilename", "siren.exe")
+        .set("ProductName", "Siren")
+        // 简体中文（0x0804）优先，探测不到就沿用默认语言。
+        .set_language(0x0804);
+    if let Err(err) = resource.compile() {
+        println!("cargo:warning=Windows 资源未编译（缺少 rc.exe / windres）：{err}");
     }
-    let kits = std::env::var("ProgramFiles(x86)")
-        .or_else(|_| std::env::var("ProgramFiles"))
-        .map(|pf| PathBuf::from(pf).join("Windows Kits").join("10").join("bin"));
-    if let Ok(kits) = kits {
-        let mut candidates: Vec<PathBuf> = std::fs::read_dir(&kits)
-            .into_iter()
-            .flatten()
-            .flatten()
-            .map(|entry| entry.path().join("x64").join("rc.exe"))
-            .filter(|path| path.exists())
-            .collect();
-        // 目录名形如 10.0.22621.0，取版本最大的
-        candidates.sort();
-        if let Some(path) = candidates.pop() {
-            return Some(path);
-        }
-    }
-    Some(PathBuf::from("rc.exe"))
 }

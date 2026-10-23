@@ -43,19 +43,12 @@ cargo check -p siren-platform --target x86_64-pc-windows-gnu --all-targets
 cargo clippy -p siren-platform --target x86_64-pc-windows-gnu --all-targets
 ```
 
-检查整个应用（含 gpui Windows 栈）时，`siren-app/build.rs` 需要 `rc.exe` 编译
-资源；`cargo check` 不链接，可用桩脚本经 `RC_x86_64_pc_windows_msvc` 绕行：
+检查整个应用（含 gpui Windows 栈）时，`siren-app/build.rs` 会尝试编译图标资源。
+资源编译器（GNU 目标走 `x86_64-w64-mingw32-windres`，可用 `WINDRES` 覆盖）缺失时
+只打一条 `cargo:warning`、不会中断构建，所以纯检查不需要任何绕行：
 
 ```bash
-cat > /tmp/rc.exe <<'EOF'
-#!/bin/sh
-out=""; prev=""
-for a in "$@"; do [ "$prev" = "/fo" ] && out="$a"; prev="$a"; done
-[ -n "$out" ] && : > "$out"
-exit 0
-EOF
-chmod +x /tmp/rc.exe
-RC_x86_64_pc_windows_msvc=/tmp/rc.exe cargo check -p siren-app --target x86_64-pc-windows-gnu
+cargo check -p siren-app --target x86_64-pc-windows-gnu
 ```
 
 > macOS 目标需要 clang + macOS SDK（`ring` 的 C 构建），Linux 上不可用，

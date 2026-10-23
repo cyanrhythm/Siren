@@ -1,6 +1,6 @@
 //! 窗口图标：从 exe 内嵌资源加载并设置到窗口（任务栏 / Alt-Tab / 标题）。
 //!
-//! 资源 id 与 `crates/siren-app/app.rc` 中的 `1 ICON` 对应。
+//! 资源由 `crates/siren-app/build.rs`（`winresource`）写入，id 为 1。
 
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, WPARAM};
@@ -9,7 +9,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     LoadIconW, SendMessageW, SetClassLongPtrW, GCLP_HICON, GCLP_HICONSM, ICON_BIG, ICON_SMALL, WM_SETICON,
 };
 
-/// 内嵌应用图标的资源 id（`app.rc`：`1 ICON "..."`）。
+/// 内嵌应用图标的资源 id（`winresource::set_icon` 生成 `1 ICON "..."`）。
 const APP_ICON_RESOURCE: usize = 1;
 
 /// 把内嵌应用图标设为窗口图标；成功返回 `true`。
