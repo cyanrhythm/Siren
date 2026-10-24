@@ -6012,6 +6012,8 @@ dependencies = [
  "gpui-kit",
  "image",
  "log",
+ "serde",
+ "serde_json",
  "siren-core",
  "siren-platform",
  "tauri-winres",

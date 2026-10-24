@@ -16,8 +16,8 @@ use siren_core::error::ResultExt;
 use siren_core::model::{PlaylistDetail, Song};
 
 use super::super::components::{
-    detail_shell, overlay_close, overlay_scrim, overlay_scrim_strong, play_circle, song_row, sticky_bar, IndexCell,
-    SongRow, StickyBar,
+    detail_shell, offline_hint, overlay_close, overlay_scrim, overlay_scrim_strong, play_circle, song_row, sticky_bar,
+    IndexCell, SongRow, StickyBar,
 };
 use super::super::playback::Playback;
 use super::super::services::{task_failure, Services};
@@ -89,6 +89,8 @@ pub(crate) struct PlaylistPage {
     detail: Option<Arc<PlaylistDetail>>,
     /// 加载失败：用于展示错误态与重试（而非永久停在“加载中”）。
     failed: bool,
+    /// 本次展示的是磁盘快照（在线请求失败时）。
+    offline: bool,
     subscribed: bool,
     query_input: Entity<InputState>,
     query: String,
@@ -145,6 +147,7 @@ impl PlaylistPage {
             name,
             detail: None,
             failed: false,
+            offline: false,
             subscribed: false,
             query_input,
             query: String::new(),
@@ -180,6 +183,7 @@ impl PlaylistPage {
         let gen = self.load_gen;
         self.failed = false;
         let client = self.services.client.clone();
+        let meta = self.services.meta.clone();
         let id = self.id;
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.services.handle.spawn(async move {
@@ -247,6 +251,12 @@ impl PlaylistPage {
             } else {
                 log::warn!("[playlist] id={id} 加载失败或为空，用时 {:?}", t_all.elapsed());
             }
+            // 在线成功即写快照（含分页补全后的完整曲目）；离线时据此兜底。
+            if let (Some(meta), Some(d)) = (meta.as_ref(), detail.as_ref()) {
+                if meta.save(&format!("playlist-{id}"), d) {
+                    log::debug!("元数据快照已写入：playlist-{id}（{} 首）", d.tracks.len());
+                }
+            }
             let _ = tx.send(detail);
         });
         cx.notify();
@@ -259,6 +269,20 @@ impl PlaylistPage {
                 if let Some(d) = &detail {
                     this.subscribed = d.subscribed;
                 }
+                // 在线失败：退回磁盘快照（离线可看），并标记为「离线缓存」。
+                let cached = if detail.is_none() {
+                    this.services
+                        .meta
+                        .as_ref()
+                        .and_then(|m| m.load::<PlaylistDetail>(&format!("playlist-{}", this.id)))
+                } else {
+                    None
+                };
+                this.offline = detail.is_none() && cached.is_some();
+                if let (true, Some(d)) = (this.offline, cached.as_ref()) {
+                    log::info!("歌单 {} 在线加载失败，改用磁盘快照（{} 首）", this.id, d.tracks.len());
+                }
+                let detail = detail.or(cached);
                 // 三态：成功/失败（失败展示错误态 + 重试）；不再永久停在“加载中”。
                 this.failed = detail.is_none();
                 this.detail = detail.map(Arc::new);
@@ -1189,13 +1213,10 @@ impl Render for PlaylistPage {
                                 )),
                         )
                     })
-                    .child(div().id("pl-download").cursor_pointer().child(icon(
-                        IconName::Download,
-                        28.0,
-                        theme::text_gray(),
-                    )))
                     // ⋯ 从顶部导航行移到这里（编辑类动作已并入「名称和详情」，只留管理动作）。
                     .child(more_button("pl-more", weak_more, owned, pid, self.name.clone()))
+                    // 离线快照提示：放在始终渲染的操作行里（自建歌单的胶囊行对别人的歌单不存在）。
+                    .when(self.offline, |el| el.child(offline_hint()))
                     .child(div().flex_1())
                     .child(
                         div()

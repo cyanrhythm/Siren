@@ -12,6 +12,7 @@
 #![recursion_limit = "256"]
 
 mod disk_lru;
+mod meta_cache;
 pub mod theme;
 pub mod ui;
 

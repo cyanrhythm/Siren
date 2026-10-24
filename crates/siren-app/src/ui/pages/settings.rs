@@ -171,6 +171,11 @@ impl Root {
                     .child(toggle_row("播放时缓存到本地", audio_cache_control))
                     .child(self.audio_cache_control(weak.clone(), cx))
                     .into_any_element(),
+            ))
+            .child(section(
+                "元数据缓存",
+                "歌单 / 专辑 / 歌手详情的 JSON 快照：在线成功即写、加载失败时兜底（按账号分目录）",
+                self.meta_control(weak.clone()),
             ));
 
         let scroll = smooth_scroll("settings-scroll", content, window, cx);
@@ -259,6 +264,53 @@ impl Root {
                         weak_clear
                             .update(cx, |root, cx| {
                                 root.playback.update(cx, |pb, cx| pb.clear_audio_cache(cx));
+                                cx.notify();
+                            })
+                            .ok();
+                    }),
+            )
+            .into_any_element()
+    }
+
+    /// 元数据缓存占用与清除入口。
+    fn meta_control(&self, weak: WeakEntity<Self>) -> AnyElement {
+        let Some(meta) = self.services.meta.as_ref() else {
+            return div()
+                .text_xs()
+                .text_color(theme::text_gray())
+                .child("元数据缓存不可用（取不到缓存目录）")
+                .into_any_element();
+        };
+        let (mb, files) = crate::disk_lru::summary(meta.stats());
+        let limit = meta.limit() / (1024 * 1024);
+        let text = format!("{files} 个快照 · {mb:.1} MB / {limit} MB");
+        let weak_clear = weak;
+        div()
+            .w_full()
+            .flex()
+            .items_center()
+            .gap(px(spacing::MD))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .text_xs()
+                    .text_color(theme::text_gray())
+                    .child(text),
+            )
+            .child(
+                Button::new("clear-meta-cache")
+                    .label("清除元数据缓存")
+                    .on_click(move |_ev, _window, cx| {
+                        weak_clear
+                            .update(cx, |root, cx| {
+                                if let Some(meta) = root.services.meta.clone() {
+                                    root.services.handle.spawn(async move {
+                                        let removed =
+                                            tokio::task::spawn_blocking(move || meta.clear()).await.unwrap_or(0);
+                                        log::info!("已清除元数据缓存：{removed} 个快照");
+                                    });
+                                }
                                 cx.notify();
                             })
                             .ok();

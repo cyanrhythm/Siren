@@ -17,6 +17,8 @@ pub(crate) struct Services {
     pub client: Arc<NeteaseClient>,
     pub handle: tokio::runtime::Handle,
     pub covers: CoverLoader,
+    /// 元数据缓存（歌单/专辑/歌手 JSON 快照；取不到缓存目录时为 None）。
+    pub meta: Option<crate::meta_cache::MetaCache>,
     /// 全局提示（Toast）唯一真源。
     pub notifications: Entity<Notifications>,
 }

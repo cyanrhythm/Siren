@@ -469,12 +469,15 @@ impl Root {
         // 首帧之前就有预取（如冷启动恢复队列），先按窗口 DPR 初始化。
         covers.set_dpr(window.scale_factor());
         let notifications = Notifications::new(cx);
+        let meta = crate::meta_cache::MetaCache::open(&handle);
         let services = Services {
             client,
             handle: handle.clone(),
             covers,
+            meta,
             notifications: notifications.clone(),
         };
+
         let playback = Playback::new(
             window,
             cx,

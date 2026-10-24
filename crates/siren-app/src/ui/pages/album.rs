@@ -12,7 +12,7 @@ use siren_core::error::ResultExt;
 use siren_core::model::AlbumDetail;
 
 use super::super::components::{
-    detail_shell, icon_button, play_circle, song_row, sticky_bar, IndexCell, SongRow, StickyBar,
+    detail_shell, icon_button, offline_hint, play_circle, song_row, sticky_bar, IndexCell, SongRow, StickyBar,
 };
 use super::super::playback::Playback;
 use super::super::services::{task_failure, Services};
@@ -35,6 +35,8 @@ pub(crate) struct AlbumPage {
     detail: Option<Arc<AlbumDetail>>,
     /// 加载失败：用于展示错误态与重试（而非永久停在“加载中”）。
     failed: bool,
+    /// 本次展示的是磁盘快照（在线请求失败时）。
+    offline: bool,
     subscribed: bool,
     load_gen: u64,
 }
@@ -56,6 +58,7 @@ impl AlbumPage {
             name,
             detail: None,
             failed: false,
+            offline: false,
             subscribed: false,
             load_gen: 0,
         };
@@ -78,6 +81,7 @@ impl AlbumPage {
         let gen = self.load_gen;
         self.failed = false;
         let client = self.services.client.clone();
+        let meta = self.services.meta.clone();
         let id = self.id;
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.services.handle.spawn(async move {
@@ -85,6 +89,12 @@ impl AlbumPage {
                 .await
                 .ok_or_warn("加载专辑详情")
                 .flatten();
+            // 在线成功即写快照（离线时据此兜底）。
+            if let (Some(meta), Some(d)) = (meta.as_ref(), detail.as_ref()) {
+                if meta.save(&format!("album-{id}"), d) {
+                    log::debug!("元数据快照已写入：album-{id}（{} 首）", d.songs.len());
+                }
+            }
             let _ = tx.send(detail);
         });
         cx.notify();
@@ -99,6 +109,20 @@ impl AlbumPage {
                     this.services.covers.prefetch(urls, 40.0, cx);
                     this.services.covers.prefetch([d.cover_url.clone()], 120.0, cx);
                 }
+                // 在线失败：退回磁盘快照（离线可看），并标记为「离线缓存」。
+                let cached = if detail.is_none() {
+                    this.services
+                        .meta
+                        .as_ref()
+                        .and_then(|m| m.load::<AlbumDetail>(&format!("album-{}", this.id)))
+                } else {
+                    None
+                };
+                this.offline = detail.is_none() && cached.is_some();
+                if let (true, Some(d)) = (this.offline, cached.as_ref()) {
+                    log::info!("专辑 {} 在线加载失败，改用磁盘快照（{} 首）", this.id, d.songs.len());
+                }
+                let detail = detail.or(cached);
                 this.failed = detail.is_none();
                 // 回填真实收藏态，否则已收藏专辑显示为未收藏、无法取消（K2）。
                 this.subscribed = detail.as_ref().map(|d| d.subscribed).unwrap_or(false);
@@ -357,6 +381,7 @@ impl Render for AlbumPage {
                                 }))
                             })
                             .child(star_button)
+                            .when(self.offline, |el| el.child(offline_hint()))
                             .into_any_element(),
                     ))
                     .child(sticky_bar)

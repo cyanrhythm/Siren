@@ -63,6 +63,11 @@ pub fn audio_cache_dir() -> Option<PathBuf> {
     cache_dir().map(|dir| dir.join("audio_cache"))
 }
 
+/// 元数据缓存目录（歌单/专辑/歌手详情的 JSON 快照，见 `meta_cache.rs`）。
+pub fn metadata_cache_dir() -> Option<PathBuf> {
+    cache_dir().map(|dir| dir.join("meta_cache"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -78,10 +83,14 @@ mod tests {
         if let Some(data) = data_dir() {
             assert!(!images.starts_with(&data), "缓存不应写进数据目录");
         }
-        // 音频缓存与之同级。
+        // 音频 / 元数据缓存与之同级。
         if let Some(audio) = audio_cache_dir() {
             assert_eq!(audio, cache.join("audio_cache"));
             assert!(audio.starts_with(&cache));
+        }
+        if let Some(meta) = metadata_cache_dir() {
+            assert_eq!(meta, cache.join("meta_cache"));
+            assert!(meta.starts_with(&cache));
         }
     }
 }

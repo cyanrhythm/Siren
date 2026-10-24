@@ -9,7 +9,7 @@ use gpui_kit::*;
 
 use siren_core::model::{Artist, ArtistAlbum, ArtistDetail, Song};
 
-use super::super::components::{detail_shell, sticky_bar, StickyBar};
+use super::super::components::{detail_shell, offline_hint, sticky_bar, StickyBar};
 use super::super::components::{song_row, IndexCell, SongRow};
 use super::super::motion;
 use super::super::playback::Playback;
@@ -35,6 +35,8 @@ pub(crate) struct ArtistPage {
     failed: bool,
     /// 是否已拿到响应（区分「加载中」与真空数据）。
     loaded: bool,
+    /// 本次展示的是磁盘快照（在线请求失败时）。
+    offline: bool,
 }
 
 impl EventEmitter<PageEvent> for ArtistPage {}
@@ -61,6 +63,7 @@ impl ArtistPage {
             load_gen: 0,
             failed: false,
             loaded: false,
+            offline: false,
         };
         page.load(cx);
         page
@@ -74,12 +77,17 @@ impl ArtistPage {
         let handle = self.services.handle.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.failed = false;
+        let meta = self.services.meta.clone();
         handle.spawn(async move {
             let detail = siren_core::network::api::artist_detail(&client, id).await;
             let songs = siren_core::network::api::artist_top_songs(&client, id).await;
             let albums = siren_core::network::api::artist_albums(&client, id, 50).await;
             let similar = siren_core::network::api::similar_artists(&client, id).await;
             let follow = siren_core::network::api::artist_follow_count(&client, id).await;
+            // 在线成功即写快照（离线时据此兜底）。
+            if let (Some(meta), Ok(Some(d))) = (meta.as_ref(), &detail) {
+                meta.save(&format!("artist-{id}"), d);
+            }
             // 主接口全部失败视为整体失败（离线）；单项失败仍展示其余内容（K8）。
             let failed = detail.is_err() && songs.is_err() && albums.is_err();
             let _ = tx.send((
@@ -99,7 +107,18 @@ impl ArtistPage {
                     return;
                 }
                 if let Some((detail, songs, albums, similar, (fans, followed), failed)) = payload {
-                    this.failed = failed;
+                    // 在线失败：退回磁盘快照（离线可看），并标记为「离线缓存」。
+                    let cached = if detail.is_none() {
+                        this.services
+                            .meta
+                            .as_ref()
+                            .and_then(|m| m.load::<ArtistDetail>(&format!("artist-{}", this.id)))
+                    } else {
+                        None
+                    };
+                    this.offline = detail.is_none() && cached.is_some();
+                    let detail = detail.or(cached);
+                    this.failed = failed && detail.is_none();
                     this.loaded = true;
                     let urls: Vec<String> = albums.iter().map(|a| a.cover_url.clone()).collect();
                     this.services.covers.prefetch(urls, 48.0, cx);
@@ -369,6 +388,9 @@ impl Render for ArtistPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let header = self.header(cx);
         let mut body = div().v_flex().w_full().gap(px(18.0)).p(px(spacing::LG));
+        if self.offline {
+            body = body.child(offline_hint());
+        }
         if self.failed {
             body = body.child(load_error(
                 "artist-retry",

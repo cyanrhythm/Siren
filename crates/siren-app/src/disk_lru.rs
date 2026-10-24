@@ -85,6 +85,11 @@ impl DiskLru {
         Some(path)
     }
 
+    /// 删除单个条目（内容损坏等场景）。返回是否真的删掉。
+    pub(crate) fn remove(&self, name: &str) -> bool {
+        std::fs::remove_file(self.path_for(name)).is_ok()
+    }
+
     /// 写缓存（临时文件 + rename）。失败静默忽略，返回是否写入。
     pub(crate) fn put(&self, name: &str, bytes: &[u8]) -> bool {
         if bytes.is_empty() {
