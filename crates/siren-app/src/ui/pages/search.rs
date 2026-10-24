@@ -13,7 +13,7 @@ use super::super::components::{song_row, IndexCell, SongRow};
 use super::super::playback::Playback;
 use super::super::services::Services;
 use super::super::smooth_scroll::smooth_virtual_list;
-use super::super::{page_shell, PageEvent};
+use super::super::{page_shell, wheel_to_list, PageEvent};
 use super::dim;
 use crate::theme::{self, spacing};
 
@@ -293,7 +293,26 @@ impl Render for SearchPage {
             }
         };
 
-        let content = div().v_flex().flex_1().min_w(px(0.0)).w_full().child(tabs).child(body);
+        let content = div()
+            .id("search-body")
+            .v_flex()
+            .flex_1()
+            .min_w(px(0.0))
+            .w_full()
+            .child(tabs)
+            .child(body);
+        // 滚轮压在上方分类行上时也要滚动结果列表（列表只占下方区域）。
+        let content = if !self.keyword.is_empty() && !self.failed && self.count() > 0 {
+            let list = match self.kind {
+                SearchKind::Song => "search-songs",
+                SearchKind::Album => "search-albums",
+                SearchKind::Artist => "search-artists",
+                SearchKind::Playlist => "search-playlists",
+            };
+            wheel_to_list(content, list)
+        } else {
+            content
+        };
 
         page_shell(format!("搜索 · {}", self.status), content.into_any_element())
     }

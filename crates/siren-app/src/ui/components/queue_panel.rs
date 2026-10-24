@@ -18,7 +18,7 @@ use siren_core::model::Song;
 
 use super::super::settings_store::SettingsStore;
 use super::super::smooth_scroll::{smooth_scroll, smooth_scroll_offset, smooth_scroll_to};
-use super::super::{cover_placeholder, icon, motion, Root};
+use super::super::{cover_placeholder, icon, motion, wheel_to_list, Root};
 use super::buttons::icon_button;
 use super::collect::{overlay_close, overlay_scrim};
 use super::queue_layout::{reorder_target, row_content_top, GAP, PAD, ROW_H, SECTION_H, STRIDE};
@@ -258,7 +258,8 @@ impl Root {
             .bg(theme::pane())
             .overflow_hidden()
             .child(header)
-            .child(body)
+            // 滚轮压在面板标题行上时也要滚动队列（列表本身在其下方区域）。
+            .child(wheel_to_list(body, "queue-scroll"))
             .when_some(confirm, |el, confirm| el.child(confirm))
             .into_any_element()
     }

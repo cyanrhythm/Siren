@@ -15,7 +15,7 @@ use siren_core::model::{Album, Artist, Playlist};
 use super::super::services::{task_failure, Services};
 use super::super::session::{Account, Session};
 use super::super::smooth_scroll::smooth_virtual_list;
-use super::super::{hint_center, icon, load_error, PageEvent, PLAYLIST_PAGE};
+use super::super::{hint_center, icon, load_error, wheel_to_list, PageEvent, PLAYLIST_PAGE};
 use super::dim;
 use crate::theme::{self, spacing};
 
@@ -870,7 +870,7 @@ impl Render for LibraryPage {
             }
         };
 
-        div()
+        let panel = div()
             .v_flex()
             .size_full()
             .rounded(px(theme::RADIUS_MD))
@@ -879,7 +879,19 @@ impl Render for LibraryPage {
             .gap(px(spacing::XXS))
             .child(self.header(cx.weak_entity()))
             .child(self.tabs(cx.weak_entity()))
-            .child(content)
+            .child(content);
+        // 滚轮压在本页标题/分页行上时也要滚动列表（列表本身只有下方一段区域）。
+        let panel = panel.id("lib-body");
+        if logged_in {
+            let list = match self.tab {
+                LibraryTab::Playlist => "lib-playlists",
+                LibraryTab::Album => "lib-albums",
+                LibraryTab::Artist => "lib-artists",
+            };
+            wheel_to_list(panel, list)
+        } else {
+            panel
+        }
     }
 }
 
