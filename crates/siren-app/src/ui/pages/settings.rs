@@ -174,8 +174,13 @@ impl Root {
             ))
             .child(section(
                 "元数据缓存",
-                "歌单 / 专辑 / 歌手详情的 JSON 快照：在线成功即写、加载失败时兜底（按账号分目录）",
+                "歌单 / 专辑 / 歌手详情的 JSON 快照：在线成功即写、加载失败时兜底",
                 self.meta_control(weak.clone()),
+            ))
+            .child(section(
+                "歌词缓存",
+                "解析后的歌词行：7 天 TTL，无歌词的结果 12 小时内不再重试",
+                self.lyrics_control(weak.clone(), cx),
             ));
 
         let scroll = smooth_scroll("settings-scroll", content, window, cx);
@@ -272,6 +277,44 @@ impl Root {
             .into_any_element()
     }
 
+    /// 歌词缓存占用与清除入口。
+    fn lyrics_control(&self, weak: WeakEntity<Self>, cx: &App) -> AnyElement {
+        let playback = self.playback.read(cx);
+        let (mb, files) = crate::disk_lru::summary(playback.lyrics_cache_stats());
+        let limit = playback.lyrics_cache_limit();
+        let text = if limit == 0 {
+            "本地缓存不可用（取不到缓存目录）".to_string()
+        } else {
+            format!("已缓存 {files} 首 · {mb:.1} MB / {} MB", limit / (1024 * 1024))
+        };
+        let weak_clear = weak;
+        div()
+            .w_full()
+            .flex()
+            .items_center()
+            .gap(px(spacing::MD))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .text_xs()
+                    .text_color(theme::text_gray())
+                    .child(text),
+            )
+            .child(
+                Button::new("clear-lyrics-cache")
+                    .label("清除歌词缓存")
+                    .on_click(move |_ev, _window, cx| {
+                        weak_clear
+                            .update(cx, |root, cx| {
+                                root.playback.update(cx, |pb, cx| pb.clear_lyrics_cache(cx));
+                                cx.notify();
+                            })
+                            .ok();
+                    }),
+            )
+            .into_any_element()
+    }
     /// 元数据缓存占用与清除入口。
     fn meta_control(&self, weak: WeakEntity<Self>) -> AnyElement {
         let Some(meta) = self.services.meta.as_ref() else {

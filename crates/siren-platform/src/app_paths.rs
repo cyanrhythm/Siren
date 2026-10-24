@@ -16,7 +16,8 @@
 //! | 日志 | `data_dir/logs/` |
 //! | 图片缓存 | `cache_dir/image_cache/`（已实现，`ui/cover_disk.rs`） |
 //! | 音频缓存 | `cache_dir/audio_cache/`（已实现，`ui/audio_cache.rs`） |
-//! | 元数据缓存 | `cache_dir/meta_cache/` |
+//! | 元数据缓存 | `cache_dir/meta_cache/`（已实现，`meta_cache.rs`） |
+//! | 歌词缓存 | `cache_dir/lyrics_cache/`（已实现，`lyrics_cache.rs`） |
 //! | 下载临时 | `cache_dir/download_tmp/` |
 //! | 默认下载目录 | `~/Music/Siren/` |
 //!
@@ -66,6 +67,11 @@ pub fn audio_cache_dir() -> Option<PathBuf> {
 /// 元数据缓存目录（歌单/专辑/歌手详情的 JSON 快照，见 `meta_cache.rs`）。
 pub fn metadata_cache_dir() -> Option<PathBuf> {
     cache_dir().map(|dir| dir.join("meta_cache"))
+}
+
+/// 歌词缓存目录（解析后的歌词行，见 `lyrics_cache.rs`）。
+pub fn lyrics_cache_dir() -> Option<PathBuf> {
+    cache_dir().map(|dir| dir.join("lyrics_cache"))
 }
 
 #[cfg(test)]

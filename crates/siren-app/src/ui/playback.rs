@@ -13,6 +13,7 @@ use super::audio_cache::AudioCache;
 use super::covers::CoverLoader;
 use super::notifications::Notifications;
 use super::settings_store::SettingsStore;
+use crate::lyrics_cache::{Cached, LyricsCache};
 use siren_core::error::ResultExt;
 use siren_core::lyrics::LyricLine;
 use siren_core::model::{Artist, ArtistAlbum, ArtistDetail, AudioQuality, CommentPage, Song, SongWiki};
@@ -111,6 +112,8 @@ pub(crate) struct Playback {
     media_cmds: std::sync::mpsc::Receiver<MediaCommand>,
     /// 播放过的歌曲字节落盘（`cache_dir/audio_cache`，2 GB LRU）；取不到目录时为 None。
     audio_cache: Option<AudioCache>,
+    /// 歌词行落盘（`cache_dir/lyrics_cache`，75 MB LRU + 7 天 TTL）。
+    lyrics_cache: Option<LyricsCache>,
     _progress_sub: Subscription,
     _volume_sub: Subscription,
 }
@@ -239,11 +242,13 @@ impl Playback {
             );
             // 音频缓存：取不到系统缓存目录时降级为「不落盘」，播放不受影响。
             let audio_cache = AudioCache::open(&handle);
+            let lyrics_cache = LyricsCache::open(&handle);
             Self {
                 client,
                 handle,
                 covers,
                 audio_cache,
+                lyrics_cache,
                 notifications,
                 player,
                 status: "就绪".into(),
@@ -492,6 +497,27 @@ impl Playback {
     /// 音频缓存上限（字节）；无缓存目录时为 0。
     pub(crate) fn audio_cache_limit(&self) -> u64 {
         self.audio_cache.as_ref().map(|c| c.limit()).unwrap_or(0)
+    }
+
+    /// 歌词缓存用量（原子量快照）。
+    pub(crate) fn lyrics_cache_stats(&self) -> crate::disk_lru::DiskStats {
+        self.lyrics_cache.as_ref().map(|c| c.stats()).unwrap_or_default()
+    }
+
+    /// 歌词缓存上限（字节）；无缓存目录时为 0。
+    pub(crate) fn lyrics_cache_limit(&self) -> u64 {
+        self.lyrics_cache.as_ref().map(|c| c.limit()).unwrap_or(0)
+    }
+
+    /// 清空歌词缓存（下次播放重新请求）。
+    pub(crate) fn clear_lyrics_cache(&mut self, cx: &mut Context<Self>) {
+        if let Some(cache) = self.lyrics_cache.clone() {
+            self.handle.spawn(async move {
+                let removed = tokio::task::spawn_blocking(move || cache.clear()).await.unwrap_or(0);
+                log::info!("已清除歌词缓存：{removed} 条");
+            });
+        }
+        cx.notify();
     }
 
     /// 清空音频缓存（下次播放重新下载）。
@@ -1064,13 +1090,35 @@ impl Playback {
         // 拉取歌词（优先逐字），完成后刷新正在播放栏。
         let client_lyric = self.client.clone();
         let handle_lyric = self.handle.clone();
+        let cache_lyric = self.lyrics_cache.clone();
         self.lyrics = Vec::new();
         cx.spawn(async move |this, cx| {
             let (tx, rx) = tokio::sync::oneshot::channel();
             handle_lyric.spawn(async move {
+                // ① 磁盘命中（7 天 TTL；空结果 12h 负缓存）：不再请求接口。
+                if let Some(cache) = cache_lyric.as_ref() {
+                    match cache.load(song_id) {
+                        Some(Cached::Lines(lines)) => {
+                            log::debug!("歌词来源：本地缓存 id={song_id}（{} 行）", lines.len());
+                            let _ = tx.send(lines);
+                            return;
+                        }
+                        Some(Cached::Empty) => {
+                            log::debug!("歌词来源：负缓存 id={song_id}（12h 内确认无歌词）");
+                            let _ = tx.send(Vec::new());
+                            return;
+                        }
+                        None => {}
+                    }
+                }
+                // ② 未命中：请求接口并回写（空结果也写，供负缓存）。
                 let lines = siren_core::network::api::lyrics(&client_lyric, song_id)
                     .await
                     .unwrap_or_default();
+                log::debug!("歌词来源：网络 id={song_id}（{} 行）", lines.len());
+                if let Some(cache) = cache_lyric.as_ref() {
+                    cache.save(song_id, &lines);
+                }
                 let _ = tx.send(lines);
             });
             let lines = rx.await.unwrap_or_default();

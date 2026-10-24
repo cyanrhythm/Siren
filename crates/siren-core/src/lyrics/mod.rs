@@ -15,9 +15,10 @@
 use std::sync::OnceLock;
 
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 
 /// 单个字/词的耗时元数据。
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct WordInfo {
     pub text: String,
     /// 相对整行起始时间的偏移（毫秒）。
@@ -27,7 +28,10 @@ pub struct WordInfo {
 }
 
 /// 歌词行。
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+///
+/// 可序列化：磁盘歌词缓存直接存结构化的行（解析结果已含译文合并与逐字信息，
+/// 再存一份原文没有额外价值）。
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct LyricLine {
     pub time_ms: i64,
     /// 整行持续发音时长（毫秒），可能为 0。
