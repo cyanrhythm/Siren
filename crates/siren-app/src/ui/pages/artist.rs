@@ -130,6 +130,7 @@ impl ArtistPage {
                         this.services.covers.prefetch([d.cover_url.clone()], 108.0, cx);
                     }
                     this.detail = detail;
+
                     this.top_songs = Arc::new(songs);
                     this.albums = Arc::new(albums);
                     this.similar = similar;
@@ -476,6 +477,10 @@ impl Render for ArtistPage {
             div()
                 .v_flex()
                 .w_full()
+                // 必须撑满整列：`scroll` 的 `flex_1` 只有在有确定高度时才会分到剩余空间，
+                // 否则内容区被压成 0 高（歌手页曾因此只剩顶部 hero，下面的热门/专辑/简介全看不见）。
+                .flex_1()
+                .min_h(px(0.0))
                 .child(
                     // padding 必须放内层：折叠容器自身带 padding 时，高度插值到 0 也仍占 padding，
                     // 收起后会在横栏上方留一条空白（hero 的 `p(MD)` 同理）。
