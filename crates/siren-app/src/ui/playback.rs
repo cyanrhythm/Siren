@@ -977,6 +977,34 @@ impl Playback {
     }
 
     /// 播放队列中指定下标的曲目。
+    /// 相对当前位置前后跳（快捷键 `←` / `→` 用）。到结尾按 `[0, duration]` 夹住。
+    pub(crate) fn seek_by_ms(&mut self, delta_ms: i64, cx: &mut Context<Self>) {
+        let state = self.player.state();
+        if state.duration_ms <= 0 {
+            return;
+        }
+        let target = (state.position_ms + delta_ms).clamp(0, state.duration_ms);
+        // 冷启动恢复曲尚未加载 URL：记为起播进度（与拖动一致）。
+        if self.needs_resolve {
+            self.resume_ms = Some(target);
+        } else {
+            self.player.seek_ms(target);
+        }
+        self.save_progress();
+        cx.notify();
+    }
+
+    /// 音量相对调节（快捷键 `↑` / `↓` 用），夹在 0–100 并同步滑条与设置。
+    pub(crate) fn nudge_volume(&mut self, delta: f64, window: &mut Window, cx: &mut Context<Self>) {
+        let current = SettingsStore::of(cx).volume();
+        let next = (current + delta).clamp(0.0, 100.0);
+        self.player.set_volume(next);
+        cx.global_mut::<SettingsStore>().set_volume(next);
+        self.volume_slider
+            .update(cx, |slider, cx| slider.set_value((next / 100.0) as f32, window, cx));
+        cx.notify();
+    }
+
     pub(crate) fn play_queue_at(&mut self, index: usize, cx: &mut Context<Self>) {
         if let Some(song) = self.player.play_at(index) {
             self.resolve_and_play(song, cx);

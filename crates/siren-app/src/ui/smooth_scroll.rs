@@ -141,6 +141,21 @@ pub(crate) fn smooth_scroll_offset(id: impl Into<ElementId>, cx: &App) -> f32 {
 // 量程复原，再次越过阈值——形成闭环振荡，底部不可达。锁存后「收起」只由用户
 // 向上滚到顶部并继续上滚来解除（见 `should_unlock_fold`）。
 thread_local! {
+    /// 最近被用户操作过的滚动区（滚轮 / 滚动条拖动 / 滚轮转发），键盘滚动以此为目标。
+    static ACTIVE_SCROLL: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
+}
+
+/// 标记某滚动区为「键盘滚动目标」。
+fn set_active_scroll(name: &'static str) {
+    ACTIVE_SCROLL.with(|active| active.set(Some(name)));
+}
+
+/// 最近操作过的滚动区（供键盘滚动）。
+fn active_scroll() -> Option<&'static str> {
+    ACTIVE_SCROLL.with(|active| active.get())
+}
+
+thread_local! {
     static FOLD_LOCKS: std::cell::RefCell<HashMap<(&'static str, u32), bool>> =
         std::cell::RefCell::new(HashMap::new());
 }
@@ -334,6 +349,7 @@ fn scroll_bar(name: &'static str, thumb_h: f32, thumb_top: f32, opacity: f32) ->
 ///
 /// 只改目标偏移：边界由注册表里的 `max` 收口，动画、滚动条与重绘由该滚动区自己的渲染接管。
 pub(crate) fn smooth_scroll_by(name: &'static str, dy: f32, window: &mut Window, cx: &mut App) {
+    set_active_scroll(name);
     {
         let entry = cx.global_mut::<Registry>().0.entry(entry_id(name)).or_default();
         if should_unlock_fold(entry.offset, dy) {
@@ -357,6 +373,7 @@ pub(crate) fn smooth_scroll_by(name: &'static str, dy: f32, window: &mut Window,
 
 /// 拖动滚动条：指针在任意位置都持续更新偏移（drag 系统的 `on_drag_move` 是全局的）。
 fn on_bar_drag_move(name: &'static str, event: &DragMoveEvent<ScrollbarDrag>, window: &mut Window, cx: &mut App) {
+    set_active_scroll(name);
     let ry = f32::from(event.event.position.y - event.bounds.origin.y);
     {
         let entry = cx.global_mut::<Registry>().0.entry(entry_id(name)).or_default();
@@ -376,6 +393,7 @@ fn on_bar_drag_move(name: &'static str, event: &DragMoveEvent<ScrollbarDrag>, wi
 
 /// 处理滚轮：累积目标偏移、置「驻留中」并（重新）安排驻留结束。
 fn on_wheel(name: &'static str, event: &ScrollWheelEvent, window: &mut Window, cx: &mut App) {
+    set_active_scroll(name);
     let delta = event.delta.pixel_delta(window.line_height());
     let (dx, dy) = (f32::from(delta.x), f32::from(delta.y));
     // 触控板横向 pan：本容器只有纵向滚动，横向不吞，透传给内层/外层滚动区。
@@ -402,6 +420,67 @@ fn on_wheel(name: &'static str, event: &ScrollWheelEvent, window: &mut Window, c
     window.refresh();
 }
 
+/// 键盘滚动：翻页（`dir` = −1 上一页 / +1 下一页），按视口高度的 90% 步进。
+///
+/// 目标是「最近被操作过的滚动区」——没有操作过时不猜（记 trace 即可），
+/// 避免空格/方向键被误当成滚动。
+pub(crate) fn keyboard_page(dir: isize, window: &mut Window, cx: &mut App) {
+    let Some(name) = active_scroll() else {
+        log::trace!("键盘翻页被忽略：还没有任何滚动区被操作过");
+        return;
+    };
+    let (target, max) = {
+        let entry = cx.global_mut::<Registry>().0.entry(entry_id(name)).or_default();
+        if entry.max <= 0.0 {
+            log::debug!("[{name}] 键盘翻页被忽略：max={:.0}（内容不足一屏）", entry.max);
+            return;
+        }
+        let page = (entry.viewport * 0.9).max(120.0);
+        let target = (entry.target + dir as f32 * page).clamp(0.0, entry.max);
+        (target, entry.max)
+    };
+    apply_keyboard_scroll(name, target, max, window, cx);
+}
+
+/// 键盘滚动：到顶 / 到底。
+pub(crate) fn keyboard_edge(bottom: bool, window: &mut Window, cx: &mut App) {
+    let Some(name) = active_scroll() else {
+        log::trace!("键盘到顶/到底被忽略：还没有任何滚动区被操作过");
+        return;
+    };
+    let (target, max) = {
+        let entry = cx.global_mut::<Registry>().0.entry(entry_id(name)).or_default();
+        if entry.max <= 0.0 {
+            return;
+        }
+        (if bottom { entry.max } else { 0.0 }, entry.max)
+    };
+    apply_keyboard_scroll(name, target, max, window, cx);
+}
+
+/// 写入目标偏移并驱动动画（键盘路径与滚轮共用同一套缓动与滚动条驻留）。
+fn apply_keyboard_scroll(name: &'static str, target: f32, max: f32, window: &mut Window, cx: &mut App) {
+    {
+        let entry = cx.global_mut::<Registry>().0.entry(entry_id(name)).or_default();
+        if bottom_edge_unlock(name, target) {
+            // 到顶时顺带解除折叠锁，与滚轮一致（否则收起后无法用键盘展开）。
+        }
+        entry.target = target.clamp(0.0, max);
+        log::debug!("[{name}] 键盘滚动：target → {:.0}（max {max:.0}）", entry.target);
+    }
+    reveal_bar(name, window, cx);
+    window.refresh();
+}
+
+/// 键盘滚到顶部时解除该区所有折叠锁。
+fn bottom_edge_unlock(name: &'static str, target: f32) -> bool {
+    if target <= 1.0 {
+        unlock_folds(name);
+        true
+    } else {
+        false
+    }
+}
 /// 设定某滚动区的目标偏移（内容坐标像素）：打开浮层定位到当前曲等场景调用。
 ///
 /// 内容尚未量出（max=0）时先记入 `pending`，待首帧内容高度量出后恢复并钳制（N5.6：

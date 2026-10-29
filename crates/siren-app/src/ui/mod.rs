@@ -5,6 +5,7 @@
 //!
 //! 页面通过 [`PageEvent`] 事件请求导航（`OpenPlaylist` / `Back`），不依赖外壳类型。
 
+mod actions;
 mod audio_cache;
 pub mod components;
 mod cover_disk;
@@ -404,6 +405,7 @@ pub struct Root {
     services: Services,
     playback: Entity<Playback>,
     search_input: Entity<InputState>,
+    // TEMP 诊断：按键观测只装一次
     /// 歌单页内搜索框（跨歌单复用）。
     pl_filter_input: Entity<InputState>,
     /// 歌单「添加歌曲」搜索框（跨歌单复用）。
@@ -495,6 +497,8 @@ impl Root {
         let recent = cx.new(|_cx| RecentPage::new(services.clone(), playback.clone()));
 
         // 标题栏搜索输入（回车驱动搜索页）
+        // 全局快捷键（O0.4）：键位表见 `ui/actions.rs`。
+        actions::bind_keys(cx);
         let search_input = cx.new(|cx| InputState::new(window, cx).placeholder("想播放什么？"));
 
         // 登录弹窗 Cookie 输入（回车提交）
@@ -1392,6 +1396,46 @@ impl Render for Root {
         // CSD 的阴影 / 窗口边缘缩放区 / client inset 由 gpui-kit 的 Root
         // （gpui-component `WindowState` 插件 → `window_border`）统一承担，
         // 这里只需按 `window_paddings` 扣除内边距做布局补偿（见上方 `vw`）。
+        //
+        // 全局快捷键（整改清单 O0.4）：动作 → 播放控制 / 键盘滚动 / 搜索焦点。
+        let shell = shell
+            .on_action(cx.listener(|root, _: &actions::TogglePlay, _window, cx| {
+                root.playback.update(cx, |pb, cx| pb.toggle(cx));
+            }))
+            .on_action(cx.listener(|root, _: &actions::NextTrack, _window, cx| {
+                root.playback.update(cx, |pb, cx| pb.next_track(cx));
+            }))
+            .on_action(cx.listener(|root, _: &actions::PrevTrack, _window, cx| {
+                root.playback.update(cx, |pb, cx| pb.previous_track(cx));
+            }))
+            .on_action(cx.listener(|root, _: &actions::SeekForward, _window, cx| {
+                root.playback.update(cx, |pb, cx| pb.seek_by_ms(5_000, cx));
+            }))
+            .on_action(cx.listener(|root, _: &actions::SeekBackward, _window, cx| {
+                root.playback.update(cx, |pb, cx| pb.seek_by_ms(-5_000, cx));
+            }))
+            .on_action(cx.listener(|root, _: &actions::VolumeUp, window, cx| {
+                root.playback.update(cx, |pb, cx| pb.nudge_volume(5.0, window, cx));
+            }))
+            .on_action(cx.listener(|root, _: &actions::VolumeDown, window, cx| {
+                root.playback.update(cx, |pb, cx| pb.nudge_volume(-5.0, window, cx));
+            }))
+            .on_action(cx.listener(|root, _: &actions::FocusSearch, window, cx| {
+                let handle = root.search_input.read(cx).focus_handle(cx);
+                window.focus(&handle, cx);
+            }))
+            .on_action(cx.listener(|_root, _: &actions::ScrollPageDown, window, cx| {
+                smooth_scroll::keyboard_page(1, window, cx);
+            }))
+            .on_action(cx.listener(|_root, _: &actions::ScrollPageUp, window, cx| {
+                smooth_scroll::keyboard_page(-1, window, cx);
+            }))
+            .on_action(cx.listener(|_root, _: &actions::ScrollTop, window, cx| {
+                smooth_scroll::keyboard_edge(false, window, cx);
+            }))
+            .on_action(cx.listener(|_root, _: &actions::ScrollBottom, window, cx| {
+                smooth_scroll::keyboard_edge(true, window, cx);
+            }));
         shell
     }
 }

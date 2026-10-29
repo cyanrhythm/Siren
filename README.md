@@ -216,6 +216,20 @@ makepkg -si
 | `SIREN_START` | 开发入口：`search` / `settings` / `about` / `account` / `recent` / `artist` / `playlist:<id>`，启动即跳到对应页面 |
 | `RC` / `RC_x86_64_pc_windows_msvc` / `WINDRES` | 指定资源编译器（MSVC / GNU 交叉构建各取所需，见 `tauri-winres`） |
 
+### 快捷键
+
+| 键 | 动作 |
+|---|---|
+| `Space` | 播放 / 暂停 |
+| `←` / `→` | 后退 / 前进 5 秒 |
+| `Ctrl+←` / `Ctrl+→` | 上一首 / 下一首 |
+| `↑` / `↓` | 音量 +5 / −5 |
+| `Ctrl+F` | 聚焦搜索框 |
+| `PageUp` / `PageDown` | 当前列表上 / 下翻一页 |
+| `Home` / `End` | 当前列表到顶 / 到底 |
+
+「当前列表」= 最近用滚轮或滚动条操作过的那个滚动区。焦点在输入框时以上按键不生效（照常输入）。
+键位表见 `crates/siren-app/src/ui/actions.rs`。
 ### 数据与日志位置
 
 由 `directories` 的 `ProjectDirs::from("com", "cyanrhythm", "Siren")` 决定，例如 Windows：
