@@ -1830,6 +1830,7 @@ mod queue_cover_tests {
             name: format!("s{id}"),
             artists: String::new(),
             album: String::new(),
+            album_id: None,
             cover_url: format!("cover-{id}"),
             duration_ms: 0,
             publish_time: 0,

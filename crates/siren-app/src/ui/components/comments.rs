@@ -6,11 +6,14 @@ use gpui_kit::assets::IconName;
 use gpui_kit::base::StyledExt;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::Disableable as _;
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use siren_core::error::ResultExt;
 use siren_core::model::CommentItem;
 use siren_core::network::api;
+
+use super::super::Route;
 
 use super::super::smooth_scroll::smooth_scroll;
 use super::super::{fmt_date, icon, Root};
@@ -285,6 +288,7 @@ impl Root {
     fn comment_row(&self, item: &CommentItem, weak: WeakEntity<Self>) -> AnyElement {
         let avatar = self.services.covers.image_round(&item.user.avatar_url, 32.0);
         let weak_like = weak.clone();
+        let weak_user = weak.clone();
         let weak_floor = weak;
         let id = item.comment_id;
         let liked = item.liked;
@@ -302,12 +306,25 @@ impl Root {
                             .flex()
                             .items_center()
                             .gap(px(spacing::SM))
-                            .child(
+                            .child({
+                                // 评论者昵称 → 其个人主页（uid 在 CommentUser 里现成）。
+                                let uid = item.user.user_id;
+                                let weak_user = weak_user.clone();
                                 div()
+                                    .id(format!("comment-user-{id}"))
                                     .text_sm()
                                     .text_color(theme::text_gray())
-                                    .child(item.user.nickname.clone()),
-                            )
+                                    .when(uid != 0, |el| {
+                                        el.cursor_pointer().hover(|s| s.text_color(theme::accent())).on_click(
+                                            move |_ev, _w, cx| {
+                                                weak_user
+                                                    .update(cx, |root, cx| root.navigate(Route::Profile { uid }, cx))
+                                                    .ok();
+                                            },
+                                        )
+                                    })
+                                    .child(item.user.nickname.clone())
+                            })
                             .child(
                                 div()
                                     .text_xs()

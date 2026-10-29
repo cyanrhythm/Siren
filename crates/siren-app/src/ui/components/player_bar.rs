@@ -9,7 +9,7 @@ use gpui_kit::*;
 
 use siren_core::player::PlayMode;
 
-use super::super::{cover_placeholder, fmt_time, icon, Root};
+use super::super::{cover_placeholder, fmt_time, icon, Root, Route};
 use crate::theme::{self, spacing};
 
 /// 透明底图标键：自定义前景色（激活态高亮）+ 统一 **圆形** hover/按下底。
@@ -42,10 +42,30 @@ impl Root {
         let dur_label = fmt_time(state.duration_ms);
         let progress_w = (vw - 210.0 - 300.0 - 240.0 - 64.0).max(160.0);
         let cover: AnyElement = match &state.song {
-            Some(song) => self.services.covers.image(&song.cover_url, 56.0),
+            Some(song) => {
+                // 封面点击 = 展开/收起正在播放栏（对齐 Melodia PlayerBar 的封面行为）。
+                let weak_cover = weak.clone();
+                let image = self.services.covers.image(&song.cover_url, 56.0);
+                div()
+                    .id("player-cover")
+                    .cursor_pointer()
+                    .on_click(move |_ev, _window, cx| {
+                        weak_cover.update(cx, |root, cx| root.toggle_now_playing(cx)).ok();
+                    })
+                    .child(image)
+                    .into_any_element()
+            }
             None => cover_placeholder(56.0).into_any_element(),
         };
+        // 歌名 → 专辑页；歌手 → 歌手页（多歌手跳第一个）。数据缺失时保持纯文本。
+        let song_meta = state.song.as_ref().map(|song| {
+            (
+                song.album_id.zip(Some(song.album.clone())),
+                song.artist_ids.first().copied().zip(Some(song.artists.clone())),
+            )
+        });
 
+        let weak_title = weak.clone();
         let weak_play = weak.clone();
         let weak_prev = weak.clone();
         let weak_shuffle = weak.clone();
@@ -78,13 +98,76 @@ impl Root {
                             .min_w(px(0.0))
                             .overflow_hidden()
                             .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(theme::text_primary())
-                                    .truncate()
-                                    .child(title),
+                                if let Some((album_id, _)) = song_meta.as_ref().and_then(|(album, _)| album.clone()) {
+                                    let weak_album = weak_title.clone();
+                                    let album_name = state.song.as_ref().map(|s| s.album.clone()).unwrap_or_default();
+                                    div()
+                                        .id("player-title")
+                                        .text_sm()
+                                        .text_color(theme::text_primary())
+                                        .truncate()
+                                        .cursor_pointer()
+                                        .hover(|s| s.text_color(theme::accent()))
+                                        .on_click(move |_ev, _window, cx| {
+                                            weak_album
+                                                .update(cx, |root, cx| {
+                                                    root.navigate(
+                                                        Route::Album {
+                                                            id: album_id,
+                                                            name: album_name.clone(),
+                                                        },
+                                                        cx,
+                                                    )
+                                                })
+                                                .ok();
+                                        })
+                                        .child(title)
+                                        .into_any_element()
+                                } else {
+                                    div()
+                                        .text_sm()
+                                        .text_color(theme::text_primary())
+                                        .truncate()
+                                        .child(title)
+                                        .into_any_element()
+                                },
                             )
-                            .child(div().text_xs().text_color(theme::text_gray()).truncate().child(artist)),
+                            .child(
+                                if let Some((artist_id, _)) = song_meta.as_ref().and_then(|(_, artist)| artist.clone())
+                                {
+                                    let weak_artist = weak_title.clone();
+                                    let artist_name = artist.clone();
+                                    div()
+                                        .id("player-artist")
+                                        .text_xs()
+                                        .text_color(theme::text_gray())
+                                        .truncate()
+                                        .cursor_pointer()
+                                        .hover(|s| s.text_color(theme::accent()))
+                                        .on_click(move |_ev, _window, cx| {
+                                            weak_artist
+                                                .update(cx, |root, cx| {
+                                                    root.navigate(
+                                                        Route::Artist {
+                                                            id: artist_id,
+                                                            name: artist_name.clone(),
+                                                        },
+                                                        cx,
+                                                    )
+                                                })
+                                                .ok();
+                                        })
+                                        .child(artist)
+                                        .into_any_element()
+                                } else {
+                                    div()
+                                        .text_xs()
+                                        .text_color(theme::text_gray())
+                                        .truncate()
+                                        .child(artist)
+                                        .into_any_element()
+                                },
+                            ),
                     ),
             )
             .child(

@@ -1004,6 +1004,7 @@ impl PlaylistPage {
 impl Render for PlaylistPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let weak_star = cx.weak_entity();
+        let weak_nav = cx.weak_entity();
         let owned = self.owned();
         let weak_play = cx.weak_entity();
         let weak_shuffle = cx.weak_entity();
@@ -1143,13 +1144,32 @@ impl Render for PlaylistPage {
                                             .flex()
                                             .items_center()
                                             .child(creator_avatar)
-                                            .child(
+                                            .child({
+                                                // 创建者昵称 → 个人主页（creator_id 现成）。
+                                                let creator_id = detail.creator_id;
+                                                let creator_name = detail.creator_nickname.clone();
+                                                let weak_creator = weak_nav.clone();
                                                 div()
+                                                    .id("pl-creator")
+                                                    .cursor_pointer()
+                                                    .hover(|s| s.text_color(theme::accent()))
                                                     .text_sm()
                                                     .font_weight(FontWeight::BOLD)
                                                     .text_color(theme::text_primary())
-                                                    .child(detail.creator_nickname.clone()),
-                                            )
+                                                    .when(creator_id != 0, |el| {
+                                                        el.on_click(move |_ev, _w, cx| {
+                                                            weak_creator
+                                                                .update(cx, |_page, cx| {
+                                                                    cx.emit(PageEvent::OpenProfile {
+                                                                        uid: creator_id,
+                                                                    })
+                                                                })
+                                                                .ok();
+                                                            cx.stop_propagation();
+                                                        })
+                                                    })
+                                                    .child(creator_name)
+                                            })
                                             .child(
                                                 div()
                                                     .text_sm()

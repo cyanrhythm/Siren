@@ -16,7 +16,7 @@ use siren_core::model::{Song, SongWiki};
 
 use super::super::settings_store::SettingsStore;
 use super::super::smooth_scroll::{smooth_scroll, smooth_scroll_plain};
-use super::super::{cover_placeholder, fmt_date, icon, NpCard, Root};
+use super::super::{cover_placeholder, fmt_date, icon, NpCard, Root, Route};
 use crate::theme::{self, spacing};
 use siren_core::player::{PlaySource, PlaySourceKind};
 
@@ -422,7 +422,7 @@ fn about_artist_card(
     covers: &super::super::covers::CoverLoader,
     weak: WeakEntity<Root>,
 ) -> AnyElement {
-    let weak_follow = weak;
+    let weak_follow = weak.clone();
     let id = artist.id;
     let mut col = div()
         .flex()
@@ -441,12 +441,31 @@ fn about_artist_card(
                 .flex_1()
                 .min_w(px(0.0))
                 .gap(px(spacing::XS))
-                .child(
+                .child({
+                    let weak_artist = weak.clone();
+                    let artist_id = artist.id;
+                    let artist_name = artist.name.clone();
                     div()
+                        .id("np-about-artist-name")
+                        .cursor_pointer()
+                        .hover(|s| s.text_color(theme::accent()))
                         .text_sm()
                         .text_color(theme::text_primary())
-                        .child(artist.name.clone()),
-                )
+                        .on_click(move |_ev, _window, cx| {
+                            weak_artist
+                                .update(cx, |root, cx| {
+                                    root.navigate(
+                                        Route::Artist {
+                                            id: artist_id,
+                                            name: artist_name.clone(),
+                                        },
+                                        cx,
+                                    )
+                                })
+                                .ok();
+                        })
+                        .child(artist.name.clone())
+                })
                 .child(div().text_xs().text_color(theme::text_gray()).child(format!(
                     "{} 专辑 · {} 首 · {} 粉丝",
                     artist.album_size, artist.music_size, fans
@@ -498,11 +517,30 @@ fn artist_albums_card(
     let slice = &albums[(p * PER).min(albums.len())..((p + 1) * PER).min(albums.len())];
     let mut row = div().flex().gap(px(10.0)).w_full();
     for album in slice {
+        let weak_album = weak.clone();
+        let (album_id, album_name) = (album.id, album.name.clone());
         row = row.child(
             div()
+                .id(format!("np-album-{album_id}"))
                 .v_flex()
                 .w(px(108.0))
                 .gap(px(6.0))
+                .cursor_pointer()
+                .rounded(px(theme::RADIUS_SM))
+                .hover(|s| s.bg(theme::card_surface()))
+                .on_click(move |_ev, _window, cx| {
+                    weak_album
+                        .update(cx, |root, cx| {
+                            root.navigate(
+                                Route::Album {
+                                    id: album_id,
+                                    name: album_name.clone(),
+                                },
+                                cx,
+                            )
+                        })
+                        .ok();
+                })
                 .child(covers.image(&album.cover_url, 108.0))
                 .child(
                     div()
@@ -545,12 +583,31 @@ fn similar_artists_card(
     let slice = &artists[(p * PER).min(artists.len())..((p + 1) * PER).min(artists.len())];
     let mut row = div().flex().gap(px(10.0)).w_full();
     for artist in slice {
+        let weak_artist = weak.clone();
+        let (artist_id, artist_name) = (artist.id, artist.name.clone());
         row = row.child(
             div()
+                .id(format!("np-simi-{artist_id}"))
                 .v_flex()
                 .w(px(72.0))
                 .items_center()
                 .gap(px(6.0))
+                .cursor_pointer()
+                .rounded(px(theme::RADIUS_SM))
+                .hover(|s| s.bg(theme::card_surface()))
+                .on_click(move |_ev, _window, cx| {
+                    weak_artist
+                        .update(cx, |root, cx| {
+                            root.navigate(
+                                Route::Artist {
+                                    id: artist_id,
+                                    name: artist_name.clone(),
+                                },
+                                cx,
+                            )
+                        })
+                        .ok();
+                })
                 .child(covers.image_round(&artist.cover_url, 64.0))
                 .child(
                     div()

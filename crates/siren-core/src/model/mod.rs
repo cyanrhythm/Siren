@@ -20,6 +20,9 @@ pub struct Song {
     /// 以 `/` 拼接的歌手名。
     pub artists: String,
     pub album: String,
+    /// 专辑 ID（用于曲目行跳转专辑）；缺失为 `None`。
+    #[serde(default)]
+    pub album_id: Option<i64>,
     /// 专辑封面地址（可能为空）。
     pub cover_url: String,
     /// 时长（毫秒），源头可能缺失。
@@ -142,6 +145,9 @@ pub struct AlbumDetail {
     pub description: String,
     /// 以 `/` 拼接的歌手名。
     pub artists: String,
+    /// 歌手 ID 列表（用于专辑页的歌手跳转）。
+    #[serde(default)]
+    pub artist_ids: Vec<i64>,
     pub songs: Vec<Song>,
     /// 当前用户是否已收藏该专辑。
     pub subscribed: bool,
@@ -929,9 +935,8 @@ pub fn parse_playlist_detail(value: &Value) -> Option<PlaylistDetail> {
 /// 未收藏专辑该字段整体缺失）。`album.subscribed` 仅作兼容回退。
 pub fn parse_album_detail(value: &Value) -> Option<AlbumDetail> {
     let album = value.get("album")?;
-    let artists = album
-        .get("artists")
-        .and_then(Value::as_array)
+    let artist_list = album.get("artists").and_then(Value::as_array);
+    let artists = artist_list
         .map(|arr| {
             arr.iter()
                 .filter_map(|a| a.get("name").and_then(Value::as_str))
@@ -939,6 +944,15 @@ pub fn parse_album_detail(value: &Value) -> Option<AlbumDetail> {
                 .join("/")
         })
         .unwrap_or_default();
+    let mut artist_ids: Vec<i64> = artist_list
+        .map(|arr| arr.iter().filter_map(|a| a.get("id").and_then(Value::as_i64)).collect())
+        .unwrap_or_default();
+    // 新版接口把歌手放在 `artist`（单数）；没拿到列表时退回它。
+    if artist_ids.is_empty() {
+        if let Some(id) = album.get("artist").and_then(|a| a.get("id")).and_then(Value::as_i64) {
+            artist_ids.push(id);
+        }
+    }
     let songs = value
         .get("songs")
         .and_then(Value::as_array)
@@ -958,6 +972,7 @@ pub fn parse_album_detail(value: &Value) -> Option<AlbumDetail> {
             .unwrap_or_default()
             .to_string(),
         artists,
+        artist_ids,
         songs,
         subscribed: value
             .get("resourceState")
@@ -1007,13 +1022,13 @@ pub fn parse_song(value: &Value) -> Song {
         .map(|arr| arr.iter().filter_map(|a| a.get("id").and_then(Value::as_i64)).collect())
         .unwrap_or_default();
 
-    let album = value
-        .get("album")
-        .or_else(|| value.get("al"))
+    let album_value = value.get("album").or_else(|| value.get("al"));
+    let album = album_value
         .and_then(|al| al.get("name"))
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
+    let album_id = album_value.and_then(|al| al.get("id")).and_then(Value::as_i64);
 
     let cover_url = value
         .get("al")
@@ -1036,6 +1051,7 @@ pub fn parse_song(value: &Value) -> Song {
         name,
         artists,
         album,
+        album_id,
         cover_url,
         duration_ms,
         publish_time,

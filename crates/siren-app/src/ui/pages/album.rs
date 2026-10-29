@@ -172,6 +172,7 @@ impl AlbumPage {
 impl Render for AlbumPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let weak_star = cx.weak_entity();
+        let weak_artist = cx.weak_entity();
         let weak_play = cx.weak_entity();
         let subscribed = self.subscribed;
         // 顶部收起因子（0 展开 / 1 收起）：hero、操作栏、横栏共用。
@@ -340,18 +341,41 @@ impl Render for AlbumPage {
                                             .text_color(theme::text_primary())
                                             .child(detail.name.clone()),
                                     )
-                                    .child(
+                                    .child(if let Some(artist_id) = detail.artist_ids.first().copied() {
+                                        // 专辑歌手 → 歌手页（多歌手只跳第一个，与曲目行一致）。
+                                        let weak_artist = weak_artist.clone();
+                                        let label = detail.artists.clone();
+                                        div()
+                                            .id("album-artist")
+                                            .text_sm()
+                                            .text_color(theme::text_gray())
+                                            .truncate()
+                                            .cursor_pointer()
+                                            .hover(|s| s.text_color(theme::accent()))
+                                            .on_click(move |_ev, _w, cx| {
+                                                weak_artist
+                                                    .update(cx, |_page, cx| {
+                                                        cx.emit(PageEvent::OpenArtist {
+                                                            id: artist_id,
+                                                            name: label.clone(),
+                                                        })
+                                                    })
+                                                    .ok();
+                                            })
+                                            .child(detail.artists.clone())
+                                            .into_any_element()
+                                    } else {
                                         div()
                                             .text_sm()
                                             .text_color(theme::text_gray())
                                             .truncate()
-                                            .child(detail.artists.clone()),
-                                    )
+                                            .child(detail.artists.clone())
+                                            .into_any_element()
+                                    })
                                     .child(
                                         div()
                                             .text_xs()
-                                            .text_color(theme::text_gray())
-                                            .child(format!("{} 首", detail.songs.len())),
+                                            .text_color(theme::text_gray())                                            .child(format!("{} 首", detail.songs.len())),
                                     ),
                             )
                             .into_any_element(),

@@ -532,6 +532,7 @@ mod tests {
                 name: format!("song{id}"),
                 artists: String::new(),
                 album: String::new(),
+                album_id: None,
                 cover_url: String::new(),
                 duration_ms: 0,
                 publish_time: 0,

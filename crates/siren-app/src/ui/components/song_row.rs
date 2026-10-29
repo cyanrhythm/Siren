@@ -194,6 +194,56 @@ impl<'a, P: EventEmitter<PageEvent> + 'static> SongRow<'a, P> {
     }
 }
 
+/// 歌手列：多歌手**逐个可点**（`artists` 与 `artist_ids` 数量一致时），
+/// 否则退化为整段一个链接（有 id）或纯文本。
+///
+/// 行本身是「点击播放」，故每个链接都要 `stop_propagation`，否则点歌手会连播。
+fn artists_cell<P: EventEmitter<PageEvent> + 'static>(row_id: &str, song: &Song, page: &WeakEntity<P>) -> AnyElement {
+    let names: Vec<&str> = song.artists.split('/').filter(|name| !name.is_empty()).collect();
+    if names.is_empty() {
+        return div().into_any_element();
+    }
+    let aligned = song.artist_ids.len() == names.len();
+    let mut row = div()
+        .flex()
+        .items_center()
+        .min_w(px(0.0))
+        .overflow_hidden()
+        .text_xs()
+        .text_color(theme::text_gray());
+    for (i, name) in names.iter().enumerate() {
+        if i > 0 {
+            row = row.child(div().px(px(2.0)).child("/"));
+        }
+        // 数量不一致时只给第一个歌手挂链接：宁可少挂，也不要挂错人。
+        let id = if aligned {
+            song.artist_ids.get(i).copied()
+        } else if i == 0 {
+            song.artist_ids.first().copied()
+        } else {
+            None
+        };
+        let segment = div().id(format!("{row_id}-artist-{i}")).child(name.to_string());
+        row = row.child(match id {
+            Some(id) => {
+                let page = page.clone();
+                let name = name.to_string();
+                segment
+                    .cursor_pointer()
+                    .hover(|s| s.text_color(theme::accent()))
+                    .on_click(move |_ev, _w, cx| {
+                        page.update(cx, |_p, cx| cx.emit(PageEvent::OpenArtist { id, name: name.clone() }))
+                            .ok();
+                        cx.stop_propagation();
+                    })
+                    .into_any_element()
+            }
+            None => segment.into_any_element(),
+        });
+    }
+    row.into_any_element()
+}
+
 /// 渲染一行歌曲，配置见 [`SongRow`]。
 pub(crate) fn song_row<P: EventEmitter<PageEvent> + 'static>(cfg: SongRow<'_, P>) -> AnyElement {
     let SongRow {
@@ -258,13 +308,7 @@ pub(crate) fn song_row<P: EventEmitter<PageEvent> + 'static>(cfg: SongRow<'_, P>
             .min_w(px(0.0))
             .overflow_hidden()
             .child(title)
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme::text_gray())
-                    .truncate()
-                    .child(song.artists.clone()),
-            )
+            .child(artists_cell(&row_id, song, &page))
     } else {
         // 歌手热门页的标题块是**行方向**单子元素（原代码没写 `v_flex`），
         // 与其它页的列方向双行块不同：列方向会把标题拉伸到整列宽，
@@ -273,14 +317,34 @@ pub(crate) fn song_row<P: EventEmitter<PageEvent> + 'static>(cfg: SongRow<'_, P>
     });
 
     if show_album {
-        row = row.child(
-            div()
-                .w(px(dim::ALBUM_W))
-                .text_xs()
-                .text_color(theme::text_gray())
-                .truncate()
-                .child(song.album.clone()),
-        );
+        let cell = div()
+            .w(px(dim::ALBUM_W))
+            .text_xs()
+            .text_color(theme::text_gray())
+            .truncate();
+        // 有专辑 ID 时专辑名可点（跳专辑页），且不触发整行的播放。
+        row = row.child(match (song.album_id, song.album.is_empty()) {
+            (Some(id), false) => {
+                let page = page.clone();
+                let album = song.album.clone();
+                cell.id(format!("{row_id}-album"))
+                    .cursor_pointer()
+                    .hover(|s| s.text_color(theme::accent()))
+                    .on_click(move |_ev, _w, cx| {
+                        page.update(cx, |_p, cx| {
+                            cx.emit(PageEvent::OpenAlbum {
+                                id,
+                                name: album.clone(),
+                            })
+                        })
+                        .ok();
+                        cx.stop_propagation();
+                    })
+                    .child(song.album.clone())
+                    .into_any_element()
+            }
+            _ => cell.child(song.album.clone()).into_any_element(),
+        });
     }
 
     // 红心复用现成组件：悬停显隐、阻止冒泡都在它内部，`group` 传与行同串的 id。
@@ -319,6 +383,38 @@ pub(crate) fn song_row<P: EventEmitter<PageEvent> + 'static>(cfg: SongRow<'_, P>
                     playback.update(cx, |pb, cx| pb.toggle_like_song(song.clone(), cx));
                 }
             }));
+        // 查看歌手 / 查看专辑：与「点歌手名」等价的鼠标路径（数据齐全时才出现）。
+        if let Some(artist_id) = menu_song.artist_ids.first().copied() {
+            let page = menu_page.clone();
+            let name = menu_song.artists.clone();
+            menu = menu.item(PopupMenuItem::new("查看歌手").on_click(move |_ev, _w, cx| {
+                page.update(cx, |_p, cx| {
+                    cx.emit(PageEvent::OpenArtist {
+                        id: artist_id,
+                        name: name.clone(),
+                    })
+                })
+                .ok();
+            }));
+        }
+        if let (Some(album_id), false) = (menu_song.album_id, menu_song.album.is_empty()) {
+            let page = menu_page.clone();
+            let name = menu_song.album.clone();
+            menu = menu.item(PopupMenuItem::new("查看专辑").on_click(move |_ev, _w, cx| {
+                page.update(cx, |_p, cx| {
+                    cx.emit(PageEvent::OpenAlbum {
+                        id: album_id,
+                        name: name.clone(),
+                    })
+                })
+                .ok();
+            }));
+        }
+        // 复制网页链接（网易云分享用）。
+        let link = format!("https://music.163.com/song?id={}", menu_song.id);
+        menu = menu.item(PopupMenuItem::new("复制链接").on_click(move |_ev, _w, cx| {
+            cx.write_to_clipboard(ClipboardItem::new_string(link.clone()));
+        }));
         if add_to_playlist {
             let page = menu_page.clone();
             let song_id = menu_song.id;
