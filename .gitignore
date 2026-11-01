@@ -44,3 +44,4 @@ resources/native/**/*.dylib
 
 # 运行时/崩溃日志产物
 crash.log
+.openidea/
